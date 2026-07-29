@@ -1,0 +1,10 @@
+/build/
+/build-*/
+/dist/
+/DesktopGoose v0.31/
+/boot-game-handoff.json
+*.user
+*.suo
+*.VC.db
+*.pdb
+

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 220" role="img" aria-label="Moins 10000 Aura">
+  <defs><filter id="s"><feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#ff2438" flood-opacity=".65"/></filter></defs>
+  <path d="M54 26h592l30 84-30 84H54l-30-84z" fill="#1a0508" stroke="#ff2438" stroke-width="12" filter="url(#s)"/>
+  <text x="350" y="112" text-anchor="middle" dominant-baseline="middle" fill="#ff2438" stroke="#fff" stroke-width="2"
+        paint-order="stroke" font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="76" letter-spacing="2">−10,000 AURA</text>
+</svg>

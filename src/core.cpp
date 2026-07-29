@@ -1,0 +1,327 @@
+#include "core.hpp"
+
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cwchar>
+#include <limits>
+
+namespace gooserot {
+namespace {
+
+constexpr float kPi = 3.14159265358979323846f;
+
+bool Equals(const std::wstring& left, const wchar_t* right) {
+  return _wcsicmp(left.c_str(), right) == 0;
+}
+
+bool ParseDouble(const std::wstring& value, double& result) {
+  if (value.empty()) return false;
+  errno = 0;
+  wchar_t* end = nullptr;
+  const double parsed = std::wcstod(value.c_str(), &end);
+  if (end == value.c_str() || *end != L'\0' || errno == ERANGE || !std::isfinite(parsed)) return false;
+  result = parsed;
+  return true;
+}
+
+float MoveTowards(float current, float target, float maximumDelta) {
+  const float difference = target - current;
+  if (std::fabs(difference) <= maximumDelta) return target;
+  return current + (difference > 0.0f ? maximumDelta : -maximumDelta);
+}
+
+}  // namespace
+
+float Dot(Vec2 a, Vec2 b) { return a.x * b.x + a.y * b.y; }
+
+float Length(Vec2 value) { return std::sqrt(Dot(value, value)); }
+
+float Distance(Vec2 a, Vec2 b) { return Length(a - b); }
+
+Vec2 Normalize(Vec2 value) {
+  const float length = Length(value);
+  return length <= std::numeric_limits<float>::epsilon() ? Vec2{} : value / length;
+}
+
+Vec2 ClampMagnitude(Vec2 value, float maximum) {
+  const float length = Length(value);
+  if (length <= maximum || length <= std::numeric_limits<float>::epsilon()) return value;
+  return value * (maximum / length);
+}
+
+Vec2 Lerp(Vec2 from, Vec2 to, float amount) {
+  const float clamped = std::clamp(amount, 0.0f, 1.0f);
+  return from * (1.0f - clamped) + to * clamped;
+}
+
+bool ParseTimestamp(const std::wstring& value, double& seconds) {
+  const auto separator = value.find(L':');
+  if (separator == std::wstring::npos) {
+    if (!ParseDouble(value, seconds)) return false;
+    return seconds >= 0.0;
+  }
+
+  double minutes = 0.0;
+  double remainder = 0.0;
+  if (!ParseDouble(value.substr(0, separator), minutes) ||
+      !ParseDouble(value.substr(separator + 1), remainder)) {
+    return false;
+  }
+  if (minutes < 0.0 || remainder < 0.0 || remainder >= 60.0) return false;
+  seconds = minutes * 60.0 + remainder;
+  return true;
+}
+
+bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& error) {
+  auto requireValue = [&](int& index, const wchar_t* option) -> const wchar_t* {
+    if (index + 1 >= argc) {
+      error = std::wstring(L"Valeur manquante après ") + option;
+      return nullptr;
+    }
+    return argv[++index];
+  };
+
+  for (int index = 1; index < argc; ++index) {
+    const std::wstring argument(argv[index]);
+    if (Equals(argument, L"--help") || Equals(argument, L"-h") || Equals(argument, L"/?")) {
+      config.showHelp = true;
+    } else if (Equals(argument, L"--mode")) {
+      const wchar_t* value = requireValue(index, L"--mode");
+      if (!value) return false;
+      if (_wcsicmp(value, L"safe") == 0) config.mode = RunMode::Safe;
+      else if (_wcsicmp(value, L"normal") == 0) config.mode = RunMode::Normal;
+      else if (_wcsicmp(value, L"lab") == 0) config.mode = RunMode::Lab;
+      else {
+        error = L"Mode inconnu. Valeurs acceptées : safe, normal, lab.";
+        return false;
+      }
+    } else if (Equals(argument, L"--start-at")) {
+      const wchar_t* value = requireValue(index, L"--start-at");
+      if (!value || !ParseTimestamp(value, config.startAtSeconds)) {
+        if (error.empty()) error = L"--start-at attend MM:SS ou un nombre de secondes positif.";
+        return false;
+      }
+    } else if (Equals(argument, L"--duration-scale")) {
+      const wchar_t* value = requireValue(index, L"--duration-scale");
+      if (!value || !ParseDouble(value, config.durationScale) || config.durationScale < 0.01 ||
+          config.durationScale > 100.0) {
+        if (error.empty()) error = L"--duration-scale doit être compris entre 0.01 et 100.";
+        return false;
+      }
+    } else if (Equals(argument, L"--seed")) {
+      const wchar_t* value = requireValue(index, L"--seed");
+      if (!value) return false;
+      errno = 0;
+      wchar_t* end = nullptr;
+      const unsigned long long parsed = std::wcstoull(value, &end, 10);
+      if (value[0] == L'+' || value[0] == L'-' || end == value || *end != L'\0' ||
+          errno == ERANGE || parsed > std::numeric_limits<std::uint32_t>::max()) {
+        error = L"--seed attend un entier non signé.";
+        return false;
+      }
+      config.seed = static_cast<std::uint32_t>(parsed);
+    } else if (Equals(argument, L"--primary-monitor-only")) {
+      config.primaryMonitorOnly = true;
+    } else if (Equals(argument, L"--fake-reboot")) {
+      config.fakeReboot = true;
+    } else if (Equals(argument, L"--boot-game")) {
+      config.bootGame = true;
+    } else if (Equals(argument, L"--vm-confirmed")) {
+      config.vmConfirmed = true;
+    } else if (Equals(argument, L"--preview")) {
+      config.preview = true;
+      config.desktopEffects = false;
+    } else if (Equals(argument, L"--no-desktop-effects")) {
+      config.desktopEffects = false;
+    } else {
+      error = std::wstring(L"Option inconnue : ") + argument;
+      return false;
+    }
+  }
+
+  if (config.mode == RunMode::Lab && !config.vmConfirmed && !config.preview) {
+    error = L"Le profil lab exige --vm-confirmed (ou --preview pour un rendu sans effets bureau).";
+    return false;
+  }
+  if (config.fakeReboot && config.mode != RunMode::Lab) {
+    error = L"--fake-reboot lance la Preview AURA 67 et exige --mode lab.";
+    return false;
+  }
+  if (config.bootGame) {
+    error = L"--boot-game est réservé à une future release contenant des artefacts "
+            L"UEFI/BIOS signés et vérifiables. Utilisez --mode lab --fake-reboot pour la Preview sûre.";
+    return false;
+  }
+  if (config.startAtSeconds > 300.0) {
+    error = L"--start-at ne peut pas dépasser 05:00.";
+    return false;
+  }
+  return true;
+}
+
+const wchar_t* ModeName(RunMode mode) {
+  switch (mode) {
+    case RunMode::Safe: return L"safe";
+    case RunMode::Normal: return L"normal";
+    case RunMode::Lab: return L"lab";
+  }
+  return L"safe";
+}
+
+std::wstring UsageText() {
+  return LR"(GooseRot — démonstration desktop autonome
+
+Usage:
+  GooseRot.exe [options]
+
+Options:
+  --mode safe|normal|lab     Profil visuel (safe par défaut)
+  --start-at MM:SS           Démarrer à un instant de la timeline
+  --duration-scale N         0.1 = timeline dix fois plus rapide
+  --seed N                   Seed déterministe (67 par défaut)
+  --primary-monitor-only     Limiter le rendu à l'écran principal
+  --fake-reboot              Lancer GooseBootPreview après la conclusion (lab)
+  --boot-game                Réservé : indisponible sans artefacts firmware vérifiés
+  --vm-confirmed             Confirmation requise pour le profil lab
+  --preview                  Fenêtre 960x540, aucun effet sur le bureau
+  --no-desktop-effects       Désactiver mouvements de curseur/fenêtres
+  --help                     Afficher cette aide
+
+Tous les profils gardent Esc maintenu 2 secondes comme sortie d'urgence.
+Les BSOD, redémarrages, hooks presse-papiers et effets boot sont simulés.)";
+}
+
+TimelineEngine::TimelineEngine()
+    : events_({
+          {TimelineEventId::PassiveEntrance, 0.0, L"Passive Entrance"},
+          {TimelineEventId::AuraPrompt, 15.0, L"Aura Deduction"},
+          {TimelineEventId::NotepadStart, 40.0, L"Auto-Typing"},
+          {TimelineEventId::CursorAndWindows, 60.0, L"Cursor & Window Hijack"},
+          {TimelineEventId::MemeSubtitles, 90.0, L"Brainrot Subtitles"},
+          {TimelineEventId::ClipboardBadge, 120.0, L"Clipboard Certified"},
+          {TimelineEventId::Duplicate, 135.0, L"Duplication"},
+          {TimelineEventId::Graffiti, 165.0, L"Graffiti & Vibe"},
+          {TimelineEventId::SigmaPrompt, 195.0, L"Sigma Trap"},
+          {TimelineEventId::ScreenShake, 210.0, L"Screen Shake"},
+          {TimelineEventId::ColorFilter, 240.0, L"Color Filter"},
+          {TimelineEventId::FinalMonologue, 255.0, L"Final Monologue"},
+          {TimelineEventId::Countdown, 270.0, L"Final Countdown"},
+          {TimelineEventId::CircleDance, 285.0, L"Circle Dance"},
+          {TimelineEventId::ResetAura, 299.0, L"Reset Aura"},
+          {TimelineEventId::Shutdown, 300.0, L"Graceful Shutdown"},
+      }) {
+  Reset();
+}
+
+void TimelineEngine::Reset(double startAtSeconds) {
+  currentTime_ = std::max(0.0, startAtSeconds);
+  fired_.assign(events_.size(), false);
+  for (std::size_t index = 0; index < events_.size(); ++index) {
+    fired_[index] = events_[index].atSeconds < currentTime_;
+  }
+}
+
+std::vector<TimelineEvent> TimelineEngine::Advance(double logicalSeconds) {
+  currentTime_ = std::max(currentTime_, logicalSeconds);
+  std::vector<TimelineEvent> result;
+  for (std::size_t index = 0; index < events_.size(); ++index) {
+    if (!fired_[index] && events_[index].atSeconds <= currentTime_) {
+      fired_[index] = true;
+      result.push_back(events_[index]);
+    }
+  }
+  return result;
+}
+
+GooseEntity::GooseEntity(Vec2 start) : position_(start), target_(start) { UpdateRig(0.0f); }
+
+void GooseEntity::SetTarget(Vec2 target, SpeedTier tier, bool extendNeck) {
+  target_ = target;
+  tier_ = tier;
+  extendNeck_ = extendNeck;
+}
+
+void GooseEntity::SetPosition(Vec2 position) {
+  position_ = position;
+  target_ = position;
+  velocity_ = {};
+  UpdateRig(0.0f);
+}
+
+float GooseEntity::MaximumSpeed() const {
+  switch (tier_) {
+    case SpeedTier::Walk: return parameters_.walkSpeed;
+    case SpeedTier::Run: return parameters_.runSpeed;
+    case SpeedTier::Charge: return parameters_.chargeSpeed;
+  }
+  return parameters_.walkSpeed;
+}
+
+float GooseEntity::Acceleration() const {
+  return tier_ == SpeedTier::Charge ? parameters_.accelerationCharged
+                                    : parameters_.accelerationNormal;
+}
+
+void GooseEntity::Update(float deltaSeconds, RectF bounds) {
+  const float dt = std::clamp(deltaSeconds, 0.0f, 0.1f);
+  const Vec2 toTarget = target_ - position_;
+  const float distance = Length(toTarget);
+  const float maxSpeed = MaximumSpeed();
+  const float brakingSpeed = std::sqrt(std::max(0.0f, 2.0f * Acceleration() * distance));
+  const float desiredSpeed = std::min(maxSpeed, brakingSpeed);
+  const Vec2 desiredVelocity = distance > 1.0f ? Normalize(toTarget) * desiredSpeed : Vec2{};
+  const Vec2 velocityDelta = ClampMagnitude(desiredVelocity - velocity_, Acceleration() * dt);
+  velocity_ += velocityDelta;
+  if (distance < 0.75f && Length(velocity_) < 8.0f) {
+    position_ = target_;
+    velocity_ = {};
+  } else {
+    position_ += velocity_ * dt;
+  }
+
+  constexpr float margin = 36.0f;
+  if (bounds.Width() <= margin * 2.0f) position_.x = bounds.Center().x;
+  else position_.x = std::clamp(position_.x, bounds.left + margin, bounds.right - margin);
+  if (bounds.Height() <= margin * 2.0f) position_.y = bounds.Center().y;
+  else position_.y = std::clamp(position_.y, bounds.top + margin, bounds.bottom - margin);
+  if (Length(velocity_) > 2.0f) directionRadians_ = std::atan2(velocity_.y, velocity_.x);
+  UpdateRig(dt);
+}
+
+void GooseEntity::UpdateRig(float deltaSeconds) {
+  const Vec2 forward{std::cos(directionRadians_), std::sin(directionRadians_)};
+  const Vec2 side{-forward.y, forward.x};
+  const float desiredExtension = (extendNeck_ || tier_ != SpeedTier::Walk) ? 1.0f : 0.0f;
+  neckExtension_ = MoveTowards(neckExtension_, desiredExtension, deltaSeconds * 5.5f);
+
+  rig_.underbodyCenter = position_ - forward * 7.0f;
+  rig_.bodyCenter = position_ - forward * 2.0f;
+  rig_.neckBase = position_ + forward * 10.0f;
+  const float neckForward = 3.0f + (16.0f - 3.0f) * neckExtension_;
+  const float neckLift = 20.0f + (10.0f - 20.0f) * neckExtension_;
+  rig_.neckCenter = rig_.neckBase + forward * neckForward - side * (neckLift * 0.20f);
+  rig_.headCenter = rig_.neckCenter + forward * (13.0f + neckExtension_ * 4.0f);
+  rig_.beakTip = rig_.headCenter + forward * 21.0f;
+  rig_.leftEye = rig_.headCenter + forward * 5.0f - side * 5.0f;
+  rig_.rightEye = rig_.headCenter + forward * 5.0f + side * 5.0f;
+
+  const float interval = tier_ == SpeedTier::Charge ? parameters_.stepTimeCharged
+                                                     : parameters_.stepTimeNormal;
+  stepClock_ += deltaSeconds * (2.0f * kPi / std::max(0.05f, interval * 2.0f));
+  const float stride = std::min(7.0f, Length(velocity_) * 0.035f);
+  rig_.leftFoot = position_ - forward * 7.0f - side * 6.0f + forward * (std::sin(stepClock_) * stride);
+  rig_.rightFoot = position_ - forward * 7.0f + side * 6.0f + forward * (std::sin(stepClock_ + kPi) * stride);
+}
+
+RectF ClampWindowRect(RectF window, RectF workArea) {
+  const float width = std::min(window.Width(), workArea.Width());
+  const float height = std::min(window.Height(), workArea.Height());
+  const float maximumLeft = workArea.right - width;
+  const float maximumTop = workArea.bottom - height;
+  const float left = std::clamp(window.left, workArea.left, maximumLeft);
+  const float top = std::clamp(window.top, workArea.top, maximumTop);
+  return {left, top, left + width, top + height};
+}
+
+}  // namespace gooserot

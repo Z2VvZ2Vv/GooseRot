@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="67 graffiti rose néon">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="200%">
+      <feGaussianBlur stdDeviation="15" result="blur"/>
+      <feFlood flood-color="#ff2daa" flood-opacity=".8"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="rough">
+      <feTurbulence baseFrequency=".035" numOctaves="3" seed="67" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="10"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <text x="360" y="315" text-anchor="middle" fill="#ff2daa" stroke="#8c004e" stroke-width="12"
+          font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="310" font-style="italic"
+          letter-spacing="-26" paint-order="stroke" filter="url(#rough)">67</text>
+    <path d="M248 329v59m14-43v38m242-62v70m-17-50v31" stroke="#ff2daa" stroke-width="15"/>
+    <path d="M91 338l52-19m-34 51l48-13m459-38l49 18m-57 25l42 10" stroke="#ff6ac4" stroke-width="9" opacity=".75"/>
+  </g>
+</svg>

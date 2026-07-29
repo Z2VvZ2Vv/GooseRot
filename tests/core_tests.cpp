@@ -1,0 +1,146 @@
+#include "core.hpp"
+
+#include <cmath>
+#include <iostream>
+#include <string>
+
+namespace {
+
+int failures = 0;
+
+void Expect(bool condition, const char* message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+void TestTimestampParsing() {
+  double value = 0.0;
+  Expect(gooserot::ParseTimestamp(L"04:30", value) && value == 270.0, "MM:SS parsing");
+  Expect(gooserot::ParseTimestamp(L"67.5", value) && value == 67.5, "seconds parsing");
+  Expect(!gooserot::ParseTimestamp(L"1:99", value), "reject invalid seconds component");
+  Expect(!gooserot::ParseTimestamp(L"-1", value), "reject negative timestamp");
+}
+
+void TestArgumentParsing() {
+  wchar_t program[] = L"GooseRot.exe";
+  wchar_t mode[] = L"--mode";
+  wchar_t lab[] = L"lab";
+  wchar_t confirmed[] = L"--vm-confirmed";
+  wchar_t scale[] = L"--duration-scale";
+  wchar_t tenth[] = L"0.1";
+  wchar_t start[] = L"--start-at";
+  wchar_t timestamp[] = L"02:15";
+  wchar_t* valid[] = {program, mode, lab, confirmed, scale, tenth, start, timestamp};
+  gooserot::AppConfig config;
+  std::wstring error;
+  Expect(gooserot::ParseArguments(8, valid, config, error), "valid CLI parses");
+  Expect(config.mode == gooserot::RunMode::Lab && config.vmConfirmed, "lab confirmation retained");
+  Expect(config.durationScale == 0.1 && config.startAtSeconds == 135.0, "CLI numeric options retained");
+
+  wchar_t seed[] = L"--seed";
+  wchar_t negativeSeed[] = L"-1";
+  wchar_t plusSeed[] = L"+67";
+  wchar_t overflowSeed[] = L"4294967296";
+  wchar_t* negativeSeedArgs[] = {program, seed, negativeSeed};
+  wchar_t* plusSeedArgs[] = {program, seed, plusSeed};
+  wchar_t* overflowSeedArgs[] = {program, seed, overflowSeed};
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(3, negativeSeedArgs, config, error), "negative seed is rejected");
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(3, plusSeedArgs, config, error), "signed seed syntax is rejected");
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(3, overflowSeedArgs, config, error), "seed overflow is rejected");
+
+  wchar_t* unsafeLab[] = {program, mode, lab};
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(3, unsafeLab, config, error), "lab requires explicit VM confirmation");
+
+  wchar_t preview[] = L"--preview";
+  wchar_t* previewLab[] = {program, mode, lab, preview};
+  config = {};
+  error.clear();
+  Expect(gooserot::ParseArguments(4, previewLab, config, error), "safe preview permits lab visuals");
+  Expect(!config.desktopEffects, "preview disables desktop effects");
+
+  wchar_t fakeReboot[] = L"--fake-reboot";
+  wchar_t* invalidPreviewChain[] = {program, fakeReboot};
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(2, invalidPreviewChain, config, error),
+         "Preview chaining is lab-only");
+
+  wchar_t bootGame[] = L"--boot-game";
+  wchar_t* unsafeHandoff[] = {program, bootGame};
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(2, unsafeHandoff, config, error), "boot handoff is unavailable without artifacts");
+
+  wchar_t* unavailableHandoff[] = {program, mode, lab, confirmed, bootGame};
+  config = {};
+  error.clear();
+  Expect(!gooserot::ParseArguments(5, unavailableHandoff, config, error),
+         "lab cannot claim an unverified boot handoff");
+}
+
+void TestTimeline() {
+  gooserot::TimelineEngine timeline;
+  auto events = timeline.Advance(0.0);
+  Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::PassiveEntrance,
+         "entrance fires at zero");
+  events = timeline.Advance(135.0);
+  Expect(events.size() == 6, "all crossed events fire exactly once");
+  Expect(events.back().id == gooserot::TimelineEventId::Duplicate, "duplication at 2:15");
+  Expect(timeline.Advance(135.0).empty(), "event does not fire twice");
+
+  timeline.Reset(270.0);
+  events = timeline.Advance(270.0);
+  Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::Countdown,
+         "start-at primes earlier events");
+}
+
+void TestGooseLocomotion() {
+  gooserot::GooseEntity goose({100.0f, 100.0f});
+  goose.SetTarget({500.0f, 100.0f}, gooserot::SpeedTier::Run);
+  const gooserot::RectF bounds{0.0f, 0.0f, 800.0f, 600.0f};
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.Position().x > 200.0f, "goose advances toward target");
+  Expect(std::fabs(goose.Position().y - 100.0f) < 0.01f, "straight target stays straight");
+  Expect(gooserot::Length(goose.Velocity()) <= goose.Parameters().runSpeed + 0.01f,
+         "run speed remains bounded");
+
+  for (int i = 0; i < 180; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.DistanceToTarget() < 1.0f, "goose reaches target without orbiting");
+
+  goose.Update(1.0f / 30.0f, {0.0f, 0.0f, 40.0f, 30.0f});
+  Expect(goose.Position().x == 20.0f && goose.Position().y == 15.0f,
+         "tiny preview bounds collapse safely to their center");
+}
+
+void TestWindowClamp() {
+  const gooserot::RectF work{0.0f, 0.0f, 1920.0f, 1040.0f};
+  const auto moved = gooserot::ClampWindowRect({1900.0f, -50.0f, 2300.0f, 250.0f}, work);
+  Expect(moved.left == 1520.0f && moved.top == 0.0f, "window remains fully visible");
+  Expect(moved.Width() == 400.0f && moved.Height() == 300.0f, "window dimensions preserved");
+}
+
+}  // namespace
+
+int main() {
+  TestTimestampParsing();
+  TestArgumentParsing();
+  TestTimeline();
+  TestGooseLocomotion();
+  TestWindowClamp();
+  if (failures == 0) {
+    std::cout << "All GooseRot core tests passed.\n";
+    return 0;
+  }
+  std::cerr << failures << " test(s) failed.\n";
+  return 1;
+}

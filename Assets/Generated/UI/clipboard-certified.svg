@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 270" role="img" aria-label="Clipboard Certified plus 9999 Aura">
+  <defs><filter id="r"><feTurbulence baseFrequency=".018" numOctaves="2" seed="9999" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="5"/></filter></defs>
+  <g transform="rotate(-4 410 135)" filter="url(#r)">
+    <rect x="28" y="28" width="764" height="214" rx="22" fill="#fffbea" stroke="#ff2daa" stroke-width="15"/>
+    <rect x="49" y="49" width="722" height="172" rx="12" fill="none" stroke="#39ff14" stroke-width="7" stroke-dasharray="18 10"/>
+    <text x="410" y="108" text-anchor="middle" fill="#111" font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="57" letter-spacing="4">CLIPBOARD CERTIFIED</text>
+    <text x="410" y="187" text-anchor="middle" fill="#ff2daa" stroke="#111" stroke-width="2" paint-order="stroke"
+          font-family="Impact, Haettenschweiler, 'Arial Black', sans-serif" font-size="72">+9999 AURA</text>
+  </g>
+</svg>

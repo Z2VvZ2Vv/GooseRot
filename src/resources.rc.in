@@ -1,0 +1,12 @@
+#include "@CMAKE_CURRENT_SOURCE_DIR@/src/resource.h"
+
+1 24 "@CMAKE_CURRENT_SOURCE_DIR@/src/gooserot.manifest"
+
+IDR_BRAINROT_TRALALERO RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Brainrot/tralalero-tralala.png"
+IDR_BRAINROT_BALLERINA RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Brainrot/ballerina-cappuccina.png"
+IDR_BRAINROT_BOMBARDIRO RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Brainrot/bombardiro-crocodilo.png"
+IDR_CAT_SHOCKED RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-shocked-orange.png"
+IDR_CAT_JUDGMENTAL RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-judgmental-gray.png"
+IDR_CAT_VACANT RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-vacant-white.png"
+IDR_CAT_SUSPICIOUS RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-suspicious-black.png"
+
