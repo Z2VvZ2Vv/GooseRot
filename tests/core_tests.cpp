@@ -88,6 +88,18 @@ void TestArgumentParsing() {
          "lab cannot claim an unverified boot handoff");
 }
 
+void TestCarrierAssignment() {
+  using gooserot::kNoCarrier;
+  using gooserot::PickFreeCarrier;
+  Expect(PickFreeCarrier({}, false) == kNoCarrier, "an empty flock has no carrier");
+  Expect(PickFreeCarrier({0}, false) == 0, "a lone idle goose carries");
+  Expect(PickFreeCarrier({0}, true) == kNoCarrier, "a busy lone goose does not carry");
+  Expect(PickFreeCarrier({1}, false) == kNoCarrier, "an occupied lone goose is unavailable");
+  Expect(PickFreeCarrier({0, 0, 0}, false) == 1, "the first follower carries");
+  Expect(PickFreeCarrier({0, 1, 0}, false) == 2, "busy followers are skipped");
+  Expect(PickFreeCarrier({0, 1, 1}, false) == kNoCarrier, "the lead remains reserved in a flock");
+}
+
 void TestTimeline() {
   gooserot::TimelineEngine timeline;
   auto events = timeline.Advance(0.0);
@@ -185,6 +197,7 @@ void TestWindowClamp() {
 int main() {
   TestTimestampParsing();
   TestArgumentParsing();
+  TestCarrierAssignment();
   TestTimeline();
   TestGooseLocomotion();
   TestGooseAnimationState();

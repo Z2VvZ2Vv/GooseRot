@@ -135,7 +135,7 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 
 ## Performance VM
 
-- timer demandé : 60 images/seconde ;
+- boucle Win32 cadencée par QPC à 60 images/seconde, avec résolution d'attente de 1 ms ;
 - plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;

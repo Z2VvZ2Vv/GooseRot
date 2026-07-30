@@ -189,5 +189,12 @@ class GooseEntity {
 
 RectF ClampWindowRect(RectF window, RectF workArea);
 
+// Sentinel returned when no goose is available to carry a new prop.
+constexpr std::size_t kNoCarrier = static_cast<std::size_t>(-1);
+
+// Prefer an idle follower so the lead goose remains available for cursor and
+// window choreography. A lone lead goose may carry only while otherwise idle.
+std::size_t PickFreeCarrier(const std::vector<unsigned char>& carrierBusy, bool leadBusy);
+
 }  // namespace gooserot
 

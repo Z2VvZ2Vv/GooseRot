@@ -873,21 +873,15 @@ void GooseRotApp::SpawnSprite() {
   // Hand the prop to a goose that is not already ferrying one. Capping carried
   // props to one per goose is what keeps the carriers from thrashing; any prop
   // that can't get a free carrier simply appears already resting at its spot.
-  std::vector<bool> carrierBusy(geese_.size(), false);
+  std::vector<unsigned char> carrierBusy(geese_.size(), 0U);
   for (const VisualSprite& existing : sprites_) {
     if (existing.carried && existing.carrierIndex < carrierBusy.size()) {
-      carrierBusy[existing.carrierIndex] = true;
+      carrierBusy[existing.carrierIndex] = 1U;
     }
   }
-  std::size_t carrier = geese_.size();  // == size means "no free carrier"
-  const std::size_t firstCandidate = geese_.size() > 1 ? 1U : 0U;  // spare the lead goose
-  for (std::size_t index = firstCandidate; index < geese_.size(); ++index) {
-    if (!carrierBusy[index]) {
-      carrier = index;
-      break;
-    }
-  }
-  sprite.carried = carrier < geese_.size();
+  const bool leadBusy = cursorLatched_ || pendingAction_.kind != PendingActionKind::None;
+  const std::size_t carrier = PickFreeCarrier(carrierBusy, leadBusy);
+  sprite.carried = carrier != kNoCarrier;
   sprite.carrierIndex = sprite.carried ? carrier : 0U;
   sprite.deliveryDeadline = logicalTime_ + 5.0;
   sprite.center = sprite.carried ? geese_[carrier].Rig().beakTip : sprite.targetCenter;

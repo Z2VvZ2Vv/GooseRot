@@ -333,6 +333,15 @@ void GooseEntity::UpdateRig(float deltaSeconds) {
   rig_.rightFoot = position_ - forward * 8.0f + side * 22.0f + forward * (std::sin(stepClock_ + kPi) * stride);
 }
 
+std::size_t PickFreeCarrier(const std::vector<unsigned char>& carrierBusy, bool leadBusy) {
+  if (carrierBusy.empty()) return kNoCarrier;
+  for (std::size_t index = 1; index < carrierBusy.size(); ++index) {
+    if (!carrierBusy[index]) return index;
+  }
+  if (carrierBusy.size() == 1 && !carrierBusy[0] && !leadBusy) return 0;
+  return kNoCarrier;
+}
+
 RectF ClampWindowRect(RectF window, RectF workArea) {
   const float width = std::min(window.Width(), workArea.Width());
   const float height = std::min(window.Height(), workArea.Height());
