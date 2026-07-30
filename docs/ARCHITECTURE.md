@@ -47,13 +47,18 @@ GooseRotApp
  │   ├─ LayeredWindow
  │   ├─ SpeechBubbles
  │   ├─ MemeOverlays
+ │   ├─ HandDrawnChrome
+ │   ├─ LiveSprayTag
+ │   ├─ FakeToasts
+ │   ├─ GlitchLayer
  │   └─ ColorAndShakeEffects
  ├─ DesktopDirector
  │   ├─ CursorDirector
  │   └─ WindowDirector
  ├─ InteractionDirector
  │   ├─ ClipboardVisualGag
- │   └─ NotepadGag
+ │   ├─ NotepadGag
+ │   └─ PopupSwarm
  ├─ BootGameHandoff
  └─ ShutdownDirector
 ```
@@ -98,6 +103,20 @@ Ne jamais cibler :
 
 Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. À `1:00`, la fenêtre est réduite puis fermée pendant le nettoyage.
 
+`WM_CLOSE` est intercepté pour le gag : les trois premières tentatives renomment la fenêtre et la décalent de 67 pixels, la quatrième la détruit et la recrée une seule fois, les suivantes la ferment réellement. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement, sans passer par ce gestionnaire.
+
+### `PopupSwarm`
+
+Gère un ensemble borné de popups GooseRot. Fermer une popup en programme deux autres tant que le plafond de neuf n’a jamais été atteint. Au plafond, l’essaim bascule définitivement en drainage : chaque popup résiste une fois puis se ferme sans se multiplier, ce qui permet de revenir à zéro. Les créations et destructions sont différées hors du gestionnaire de messages : `WM_CLOSE` marque seulement la popup comme morte et incrémente un compteur, et le `Tick` appelé depuis l’horloge de rendu recycle les entrées et crée les nouvelles fenêtres. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et sont toutes détruites par `CloseAll()`.
+
+### `GlitchLayer`
+
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame ; les effets restent vectoriels, sans relecture de la surface, et leur rendu est reproductible. L’intensité provient de la timeline, avec des pics ajoutés par les événements et une décroissance linéaire.
+
+### `LiveSprayTag`
+
+Le `67` est décrit comme trois tracés de points, pas comme un glyphe de police. Le rendu révèle les tracés par longueur d’arc, ce qui donne la peinture en direct, puis ajoute l’overspray et les coulures derrière la buse. `GraffitiPaintHead()` expose la position de la buse pour que l’oie puisse suivre son propre tag.
+
 ### `ShutdownDirector`
 
 En `safe` et `normal`, la conclusion est un faux redémarrage rendu dans l’overlay, suivi d’une fermeture propre. Dans l’état actuel du code, ce même chemin est encore utilisé en `lab`. Le contrat cible de `lab` exclut cette restauration : la VM doit être considérée comme sacrifiée après la corruption des fichiers, du Registre et du démarrage.
@@ -118,6 +137,8 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
 - assets décodés une seule fois puis mis en cache ;
 - nombre maximal d’overlays image simultanés : 12 en `safe/normal`, 24 en `lab` ;
+- nombre maximal de popups GooseRot simultanées : 9, tous profils confondus ;
+- effets de glitch uniquement vectoriels : aucun accès pixel à pixel ni relecture de la surface, pour rester tenable en plein écran virtuel à 30 Hz ;
 - mémoire cible : moins de 150 Mo ;
 - usage CPU cible : moins de 10 % de deux vCPU hors pics de transition ;
 - absence de réseau après le lancement.

@@ -16,22 +16,106 @@ namespace {
 
 using namespace Gdiplus;
 
+constexpr float kPi = 3.14159265358979323846f;
+
 const Color kNeonPink(255, 255, 45, 170);
 const Color kMatrixGreen(255, 57, 255, 20);
 const Color kCriticalRed(255, 255, 36, 56);
 const Color kBubbleWhite(255, 255, 251, 234);
+const Color kInk(255, 28, 25, 34);
+const Color kGooseWhite(255, 255, 253, 246);
+const Color kGooseShade(255, 220, 216, 226);
+const Color kBeakOrange(255, 255, 171, 36);
+const Color kBeakOrangeDark(255, 178, 98, 8);
 
-void AddRoundedRectangle(GraphicsPath& path, float x, float y, float width, float height, float radius) {
-  const float diameter = radius * 2.0f;
-  path.AddArc(x, y, diameter, diameter, 180.0f, 90.0f);
-  path.AddArc(x + width - diameter, y, diameter, diameter, 270.0f, 90.0f);
-  path.AddArc(x + width - diameter, y + height - diameter, diameter, diameter, 0.0f, 90.0f);
-  path.AddArc(x, y + height - diameter, diameter, diameter, 90.0f, 90.0f);
-  path.CloseFigure();
+// Deterministic value noise. Every wobble, drip and glitch block derives from
+// this, so a given seed always redraws the same frame.
+std::uint32_t Hash32(std::uint32_t value) {
+  value ^= value >> 16;
+  value *= 0x7feb352dU;
+  value ^= value >> 15;
+  value *= 0x846ca68bU;
+  value ^= value >> 16;
+  return value;
+}
+
+float Noise01(std::uint32_t seed) {
+  return static_cast<float>(Hash32(seed) & 0xFFFFFFU) / static_cast<float>(0x1000000U);
+}
+
+float NoiseSigned(std::uint32_t seed) { return Noise01(seed) * 2.0f - 1.0f; }
+
+PointF ToPointF(Vec2 value) { return PointF(value.x, value.y); }
+
+Color WithAlpha(const Color& color, float alpha) {
+  const int clamped = std::clamp(static_cast<int>(alpha * 255.0f), 0, 255);
+  return Color(static_cast<BYTE>(clamped), color.GetR(), color.GetG(), color.GetB());
+}
+
+const wchar_t* PickFamily(std::initializer_list<const wchar_t*> candidates) {
+  for (const wchar_t* name : candidates) {
+    FontFamily family(name);
+    if (family.IsAvailable()) return name;
+  }
+  return L"Arial";
+}
+
+// Resolved once: a heavy poster face, a chunky UI face and a terminal face.
+const wchar_t* PosterFamily() {
+  static const wchar_t* name = PickFamily({L"Impact", L"Haettenschweiler", L"Arial Black", L"Arial"});
+  return name;
+}
+const wchar_t* UiFamily() {
+  static const wchar_t* name = PickFamily({L"Segoe UI", L"Tahoma", L"Arial"});
+  return name;
+}
+const wchar_t* MonoFamily() {
+  static const wchar_t* name = PickFamily({L"Consolas", L"Lucida Console", L"Courier New"});
+  return name;
+}
+
+// A rectangle traced by hand: every edge wanders, one corner is cut off and the
+// whole outline boils slowly. This is what keeps the HUD from looking like a
+// stack of identical rounded boxes.
+void AddWobblyRectangle(GraphicsPath& path, float x, float y, float width, float height,
+                        float jitter, std::uint32_t seed) {
+  constexpr int kPerEdge = 5;
+  std::vector<PointF> points;
+  points.reserve(kPerEdge * 4 + 2);
+  const float cut = std::min(width, height) * 0.28f;
+
+  auto push = [&](float px, float py, std::uint32_t index) {
+    points.push_back(PointF(px + NoiseSigned(seed * 977U + index * 31U) * jitter,
+                            py + NoiseSigned(seed * 977U + index * 31U + 7U) * jitter));
+  };
+
+  std::uint32_t index = 0;
+  for (int step = 0; step < kPerEdge; ++step) {
+    const float t = static_cast<float>(step) / kPerEdge;
+    push(x + cut + (width - cut) * t, y, index++);
+  }
+  for (int step = 0; step < kPerEdge; ++step) {
+    const float t = static_cast<float>(step) / kPerEdge;
+    push(x + width, y + height * t, index++);
+  }
+  for (int step = 0; step < kPerEdge; ++step) {
+    const float t = static_cast<float>(step) / kPerEdge;
+    push(x + width - width * t, y + height, index++);
+  }
+  for (int step = 0; step < kPerEdge; ++step) {
+    const float t = static_cast<float>(step) / kPerEdge;
+    push(x, y + height - (height - cut) * t, index++);
+  }
+  points.push_back(PointF(x + cut, y));
+  path.AddPolygon(points.data(), static_cast<INT>(points.size()));
 }
 
 void FillCircle(Graphics& graphics, Brush& brush, Vec2 center, float radius) {
   graphics.FillEllipse(&brush, center.x - radius, center.y - radius, radius * 2.0f, radius * 2.0f);
+}
+
+void StrokeCircle(Graphics& graphics, Pen& pen, Vec2 center, float radius) {
+  graphics.DrawEllipse(&pen, center.x - radius, center.y - radius, radius * 2.0f, radius * 2.0f);
 }
 
 void DrawCenteredText(Graphics& graphics, const std::wstring& text, const Font& font,
@@ -43,6 +127,121 @@ void DrawCenteredText(Graphics& graphics, const std::wstring& text, const Font& 
   graphics.DrawString(text.c_str(), -1, &font,
                       Gdiplus::RectF(rectangle.left, rectangle.top, rectangle.Width(), rectangle.Height()),
                       &format, &brush);
+}
+
+// Same text three times with a red/cyan offset: the cheapest convincing
+// chromatic aberration, and it costs nothing per pixel.
+void DrawSplitText(Graphics& graphics, const std::wstring& text, const Font& font,
+                   const RectF& rectangle, const Color& core, float split) {
+  if (split > 0.05f) {
+    SolidBrush red(Color(150, 255, 40, 60));
+    SolidBrush cyan(Color(150, 40, 230, 255));
+    RectF left = rectangle;
+    left.left -= split;
+    left.right -= split;
+    RectF right = rectangle;
+    right.left += split;
+    right.right += split;
+    DrawCenteredText(graphics, text, font, left, red);
+    DrawCenteredText(graphics, text, font, right, cyan);
+  }
+  SolidBrush brush(core);
+  DrawCenteredText(graphics, text, font, rectangle, brush);
+}
+
+Vec2 QuadraticPoint(Vec2 a, Vec2 b, Vec2 c, float t) {
+  const float inverse = 1.0f - t;
+  return a * (inverse * inverse) + b * (2.0f * inverse * t) + c * (t * t);
+}
+
+struct SprayStroke {
+  std::vector<Vec2> points;
+  float length = 0.0f;
+};
+
+// The "67" as hand-drawn spray strokes in a unit box, so it can be revealed one
+// centimetre of paint at a time instead of appearing as a finished glyph.
+std::vector<SprayStroke> BuildTagStrokes(Vec2 center, float scale) {
+  auto unit = [&](float x, float y) { return Vec2{center.x + x * scale, center.y + y * scale}; };
+  std::vector<SprayStroke> strokes;
+
+  // "6": a long cane sweeping down-left, then a fat closed belly loop.
+  SprayStroke six;
+  for (int step = 0; step <= 22; ++step) {
+    const float t = static_cast<float>(step) / 22.0f;
+    six.points.push_back(QuadraticPoint(unit(-0.24f, -0.95f), unit(-1.02f, -0.62f),
+                                        unit(-1.02f, 0.10f), t));
+  }
+  for (int step = 1; step <= 30; ++step) {
+    const float t = static_cast<float>(step) / 30.0f;
+    const float angle = kPi + t * 2.0f * kPi;
+    six.points.push_back(unit(-0.62f + std::cos(angle) * 0.40f, 0.46f + std::sin(angle) * 0.44f));
+  }
+  strokes.push_back(std::move(six));
+
+  // "7": top bar, then the long diagonal, then the crossed leg.
+  SprayStroke seven;
+  seven.points.push_back(unit(0.12f, -0.86f));
+  seven.points.push_back(unit(1.08f, -0.92f));
+  for (int step = 1; step <= 16; ++step) {
+    const float t = static_cast<float>(step) / 16.0f;
+    seven.points.push_back(QuadraticPoint(unit(1.08f, -0.92f), unit(0.86f, -0.05f),
+                                          unit(0.44f, 0.92f), t));
+  }
+  strokes.push_back(std::move(seven));
+
+  SprayStroke cross;
+  cross.points.push_back(unit(0.30f, 0.06f));
+  cross.points.push_back(unit(1.00f, -0.02f));
+  strokes.push_back(std::move(cross));
+
+  for (SprayStroke& stroke : strokes) {
+    for (std::size_t index = 1; index < stroke.points.size(); ++index) {
+      stroke.length += Distance(stroke.points[index - 1], stroke.points[index]);
+    }
+  }
+  return strokes;
+}
+
+// Walks the strokes and returns where the nozzle sits at `progress`.
+Vec2 StrokeHead(const std::vector<SprayStroke>& strokes, float progress) {
+  float total = 0.0f;
+  for (const SprayStroke& stroke : strokes) total += stroke.length;
+  if (total <= 0.0f || strokes.empty()) return {};
+  float remaining = std::clamp(progress, 0.0f, 1.0f) * total;
+  for (const SprayStroke& stroke : strokes) {
+    if (remaining > stroke.length) {
+      remaining -= stroke.length;
+      continue;
+    }
+    for (std::size_t index = 1; index < stroke.points.size(); ++index) {
+      const float segment = Distance(stroke.points[index - 1], stroke.points[index]);
+      if (remaining <= segment || index + 1 == stroke.points.size()) {
+        const float t = segment <= 0.0001f ? 0.0f : std::clamp(remaining / segment, 0.0f, 1.0f);
+        return Lerp(stroke.points[index - 1], stroke.points[index], t);
+      }
+      remaining -= segment;
+    }
+  }
+  return strokes.back().points.back();
+}
+
+// The classic Windows arrow, used for the fake cursors that pile up on screen.
+void DrawArrowCursor(Graphics& graphics, Vec2 position, float scale, const Color& fill,
+                     const Color& outline) {
+  constexpr std::array<std::pair<float, float>, 7> shape = {
+      {{0.0f, 0.0f}, {0.0f, 16.5f}, {4.1f, 12.6f}, {6.9f, 18.4f}, {9.6f, 17.1f}, {6.7f, 11.5f},
+       {11.6f, 11.5f}}};
+  std::array<PointF, 7> points{};
+  for (std::size_t index = 0; index < shape.size(); ++index) {
+    points[index] =
+        PointF(position.x + shape[index].first * scale, position.y + shape[index].second * scale);
+  }
+  SolidBrush brush(fill);
+  Pen pen(outline, 1.6f * scale);
+  pen.SetLineJoin(LineJoinRound);
+  graphics.FillPolygon(&brush, points.data(), static_cast<INT>(points.size()));
+  graphics.DrawPolygon(&pen, points.data(), static_cast<INT>(points.size()));
 }
 
 }  // namespace
@@ -254,8 +453,15 @@ Vec2 OverlayWindow::ScreenToCanvas(POINT screenPoint) const {
   return {x, y};
 }
 
+Vec2 OverlayWindow::GraffitiPaintHead(float progress) const {
+  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
+  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  return StrokeHead(BuildTagStrokes(center, scale), progress);
+}
+
 void OverlayWindow::Render(const RenderState& state) {
   if (!surfacePixels_ || width_ <= 0 || height_ <= 0) return;
+  ++frame_;
   std::memset(surfacePixels_, 0, static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4U);
   Bitmap surface(width_, height_, width_ * 4, PixelFormat32bppPARGB,
                  static_cast<BYTE*>(surfacePixels_));
@@ -269,12 +475,19 @@ void OverlayWindow::Render(const RenderState& state) {
     DrawFakeShutdown(graphics, state);
   } else {
     const GraphicsState saved = graphics.Save();
+    // Shake: a steady beat from 3:30, plus an extra kick the more the display
+    // is falling apart.
     if (state.logicalTime >= 210.0) {
       const int pulse = static_cast<int>((state.logicalTime - 210.0) / 2.0);
       if (std::fmod(state.logicalTime - 210.0, 2.0) < 0.18) {
         graphics.TranslateTransform((pulse % 2 == 0) ? 4.0f : -4.0f,
                                     (pulse % 3 == 0) ? -3.0f : 3.0f);
       }
+    }
+    if (state.glitch > 0.35f) {
+      const float kick = (state.glitch - 0.35f) * 11.0f;
+      graphics.TranslateTransform(NoiseSigned(frame_ * 13U) * kick,
+                                  NoiseSigned(frame_ * 13U + 5U) * kick * 0.6f);
     }
     DrawSceneEffects(graphics, state);
     DrawSprites(graphics, state);
@@ -283,8 +496,11 @@ void OverlayWindow::Render(const RenderState& state) {
         DrawGoose(graphics, (*state.geese)[index], static_cast<int>(index));
       }
     }
+    DrawCursorLatch(graphics, state);
     if (!state.bubbleText.empty()) DrawSpeechBubble(graphics, state.bubbleText, state.bubbleAnchor);
     DrawHud(graphics, state);
+    DrawToasts(graphics, state);
+    DrawGlitch(graphics, state);
     graphics.Restore(saved);
   }
   Present();
@@ -306,7 +522,7 @@ void OverlayWindow::DrawPreviewDesktop(Graphics& graphics) const {
   SolidBrush titleBrush(Color(245, 37, 92, 145));
   graphics.FillRectangle(&windowBrush, 54, 62, 350, 220);
   graphics.FillRectangle(&titleBrush, 54, 62, 350, 30);
-  Font font(L"Segoe UI", 12.0f, FontStyleRegular, UnitPixel);
+  Font font(UiFamily(), 12.0f, FontStyleRegular, UnitPixel);
   SolidBrush titleText(Color::White);
   graphics.DrawString(L"Preview desktop — no system effects", -1, &font, PointF(65.0f, 69.0f), &titleText);
 }
@@ -314,66 +530,236 @@ void OverlayWindow::DrawPreviewDesktop(Graphics& graphics) const {
 void OverlayWindow::DrawGoose(Graphics& graphics, const GooseEntity& goose, int index) const {
   const Vec2 position = goose.Position();
   const GooseRig& rig = goose.Rig();
-  const float angle = goose.DirectionRadians() * 180.0f / 3.14159265358979323846f;
+  const float angle = goose.DirectionRadians() * 180.0f / kPi;
   const Vec2 forward{std::cos(goose.DirectionRadians()), std::sin(goose.DirectionRadians())};
   const Vec2 side{-forward.y, forward.x};
 
-  SolidBrush orange(Color(255, 255, 165, 35));
-  Pen orangePen(Color(255, 255, 145, 20), 5.0f);
-  orangePen.SetStartCap(LineCapRound);
-  orangePen.SetEndCap(LineCapRound);
-  graphics.DrawLine(&orangePen, position.x - side.x * 4.0f, position.y - side.y * 4.0f,
-                    rig.leftFoot.x, rig.leftFoot.y);
-  graphics.DrawLine(&orangePen, position.x + side.x * 4.0f, position.y + side.y * 4.0f,
-                    rig.rightFoot.x, rig.rightFoot.y);
-  FillCircle(graphics, orange, rig.leftFoot, 4.0f);
-  FillCircle(graphics, orange, rig.rightFoot, 4.0f);
+  const Color bodyTint = index == 0   ? kGooseWhite
+                         : index == 1 ? Color(255, 255, 241, 250)
+                                      : Color(255, 240, 255, 240);
+  const Color wingTint = index == 0   ? Color(255, 243, 239, 227)
+                         : index == 1 ? Color(255, 255, 220, 243)
+                                      : Color(255, 220, 247, 215);
 
-  const GraphicsState transformed = graphics.Save();
-  graphics.TranslateTransform(position.x, position.y);
-  graphics.RotateTransform(angle);
-  SolidBrush shadow(Color(55, 0, 0, 0));
-  graphics.FillEllipse(&shadow, -30.0f, -18.0f, 58.0f, 38.0f);
-  SolidBrush outline(Color(255, 172, 174, 176));
-  graphics.FillEllipse(&outline, -29.0f, -23.0f, 54.0f, 46.0f);
-  SolidBrush white(index == 0 ? Color(255, 255, 255, 250) : Color(255, 246, 250, 255));
-  graphics.FillEllipse(&white, -27.0f, -21.0f, 50.0f, 42.0f);
-  Pen wingPen(Color(135, 150, 153, 158), 2.0f);
-  graphics.DrawArc(&wingPen, -17.0f, -13.0f, 27.0f, 25.0f, 205.0f, 120.0f);
-  graphics.Restore(transformed);
+  SolidBrush inkBrush(kInk);
+  SolidBrush bodyBrush(bodyTint);
+  SolidBrush orangeBrush(kBeakOrange);
+  Pen inkPen(kInk, 3.2f);
+  inkPen.SetLineJoin(LineJoinRound);
 
-  Pen neckOutline(Color(255, 172, 174, 176), 29.0f);
-  neckOutline.SetStartCap(LineCapRound);
-  neckOutline.SetEndCap(LineCapRound);
-  graphics.DrawLine(&neckOutline, rig.neckBase.x, rig.neckBase.y, rig.headCenter.x, rig.headCenter.y);
-  Pen neckWhite(Color(255, 255, 255, 250), 25.0f);
-  neckWhite.SetStartCap(LineCapRound);
-  neckWhite.SetEndCap(LineCapRound);
-  graphics.DrawLine(&neckWhite, rig.neckBase.x, rig.neckBase.y, rig.headCenter.x, rig.headCenter.y);
+  // Ground shadow, always screen-aligned so the flock reads as standing on the
+  // desktop rather than floating over it.
+  SolidBrush shadow(Color(52, 0, 0, 0));
+  graphics.FillEllipse(&shadow, position.x - 32.0f, position.y + 15.0f, 64.0f, 18.0f);
 
-  SolidBrush headOutline(Color(255, 172, 174, 176));
-  FillCircle(graphics, headOutline, rig.headCenter, 16.0f);
-  SolidBrush headWhite(Color(255, 255, 255, 250));
-  FillCircle(graphics, headWhite, rig.headCenter, 14.0f);
+  // Legs and webbed feet, under the body.
+  const Vec2 hipLeft = position - forward * 8.0f - side * 12.0f;
+  const Vec2 hipRight = position - forward * 8.0f + side * 12.0f;
+  Pen legDark(kBeakOrangeDark, 6.0f);
+  legDark.SetStartCap(LineCapRound);
+  legDark.SetEndCap(LineCapRound);
+  Pen legLight(kBeakOrange, 3.4f);
+  legLight.SetStartCap(LineCapRound);
+  legLight.SetEndCap(LineCapRound);
+  for (const auto& leg : {std::pair<Vec2, Vec2>{hipLeft, rig.leftFoot},
+                          std::pair<Vec2, Vec2>{hipRight, rig.rightFoot}}) {
+    graphics.DrawLine(&legDark, leg.first.x, leg.first.y, leg.second.x, leg.second.y);
+    graphics.DrawLine(&legLight, leg.first.x, leg.first.y, leg.second.x, leg.second.y);
+  }
+  Pen footPen(kBeakOrangeDark, 1.8f);
+  footPen.SetLineJoin(LineJoinRound);
+  Pen toePen(Color(190, 150, 80, 8), 1.1f);
+  toePen.SetStartCap(LineCapRound);
+  toePen.SetEndCap(LineCapRound);
+  for (int foot = 0; foot < 2; ++foot) {
+    const Vec2 anchor = foot == 0 ? rig.leftFoot : rig.rightFoot;
+    const float sign = foot == 0 ? -1.0f : 1.0f;
+    std::array<PointF, 4> shape{};
+    shape[0] = ToPointF(anchor);
+    const std::array<float, 3> angles = {0.30f, 0.95f, 1.60f};
+    const std::array<float, 3> lengths = {10.5f, 11.5f, 10.5f};
+    for (std::size_t toe = 0; toe < angles.size(); ++toe) {
+      const float toeAngle = sign * angles[toe];
+      const Vec2 tip = anchor - forward * (std::cos(toeAngle) * lengths[toe]) +
+                       side * (std::sin(toeAngle) * lengths[toe]);
+      shape[toe + 1] = ToPointF(tip);
+    }
+    graphics.FillPolygon(&orangeBrush, shape.data(), static_cast<INT>(shape.size()));
+    graphics.DrawPolygon(&footPen, shape.data(), static_cast<INT>(shape.size()));
+    for (std::size_t toe = 1; toe < shape.size(); ++toe) {
+      graphics.DrawLine(&toePen, shape[0], shape[toe]);
+    }
+  }
 
-  PointF beak[4] = {
-      PointF(rig.headCenter.x + side.x * 8.0f + forward.x * 6.0f,
-             rig.headCenter.y + side.y * 8.0f + forward.y * 6.0f),
-      PointF(rig.beakTip.x, rig.beakTip.y),
-      PointF(rig.headCenter.x - side.x * 8.0f + forward.x * 6.0f,
-             rig.headCenter.y - side.y * 8.0f + forward.y * 6.0f),
-      PointF(rig.headCenter.x + forward.x * 3.0f, rig.headCenter.y + forward.y * 3.0f)};
-  graphics.FillPolygon(&orange, beak, 4);
-  Pen beakOutline(Color(210, 190, 105, 18), 1.5f);
-  graphics.DrawPolygon(&beakOutline, beak, 4);
+  // Neck: a tapered ribbon swept along a quadratic spine, drawn before the body
+  // so the shoulder swallows its root.
+  {
+    const Vec2 start = rig.neckBase - forward * 9.0f;
+    constexpr int kSamples = 14;
+    std::array<Vec2, kSamples + 1> spine{};
+    for (int step = 0; step <= kSamples; ++step) {
+      spine[step] = QuadraticPoint(start, rig.neckCenter, rig.headCenter,
+                                   static_cast<float>(step) / kSamples);
+    }
+    std::vector<PointF> ribbon;
+    ribbon.reserve((kSamples + 1) * 2);
+    std::vector<PointF> back;
+    back.reserve(kSamples + 1);
+    for (int step = 0; step <= kSamples; ++step) {
+      const float t = static_cast<float>(step) / kSamples;
+      const float halfWidth = 10.5f - 4.5f * t * t;
+      const Vec2 previous = spine[std::max(0, step - 1)];
+      const Vec2 next = spine[std::min(kSamples, step + 1)];
+      const Vec2 normal = Normalize(Vec2{-(next.y - previous.y), next.x - previous.x});
+      ribbon.push_back(ToPointF(spine[step] + normal * halfWidth));
+      back.push_back(ToPointF(spine[step] - normal * halfWidth));
+    }
+    for (auto reverse = back.rbegin(); reverse != back.rend(); ++reverse) ribbon.push_back(*reverse);
+    Pen neckPen(kInk, 2.8f);
+    neckPen.SetLineJoin(LineJoinRound);
+    graphics.FillPolygon(&bodyBrush, ribbon.data(), static_cast<INT>(ribbon.size()));
+    graphics.DrawPolygon(&neckPen, ribbon.data(), static_cast<INT>(ribbon.size()));
+  }
 
-  SolidBrush black(Color(255, 20, 20, 24));
-  FillCircle(graphics, black, rig.leftEye, 2.2f);
-  FillCircle(graphics, black, rig.rightEye, 2.2f);
+  // Body block: tail fan, torso, then a folded wing on each flank.
+  {
+    const GraphicsState bodyState = graphics.Save();
+    graphics.TranslateTransform(position.x, position.y);
+    graphics.RotateTransform(angle);
+
+    GraphicsPath tail;
+    tail.AddBezier(-22.0f, -17.0f, -32.0f, -19.0f, -46.0f, -15.0f, -50.0f, -9.0f);
+    tail.AddBezier(-50.0f, -9.0f, -44.0f, -6.5f, -44.0f, -2.0f, -47.0f, 0.0f);
+    tail.AddBezier(-47.0f, 0.0f, -44.0f, 2.0f, -44.0f, 6.5f, -50.0f, 9.0f);
+    tail.AddBezier(-50.0f, 9.0f, -46.0f, 15.0f, -32.0f, 19.0f, -22.0f, 17.0f);
+    tail.CloseFigure();
+    Pen tailPen(kInk, 2.6f);
+    tailPen.SetLineJoin(LineJoinRound);
+    graphics.FillPath(&bodyBrush, &tail);
+    graphics.DrawPath(&tailPen, &tail);
+    Pen featherPen(Color(90, 28, 25, 34), 1.5f);
+    featherPen.SetStartCap(LineCapRound);
+    featherPen.SetEndCap(LineCapRound);
+    graphics.DrawLine(&featherPen, -26.0f, -9.0f, -43.0f, -8.0f);
+    graphics.DrawLine(&featherPen, -26.0f, 9.0f, -43.0f, 8.0f);
+
+    GraphicsPath body;
+    body.AddBezier(30.0f, 0.0f, 29.0f, -12.0f, 16.0f, -21.0f, -4.0f, -21.0f);
+    body.AddBezier(-4.0f, -21.0f, -22.0f, -21.0f, -31.0f, -12.0f, -31.0f, 0.0f);
+    body.AddBezier(-31.0f, 0.0f, -31.0f, 12.0f, -22.0f, 21.0f, -4.0f, 21.0f);
+    body.AddBezier(-4.0f, 21.0f, 16.0f, 21.0f, 29.0f, 12.0f, 30.0f, 0.0f);
+    body.CloseFigure();
+    graphics.FillPath(&bodyBrush, &body);
+    graphics.DrawPath(&inkPen, &body);
+    const GraphicsState clipState = graphics.Save();
+    graphics.SetClip(&body, CombineModeReplace);
+    SolidBrush rumpShade(Color(22, 28, 25, 34));
+    graphics.FillEllipse(&rumpShade, -42.0f, -24.0f, 32.0f, 48.0f);
+    graphics.Restore(clipState);
+
+    SolidBrush wingBrush(wingTint);
+    Pen wingPen(kInk, 2.4f);
+    wingPen.SetLineJoin(LineJoinRound);
+    Pen wingDetail(Color(115, 28, 25, 34), 1.6f);
+    wingDetail.SetStartCap(LineCapRound);
+    wingDetail.SetEndCap(LineCapRound);
+    for (int wing = 0; wing < 2; ++wing) {
+      const float sign = wing == 0 ? -1.0f : 1.0f;
+      const GraphicsState wingState = graphics.Save();
+      graphics.TranslateTransform(-3.0f, sign * 12.0f);
+      graphics.RotateTransform(sign * goose.WingFlap() * 17.0f);
+      GraphicsPath shape;
+      shape.AddBezier(17.0f, sign * -4.0f, 6.0f, sign * -9.0f, -13.0f, sign * -8.0f, -22.0f, sign * 1.0f);
+      shape.AddBezier(-22.0f, sign * 1.0f, -16.0f, sign * 9.0f, -3.0f, sign * 11.0f, 11.0f, sign * 6.0f);
+      shape.CloseFigure();
+      graphics.FillPath(&wingBrush, &shape);
+      graphics.DrawPath(&wingPen, &shape);
+      GraphicsPath quills;
+      quills.AddBezier(10.0f, sign * -1.5f, 2.0f, sign * -4.0f, -8.0f, sign * -4.0f, -16.0f, sign * 0.5f);
+      quills.StartFigure();
+      quills.AddBezier(7.0f, sign * 2.5f, 0.0f, sign * 0.0f, -8.0f, sign * 1.0f, -15.0f, sign * 4.0f);
+      graphics.DrawPath(&wingDetail, &quills);
+      graphics.Restore(wingState);
+    }
+    graphics.Restore(bodyState);
+  }
+
+  // Head and beak.
+  {
+    const GraphicsState headState = graphics.Save();
+    graphics.TranslateTransform(rig.headCenter.x, rig.headCenter.y);
+    graphics.RotateTransform(angle);
+    Pen headPen(kInk, 2.9f);
+    graphics.FillEllipse(&bodyBrush, -12.0f, -12.0f, 27.0f, 24.0f);
+    graphics.DrawEllipse(&headPen, -12.0f, -12.0f, 27.0f, 24.0f);
+
+    const float open = goose.BeakOpen();
+    Pen beakPen(kBeakOrangeDark, 2.3f);
+    beakPen.SetLineJoin(LineJoinRound);
+    SolidBrush lowerBrush(Color(255, 226, 134, 15));
+    const GraphicsState upperState = graphics.Save();
+    graphics.RotateTransform(-open * 19.0f);
+    std::array<PointF, 4> upper = {PointF(6.0f, -8.0f), PointF(25.0f, -3.5f), PointF(25.0f, 0.5f),
+                                   PointF(6.0f, 1.5f)};
+    graphics.FillPolygon(&orangeBrush, upper.data(), static_cast<INT>(upper.size()));
+    graphics.DrawPolygon(&beakPen, upper.data(), static_cast<INT>(upper.size()));
+    graphics.Restore(upperState);
+    const GraphicsState lowerState = graphics.Save();
+    graphics.RotateTransform(open * 26.0f);
+    std::array<PointF, 4> lower = {PointF(6.0f, 8.0f), PointF(23.0f, 3.0f), PointF(23.0f, 0.5f),
+                                   PointF(6.0f, -0.5f)};
+    graphics.FillPolygon(&lowerBrush, lower.data(), static_cast<INT>(lower.size()));
+    graphics.DrawPolygon(&beakPen, lower.data(), static_cast<INT>(lower.size()));
+    graphics.Restore(lowerState);
+    SolidBrush nostril(Color(205, 105, 50, 0));
+    graphics.FillEllipse(&nostril, 10.4f, -5.1f, 3.2f, 3.2f);
+    graphics.Restore(headState);
+  }
+
+  // Eyes: sclera, pupil looking forward, catchlight, and a brow when annoyed.
+  {
+    SolidBrush sclera(kGooseWhite);
+    SolidBrush pupil(kInk);
+    SolidBrush glint(Color(255, 255, 255, 255));
+    Pen rim(kInk, 1.7f);
+    for (const Vec2 eye : {rig.leftEye, rig.rightEye}) {
+      FillCircle(graphics, sclera, eye, 4.3f);
+      StrokeCircle(graphics, rim, eye, 4.3f);
+      const Vec2 look = eye + forward * 1.5f;
+      FillCircle(graphics, pupil, look, 2.4f);
+      FillCircle(graphics, glint, look + Vec2{-0.9f, -1.1f}, 0.9f);
+    }
+    if (goose.IsAngry()) {
+      Pen brow(kInk, 2.8f);
+      brow.SetStartCap(LineCapRound);
+      brow.SetEndCap(LineCapRound);
+      for (int eye = 0; eye < 2; ++eye) {
+        const Vec2 anchor = eye == 0 ? rig.leftEye : rig.rightEye;
+        const float sign = eye == 0 ? -1.0f : 1.0f;
+        const Vec2 outer = anchor - forward * 2.0f - side * (sign * 6.5f);
+        const Vec2 inner = anchor + forward * 6.5f - side * (sign * 2.5f);
+        graphics.DrawLine(&brow, outer.x, outer.y, inner.x, inner.y);
+      }
+    }
+  }
+
+  if (goose.IsHonking()) {
+    Pen honkPen(Color(210, 255, 255, 255), 3.0f);
+    honkPen.SetStartCap(LineCapRound);
+    honkPen.SetEndCap(LineCapRound);
+    for (int ring = 0; ring < 3; ++ring) {
+      const float radius = 26.0f + ring * 12.0f;
+      graphics.DrawArc(&honkPen, rig.beakTip.x - radius, rig.beakTip.y - radius, radius * 2.0f,
+                       radius * 2.0f, angle - 29.0f, 58.0f);
+    }
+  }
 
   if (index > 0) {
     SolidBrush badge(index == 1 ? kNeonPink : kMatrixGreen);
-    FillCircle(graphics, badge, position - side * 17.0f, 3.0f);
+    Pen badgeRim(kInk, 1.6f);
+    const Vec2 spot = position - side * 19.0f - forward * 8.0f;
+    FillCircle(graphics, badge, spot, 5.0f);
+    StrokeCircle(graphics, badgeRim, spot, 5.0f);
   }
 }
 
@@ -383,30 +769,46 @@ void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& tex
   const float width = std::clamp(190.0f + static_cast<float>(text.size()) * 3.2f, 230.0f, 470.0f);
   const float height = 34.0f + lines * 24.0f + (text.size() > 55 ? 22.0f : 0.0f);
   float x = anchor.x - width * 0.5f;
-  float y = anchor.y - height - 72.0f;
+  float y = anchor.y - height - 86.0f;
   x = std::clamp(x, 12.0f, std::max(12.0f, static_cast<float>(width_) - width - 12.0f));
   y = std::clamp(y, 12.0f, std::max(12.0f, static_cast<float>(height_) - height - 12.0f));
 
+  // Marker-drawn balloon: a lumpy outline that boils, not a rounded rectangle.
+  const std::uint32_t seed = 4211U + frame_ / 5U % 3U;
   GraphicsPath path;
-  AddRoundedRectangle(path, x, y, width, height, 18.0f);
-  PointF tail[3] = {PointF(anchor.x - 12.0f, y + height - 2.0f),
-                    PointF(anchor.x, std::min(anchor.y - 18.0f, y + height + 25.0f)),
-                    PointF(anchor.x + 12.0f, y + height - 2.0f)};
+  constexpr int kSteps = 26;
+  std::vector<PointF> outline;
+  outline.reserve(kSteps);
+  for (int step = 0; step < kSteps; ++step) {
+    const float angle = static_cast<float>(step) / kSteps * 2.0f * kPi;
+    const float wobble = 1.0f + NoiseSigned(seed * 31U + static_cast<std::uint32_t>(step)) * 0.045f;
+    outline.push_back(PointF(x + width * 0.5f + std::cos(angle) * width * 0.53f * wobble,
+                             y + height * 0.5f + std::sin(angle) * height * 0.62f * wobble));
+  }
+  path.AddClosedCurve(outline.data(), static_cast<INT>(outline.size()), 0.35f);
+
+  const float tailBase = std::clamp(anchor.x, x + 26.0f, x + width - 26.0f);
+  std::array<PointF, 3> tail = {PointF(tailBase - 16.0f, y + height * 0.86f),
+                                PointF(anchor.x, std::min(anchor.y - 40.0f, y + height + 46.0f)),
+                                PointF(tailBase + 12.0f, y + height * 0.9f)};
+
   SolidBrush shadow(Color(70, 0, 0, 0));
   const GraphicsState shadowState = graphics.Save();
-  graphics.TranslateTransform(3.0f, 4.0f);
+  graphics.TranslateTransform(4.0f, 5.0f);
   graphics.FillPath(&shadow, &path);
   graphics.Restore(shadowState);
-  SolidBrush fill(kBubbleWhite);
-  Pen outline(Color(255, 35, 35, 42), 3.0f);
-  graphics.FillPolygon(&fill, tail, 3);
-  graphics.FillPath(&fill, &path);
-  graphics.DrawPath(&outline, &path);
-  graphics.DrawLines(&outline, tail, 3);
 
-  Font font(L"Segoe UI", 18.0f, FontStyleBold, UnitPixel);
+  SolidBrush fill(kBubbleWhite);
+  Pen outlinePen(kInk, 3.4f);
+  outlinePen.SetLineJoin(LineJoinRound);
+  graphics.FillPolygon(&fill, tail.data(), static_cast<INT>(tail.size()));
+  graphics.FillPath(&fill, &path);
+  graphics.DrawPath(&outlinePen, &path);
+  graphics.DrawLines(&outlinePen, tail.data(), static_cast<INT>(tail.size()));
+
+  Font font(UiFamily(), 19.0f, FontStyleBold, UnitPixel);
   SolidBrush ink(Color(255, 28, 28, 34));
-  RectF textRectangle{x + 14.0f, y + 8.0f, x + width - 14.0f, y + height - 8.0f};
+  RectF textRectangle{x + 22.0f, y + 10.0f, x + width - 22.0f, y + height - 10.0f};
   DrawCenteredText(graphics, text, font, textRectangle, ink);
 }
 
@@ -420,6 +822,8 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const float fadeIn = static_cast<float>(std::clamp(age / 0.6, 0.0, 1.0));
     const float fadeOut = static_cast<float>(std::clamp((sprite.lifetime - age) / 1.0, 0.0, 1.0));
     const float alpha = std::min(fadeIn, fadeOut);
+    // Stickers slap down with a short overshoot instead of fading in politely.
+    const float pop = age < 0.35 ? 1.0f + static_cast<float>(0.35 - age) * 0.75f : 1.0f;
     ColorMatrix matrix = {{{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
                            {0, 0, 0, alpha, 0}, {0, 0, 0, 0, 1}}};
     ImageAttributes attributes;
@@ -427,8 +831,9 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(sprite.center.x, sprite.center.y);
     graphics.RotateTransform(sprite.angleDegrees);
-    const Rect destination(static_cast<INT>(-sprite.size * 0.5f), static_cast<INT>(-sprite.size * 0.5f),
-                           static_cast<INT>(sprite.size), static_cast<INT>(sprite.size));
+    const float size = sprite.size * pop;
+    const Rect destination(static_cast<INT>(-size * 0.5f), static_cast<INT>(-size * 0.5f),
+                           static_cast<INT>(size), static_cast<INT>(size));
     graphics.DrawImage(image, destination, 0, 0, image->GetWidth(), image->GetHeight(), UnitPixel, &attributes);
     graphics.Restore(saved);
   }
@@ -441,23 +846,7 @@ void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& stat
     graphics.FillRectangle(&filter, 0, 0, width_, height_);
   }
 
-  if (state.graffiti) {
-    Font graffitiFont(L"Impact", 150.0f, FontStyleBold | FontStyleItalic, UnitPixel);
-    StringFormat format;
-    format.SetAlignment(StringAlignmentCenter);
-    format.SetLineAlignment(StringAlignmentCenter);
-    GraphicsPath textPath;
-    FontFamily family(L"Impact");
-    textPath.AddString(L"67", -1, &family, FontStyleBold | FontStyleItalic, 150.0f,
-                       PointF(width_ * 0.5f - 150.0f, height_ * 0.43f - 100.0f), &format);
-    Pen glow(Color(95, 255, 45, 170), 16.0f);
-    Pen edge(Color(255, 55, 5, 40), 5.0f);
-    SolidBrush fill(kNeonPink);
-    graphics.DrawPath(&glow, &textPath);
-    graphics.FillPath(&fill, &textPath);
-    graphics.DrawPath(&edge, &textPath);
-    (void)graffitiFont;
-  }
+  if (state.graffiti) DrawGraffiti(graphics, state);
 
   if (state.clipboardBadge) {
     const float age = static_cast<float>(state.logicalTime - 120.0);
@@ -466,14 +855,15 @@ void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& stat
     const float y = (1.0f - travel) * height_ * 0.5f + travel * 100.0f;
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(x, y);
-    graphics.RotateTransform(-7.0f);
+    graphics.RotateTransform(-7.0f + std::sin(static_cast<float>(state.logicalTime) * 2.4f) * 1.5f);
     GraphicsPath badge;
-    AddRoundedRectangle(badge, -205.0f, -48.0f, 410.0f, 96.0f, 14.0f);
+    AddWobblyRectangle(badge, -205.0f, -48.0f, 410.0f, 96.0f, 3.0f, 907U + frame_ / 6U % 3U);
     SolidBrush fill(Color(235, 255, 251, 234));
     Pen edge(kMatrixGreen, 6.0f);
+    edge.SetLineJoin(LineJoinRound);
     graphics.FillPath(&fill, &badge);
     graphics.DrawPath(&edge, &badge);
-    Font font(L"Arial", 23.0f, FontStyleBold, UnitPixel);
+    Font font(PosterFamily(), 27.0f, FontStyleBold, UnitPixel);
     SolidBrush ink(Color(255, 18, 80, 10));
     DrawCenteredText(graphics, L"CLIPBOARD CERTIFIED\n+9999 AURA", font,
                      {-195.0f, -42.0f, 195.0f, 42.0f}, ink);
@@ -481,82 +871,404 @@ void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& stat
   }
 }
 
-void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const {
-  Font small(L"Segoe UI", 16.0f, FontStyleBold, UnitPixel);
-  SolidBrush dark(Color(220, 18, 18, 24));
-  SolidBrush light(Color(245, 255, 255, 255));
-  GraphicsPath profile;
-  AddRoundedRectangle(profile, 12.0f, 12.0f, 178.0f, 34.0f, 10.0f);
-  graphics.FillPath(&dark, &profile);
-  std::wstring profileText = std::wstring(L"GooseRot · ") + ModeName(state.mode);
-  DrawCenteredText(graphics, profileText, small, {12.0f, 12.0f, 190.0f, 46.0f}, light);
+void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) const {
+  // The tag is sprayed live: strokes are revealed by arc length, paint sags into
+  // drips behind the nozzle and overspray keeps accumulating.
+  const float progress = std::clamp(state.graffitiProgress, 0.0f, 1.0f);
+  if (progress <= 0.0f) return;
+  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
+  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  const std::vector<SprayStroke> strokes = BuildTagStrokes(center, scale);
 
-  std::wostringstream aura;
-  aura << L"AURA  " << state.aura;
-  GraphicsPath auraBox;
-  AddRoundedRectangle(auraBox, static_cast<float>(width_ - 235), 12.0f, 220.0f, 44.0f, 12.0f);
-  SolidBrush auraFill(Color(230, 22, 22, 30));
-  Pen auraPen(state.aura >= 0 ? kMatrixGreen : kNeonPink, 3.0f);
-  graphics.FillPath(&auraFill, &auraBox);
-  graphics.DrawPath(&auraPen, &auraBox);
-  Font auraFont(L"Segoe UI", 20.0f, FontStyleBold, UnitPixel);
-  DrawCenteredText(graphics, aura.str(), auraFont,
-                   {static_cast<float>(width_ - 230), 15.0f, static_cast<float>(width_ - 20), 52.0f}, light);
+  float total = 0.0f;
+  for (const SprayStroke& stroke : strokes) total += stroke.length;
+  if (total <= 0.0f) return;
+  float painted = progress * total;
+
+  const float band = scale * 0.30f;
+  Pen halo(Color(70, 255, 45, 170), band * 1.85f);
+  halo.SetStartCap(LineCapRound);
+  halo.SetEndCap(LineCapRound);
+  halo.SetLineJoin(LineJoinRound);
+  // The dark pass is laid down first and slightly wider, so the pink core reads
+  // as paint with an edge rather than a line with a stripe through it.
+  Pen edge(Color(255, 55, 5, 40), band * 1.16f);
+  edge.SetStartCap(LineCapRound);
+  edge.SetEndCap(LineCapRound);
+  edge.SetLineJoin(LineJoinRound);
+  Pen core(kNeonPink, band * 0.92f);
+  core.SetStartCap(LineCapRound);
+  core.SetEndCap(LineCapRound);
+  core.SetLineJoin(LineJoinRound);
+
+  SolidBrush oversprayBrush(Color(90, 255, 45, 170));
+  SolidBrush dripBrush(kNeonPink);
+  std::uint32_t overspraySeed = 17U;
+
+  for (const SprayStroke& stroke : strokes) {
+    if (painted <= 0.0f) break;
+    std::vector<PointF> visible;
+    visible.reserve(stroke.points.size());
+    visible.push_back(ToPointF(stroke.points.front()));
+    float used = 0.0f;
+    for (std::size_t index = 1; index < stroke.points.size() && used < painted; ++index) {
+      const float segment = Distance(stroke.points[index - 1], stroke.points[index]);
+      if (used + segment <= painted) {
+        visible.push_back(ToPointF(stroke.points[index]));
+        used += segment;
+      } else {
+        const float t = segment <= 0.0001f ? 0.0f : (painted - used) / segment;
+        const Vec2 partial = Lerp(stroke.points[index - 1], stroke.points[index], t);
+        visible.push_back(ToPointF(partial));
+        used = painted;
+      }
+    }
+    if (visible.size() >= 2) {
+      graphics.DrawLines(&halo, visible.data(), static_cast<INT>(visible.size()));
+      graphics.DrawLines(&edge, visible.data(), static_cast<INT>(visible.size()));
+      graphics.DrawLines(&core, visible.data(), static_cast<INT>(visible.size()));
+
+      // Overspray speckle around the painted line.
+      for (std::size_t index = 1; index < visible.size(); index += 2) {
+        for (int dot = 0; dot < 3; ++dot) {
+          const std::uint32_t seed = overspraySeed++ * 41U + static_cast<std::uint32_t>(dot);
+          const float radius = band * (0.55f + Noise01(seed) * 0.75f);
+          const float angle = Noise01(seed + 3U) * 2.0f * kPi;
+          const float size = 1.4f + Noise01(seed + 9U) * 3.6f;
+          graphics.FillEllipse(&oversprayBrush, visible[index].X + std::cos(angle) * radius,
+                               visible[index].Y + std::sin(angle) * radius, size, size);
+        }
+      }
+
+      // Drips: paint that kept running after the nozzle moved on.
+      for (std::size_t index = 2; index + 1 < visible.size(); index += 5) {
+        const std::uint32_t seed = static_cast<std::uint32_t>(index) * 733U + overspraySeed;
+        if (Noise01(seed) < 0.45f) continue;
+        const float travelled = painted - used * static_cast<float>(index) / visible.size();
+        const float run = std::clamp(travelled * 0.16f, 0.0f, band * (1.6f + Noise01(seed + 1U) * 3.2f));
+        if (run <= 2.0f) continue;
+        const float thickness = band * (0.16f + Noise01(seed + 2U) * 0.16f);
+        graphics.FillRectangle(&dripBrush, visible[index].X - thickness * 0.5f, visible[index].Y,
+                               thickness, run);
+        graphics.FillEllipse(&dripBrush, visible[index].X - thickness * 0.8f,
+                             visible[index].Y + run - thickness * 0.8f, thickness * 1.6f,
+                             thickness * 1.6f);
+      }
+    }
+    painted -= stroke.length;
+  }
+
+  if (progress < 1.0f) {
+    // The can itself: a bright burst of atomised paint at the nozzle.
+    const Vec2 head = StrokeHead(strokes, progress);
+    SolidBrush mist(Color(120, 255, 255, 255));
+    for (int dot = 0; dot < 16; ++dot) {
+      const std::uint32_t seed = frame_ * 97U + static_cast<std::uint32_t>(dot);
+      const float radius = band * (0.4f + Noise01(seed) * 1.5f);
+      const float angle = Noise01(seed + 5U) * 2.0f * kPi;
+      const float size = 1.5f + Noise01(seed + 11U) * 4.0f;
+      graphics.FillEllipse(&mist, head.x + std::cos(angle) * radius,
+                           head.y + std::sin(angle) * radius, size, size);
+    }
+    SolidBrush flash(Color(150, 255, 45, 170));
+    graphics.FillEllipse(&flash, head.x - band * 0.5f, head.y - band * 0.5f, band, band);
+  }
+}
+
+void OverlayWindow::DrawCursorLatch(Graphics& graphics, const RenderState& state) const {
+  if (!state.cursorLatched || !state.geese || state.geese->empty()) return;
+  const Vec2 beak = state.geese->front().Rig().beakTip;
+  const Vec2 cursor = ScreenToCanvas(state.cursor);
+
+  // A visible clamp between beak and pointer: the drag is happening, and it is
+  // obvious who is doing it.
+  Pen grip(Color(220, 255, 45, 170), 5.0f);
+  grip.SetStartCap(LineCapRound);
+  grip.SetEndCap(LineCapRound);
+  graphics.DrawLine(&grip, beak.x, beak.y, cursor.x, cursor.y);
+  Pen ring(Color(230, 255, 45, 170), 3.5f);
+  const float pulse = 12.0f + std::sin(static_cast<float>(state.logicalTime) * 22.0f) * 3.0f;
+  StrokeCircle(graphics, ring, cursor, pulse);
+
+  Font font(PosterFamily(), 22.0f, FontStyleBold, UnitPixel);
+  DrawSplitText(graphics, L"GRABBED", font,
+                {cursor.x - 90.0f, cursor.y + 27.0f, cursor.x + 90.0f, cursor.y + 57.0f},
+                kNeonPink, 2.0f);
+}
+
+void OverlayWindow::DrawToasts(Graphics& graphics, const RenderState& state) const {
+  if (!state.toasts) return;
+  int slot = 0;
+  for (const ToastNotice& toast : *state.toasts) {
+    const double age = state.logicalTime - toast.createdAt;
+    if (age < 0.0 || age > toast.lifetime) continue;
+    const float slide = static_cast<float>(std::clamp(age / 0.35, 0.0, 1.0));
+    const float fade = static_cast<float>(std::clamp((toast.lifetime - age) / 0.6, 0.0, 1.0));
+    const float width = 372.0f;
+    const float height = 104.0f;
+    const float x = width_ - width - 22.0f + (1.0f - slide) * (width + 40.0f);
+    const float y = height_ - 70.0f - (slot + 1) * (height + 12.0f);
+    if (y < 10.0f) break;
+    ++slot;
+
+    const GraphicsState saved = graphics.Save();
+    graphics.TranslateTransform(x, y);
+    graphics.RotateTransform(NoiseSigned(static_cast<std::uint32_t>(toast.createdAt * 13.0) + 3U) * 1.6f);
+    GraphicsPath frame;
+    AddWobblyRectangle(frame, 0.0f, 0.0f, width, height, 2.4f,
+                       static_cast<std::uint32_t>(toast.createdAt * 7.0) + frame_ / 7U % 3U);
+    SolidBrush fill(WithAlpha(Color(255, 24, 24, 31), fade * 0.94f));
+    Pen edge(WithAlpha(kMatrixGreen, fade), 2.6f);
+    edge.SetLineJoin(LineJoinRound);
+    graphics.FillPath(&fill, &frame);
+    graphics.DrawPath(&edge, &frame);
+
+    SolidBrush shieldBrush(WithAlpha(kMatrixGreen, fade));
+    std::array<PointF, 5> shield = {PointF(30.0f, 20.0f), PointF(52.0f, 28.0f), PointF(48.0f, 62.0f),
+                                    PointF(30.0f, 74.0f), PointF(14.0f, 58.0f)};
+    graphics.FillPolygon(&shieldBrush, shield.data(), static_cast<INT>(shield.size()));
+
+    Font title(UiFamily(), 17.0f, FontStyleBold, UnitPixel);
+    Font body(UiFamily(), 15.0f, FontStyleRegular, UnitPixel);
+    SolidBrush titleInk(WithAlpha(Color(255, 255, 255, 255), fade));
+    SolidBrush bodyInk(WithAlpha(Color(255, 214, 218, 226), fade));
+    StringFormat left;
+    left.SetAlignment(StringAlignmentNear);
+    left.SetLineAlignment(StringAlignmentCenter);
+    graphics.DrawString(toast.title.c_str(), -1, &title,
+                        Gdiplus::RectF(68.0f, 14.0f, width - 82.0f, 32.0f), &left, &titleInk);
+    graphics.DrawString(toast.body.c_str(), -1, &body,
+                        Gdiplus::RectF(68.0f, 44.0f, width - 82.0f, 50.0f), &left, &bodyInk);
+    graphics.Restore(saved);
+  }
+}
+
+void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) const {
+  const float intensity = std::clamp(state.glitch, 0.0f, 1.0f);
+  if (intensity <= 0.01f) return;
+  const float canvasWidth = static_cast<float>(width_);
+  const float canvasHeight = static_cast<float>(height_);
+
+  // Torn scan bands: slices of the display that slipped sideways.
+  const int bands = static_cast<int>(1.0f + intensity * 7.0f);
+  for (int band = 0; band < bands; ++band) {
+    const std::uint32_t seed = frame_ / 3U * 71U + static_cast<std::uint32_t>(band) * 911U;
+    if (Noise01(seed) > 0.25f + intensity * 0.6f) continue;
+    const float y = Noise01(seed + 1U) * canvasHeight;
+    const float bandHeight = 6.0f + Noise01(seed + 2U) * 46.0f * intensity;
+    const float shift = NoiseSigned(seed + 3U) * 60.0f * intensity;
+    SolidBrush tear(Color(static_cast<BYTE>(28 + 46 * intensity), 255, 45, 170));
+    SolidBrush tearCyan(Color(static_cast<BYTE>(24 + 40 * intensity), 40, 230, 255));
+    graphics.FillRectangle(&tear, shift, y, canvasWidth, bandHeight);
+    graphics.FillRectangle(&tearCyan, -shift * 0.6f, y + bandHeight * 0.35f, canvasWidth,
+                           bandHeight * 0.45f);
+  }
+
+  // Datamosh blocks: chunks of "corrupted framebuffer".
+  const int blocks = static_cast<int>(intensity * 16.0f);
+  for (int block = 0; block < blocks; ++block) {
+    const std::uint32_t seed = frame_ / 2U * 313U + static_cast<std::uint32_t>(block) * 577U;
+    const float x = Noise01(seed) * canvasWidth;
+    const float y = Noise01(seed + 1U) * canvasHeight;
+    const float w = 24.0f + Noise01(seed + 2U) * 190.0f;
+    const float h = 8.0f + Noise01(seed + 3U) * 46.0f;
+    const bool green = Noise01(seed + 4U) > 0.5f;
+    SolidBrush brush(green ? Color(70, 57, 255, 20) : Color(70, 255, 45, 170));
+    graphics.FillRectangle(&brush, x, y, w, h);
+  }
+
+  // CRT scanlines across the whole desktop.
+  if (intensity > 0.25f) {
+    // Hundreds of full-width lines per frame: antialiasing them would be the
+    // most expensive thing on screen and would change nothing visually.
+    const SmoothingMode previous = graphics.GetSmoothingMode();
+    graphics.SetSmoothingMode(SmoothingModeNone);
+    SolidBrush scan(Color(static_cast<BYTE>(16 + 26 * intensity), 0, 0, 0));
+    const int step = 4;
+    const int offset = static_cast<int>(frame_ % static_cast<unsigned>(step));
+    for (int y = offset; y < height_; y += step) {
+      graphics.FillRectangle(&scan, 0.0f, static_cast<float>(y), canvasWidth, 1.0f);
+    }
+    graphics.SetSmoothingMode(previous);
+  }
+
+  // Ghost cursors: the pointer appears to have multiplied.
+  const int ghosts = static_cast<int>(intensity * 9.0f);
+  const Vec2 realCursor = ScreenToCanvas(state.cursor);
+  for (int ghost = 0; ghost < ghosts; ++ghost) {
+    const std::uint32_t seed = frame_ / 4U * 149U + static_cast<std::uint32_t>(ghost) * 383U;
+    const Vec2 spot{realCursor.x + NoiseSigned(seed) * 260.0f * intensity,
+                    realCursor.y + NoiseSigned(seed + 1U) * 210.0f * intensity};
+    DrawArrowCursor(graphics, spot, 1.15f, Color(150, 255, 255, 255), Color(190, 28, 25, 34));
+  }
+
+  // A window that stopped responding, drawn as a hollow ghost frame.
+  if (intensity > 0.45f) {
+    const std::uint32_t seed = frame_ / 40U * 617U;
+    const float w = 300.0f + Noise01(seed + 2U) * 240.0f;
+    const float h = 180.0f + Noise01(seed + 3U) * 150.0f;
+    const float x = Noise01(seed) * std::max(1.0f, canvasWidth - w);
+    const float y = Noise01(seed + 1U) * std::max(1.0f, canvasHeight - h);
+    const float drift = NoiseSigned(frame_ / 3U * 29U) * 6.0f * intensity;
+    SolidBrush body(Color(70, 236, 240, 246));
+    SolidBrush bar(Color(120, 40, 46, 60));
+    Pen frameEdge(Color(150, 255, 45, 170), 2.0f);
+    graphics.FillRectangle(&body, x + drift, y, w, h);
+    graphics.FillRectangle(&bar, x + drift, y, w, 30.0f);
+    graphics.DrawRectangle(&frameEdge, x + drift, y, w, h);
+    Font font(UiFamily(), 15.0f, FontStyleRegular, UnitPixel);
+    SolidBrush ink(Color(210, 255, 255, 255));
+    StringFormat left;
+    left.SetLineAlignment(StringAlignmentCenter);
+    graphics.DrawString(L"explorer.exe — (Ne répond pas)", -1, &font,
+                        Gdiplus::RectF(x + drift + 10.0f, y, w - 20.0f, 30.0f), &left, &ink);
+  }
+
+  // Full-frame white/blue kicks, only ever painted inside our own overlay.
+  if (intensity > 0.6f && Noise01(frame_ * 613U) > 0.955f) {
+    SolidBrush flash(Noise01(frame_ * 977U) > 0.5f ? Color(46, 255, 255, 255) : Color(56, 18, 92, 171));
+    graphics.FillRectangle(&flash, 0, 0, width_, height_);
+  }
+}
+
+void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const {
+  const std::uint32_t boil = frame_ / 6U % 3U;
+  Font small(UiFamily(), 16.0f, FontStyleBold, UnitPixel);
+  SolidBrush dark(Color(226, 18, 18, 24));
+  SolidBrush light(Color(245, 255, 255, 255));
+
+  // Profile tag, taped to the corner at an angle.
+  {
+    const GraphicsState saved = graphics.Save();
+    graphics.TranslateTransform(20.0f, 22.0f);
+    graphics.RotateTransform(-1.8f);
+    GraphicsPath profile;
+    AddWobblyRectangle(profile, 0.0f, 0.0f, 186.0f, 36.0f, 2.2f, 311U + boil);
+    Pen edge(Color(220, 255, 45, 170), 2.4f);
+    edge.SetLineJoin(LineJoinRound);
+    graphics.FillPath(&dark, &profile);
+    graphics.DrawPath(&edge, &profile);
+    SolidBrush tape(Color(120, 255, 251, 234));
+    graphics.FillRectangle(&tape, -8.0f, 4.0f, 26.0f, 13.0f);
+    std::wstring profileText = std::wstring(L"GooseRot · ") + ModeName(state.mode);
+    DrawCenteredText(graphics, profileText, small, {0.0f, 0.0f, 186.0f, 36.0f}, light);
+    graphics.Restore(saved);
+  }
+
+  // Aura counter: shakes and flashes whenever the number moves.
+  {
+    const double sinceDelta = state.logicalTime - state.auraDeltaAt;
+    const float punch = static_cast<float>(std::clamp(1.0 - sinceDelta / 0.9, 0.0, 1.0));
+    const GraphicsState saved = graphics.Save();
+    graphics.TranslateTransform(static_cast<float>(width_ - 286) + NoiseSigned(frame_ * 7U) * punch * 7.0f,
+                                14.0f + NoiseSigned(frame_ * 7U + 3U) * punch * 6.0f);
+    graphics.RotateTransform(1.6f + punch * NoiseSigned(frame_ * 11U) * 3.0f);
+    GraphicsPath auraBox;
+    AddWobblyRectangle(auraBox, 0.0f, 0.0f, 268.0f, 48.0f, 2.6f, 733U + boil);
+    SolidBrush auraFill(Color(232, 22, 22, 30));
+    Pen auraPen(state.aura >= 0 ? kMatrixGreen : kNeonPink, 3.2f + punch * 2.0f);
+    auraPen.SetLineJoin(LineJoinRound);
+    graphics.FillPath(&auraFill, &auraBox);
+    graphics.DrawPath(&auraPen, &auraBox);
+    std::wostringstream aura;
+    aura << L"AURA  " << state.aura;
+    Font auraFont(PosterFamily(), 24.0f, FontStyleBold, UnitPixel);
+    DrawSplitText(graphics, aura.str(), auraFont, {6.0f, 4.0f, 262.0f, 44.0f},
+                  Color(250, 255, 255, 255), punch * 3.5f + state.glitch * 2.0f);
+    graphics.Restore(saved);
+
+    if (punch > 0.0f && state.auraDelta != 0) {
+      std::wostringstream delta;
+      delta << (state.auraDelta > 0 ? L"+" : L"") << state.auraDelta;
+      Font deltaFont(PosterFamily(), 30.0f, FontStyleBold, UnitPixel);
+      SolidBrush deltaBrush(WithAlpha(state.auraDelta > 0 ? kMatrixGreen : kCriticalRed, punch));
+      const float rise = (1.0f - punch) * 46.0f;
+      DrawCenteredText(graphics, delta.str(), deltaFont,
+                       {static_cast<float>(width_ - 286), 70.0f - rise,
+                        static_cast<float>(width_ - 18), 108.0f - rise},
+                       deltaBrush);
+    }
+  }
+
+  if (state.popupCount > 0) {
+    std::wostringstream counter;
+    counter << L"fenêtres ouvertes : " << state.popupCount;
+    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
+    SolidBrush ink(Color(200, 255, 45, 170));
+    DrawCenteredText(graphics, counter.str(), font,
+                     {static_cast<float>(width_ - 286), 112.0f, static_cast<float>(width_ - 18), 136.0f},
+                     ink);
+  }
 
   if (state.logicalTime >= 90.0 && state.logicalTime < 135.0) {
     constexpr std::array<const wchar_t*, 3> subtitles = {
         L"Tralala la la la...", L"Tutti frutti cappuccina", L"Bombardino crocodilo"};
     const auto index = static_cast<std::size_t>(state.logicalTime / 4.0) % subtitles.size();
-    Font subtitleFont(L"Segoe UI", 24.0f, FontStyleBold, UnitPixel);
+    Font subtitleFont(UiFamily(), 25.0f, FontStyleBold, UnitPixel);
+    const GraphicsState saved = graphics.Save();
+    graphics.TranslateTransform(width_ * 0.5f - 214.0f, height_ - 104.0f);
+    graphics.RotateTransform(-0.9f);
     GraphicsPath box;
-    AddRoundedRectangle(box, width_ * 0.5f - 210.0f, height_ - 102.0f, 420.0f, 48.0f, 12.0f);
+    AddWobblyRectangle(box, 0.0f, 0.0f, 428.0f, 50.0f, 2.4f, 1201U + boil);
     graphics.FillPath(&dark, &box);
-    DrawCenteredText(graphics, subtitles[index], subtitleFont,
-                     {width_ * 0.5f - 205.0f, height_ - 99.0f,
-                      width_ * 0.5f + 205.0f, height_ - 57.0f}, light);
+    Pen edge(Color(180, 255, 251, 234), 2.0f);
+    graphics.DrawPath(&edge, &box);
+    DrawCenteredText(graphics, subtitles[index], subtitleFont, {6.0f, 4.0f, 422.0f, 46.0f}, light);
+    graphics.Restore(saved);
   }
 
   if (state.finalMonologue) {
-    Font criticalFont(L"Impact", 42.0f, FontStyleBold, UnitPixel);
-    SolidBrush critical(kCriticalRed);
-    DrawCenteredText(graphics, L"CRITICAL ERROR: MAXIMUM BRAINROT REACHED.", criticalFont,
-                     {20.0f, height_ * 0.16f, static_cast<float>(width_ - 20), height_ * 0.28f}, critical);
+    Font criticalFont(PosterFamily(), 46.0f, FontStyleBold, UnitPixel);
+    DrawSplitText(graphics, L"CRITICAL ERROR: MAXIMUM BRAINROT REACHED.", criticalFont,
+                  {20.0f, height_ * 0.16f, static_cast<float>(width_ - 20), height_ * 0.28f},
+                  kCriticalRed, 3.0f + state.glitch * 6.0f);
   }
 
   if (state.countdown) {
     const int remaining = std::clamp(30 - static_cast<int>(state.logicalTime - 270.0), 0, 30);
     wchar_t countdown[16]{};
     swprintf(countdown, std::size(countdown), L"00:%02d", remaining);
-    Font countdownFont(L"Consolas", 64.0f, FontStyleBold, UnitPixel);
-    SolidBrush critical(kCriticalRed);
-    DrawCenteredText(graphics, countdown, countdownFont,
-                     {width_ * 0.5f - 180.0f, 20.0f, width_ * 0.5f + 180.0f, 100.0f}, critical);
+    Font countdownFont(MonoFamily(), 72.0f, FontStyleBold, UnitPixel);
+    const float beat = static_cast<float>(std::fmod(state.logicalTime, 1.0));
+    const float kick = beat < 0.12f ? 1.0f - beat / 0.12f : 0.0f;
+    DrawSplitText(graphics, countdown, countdownFont,
+                  {width_ * 0.5f - 200.0f, 18.0f - kick * 4.0f, width_ * 0.5f + 200.0f,
+                   112.0f - kick * 4.0f},
+                  kCriticalRed, 2.0f + kick * 6.0f);
   }
 
   if (state.resetButton) {
-    const float buttonWidth = 250.0f;
+    const float buttonWidth = 268.0f;
     const float x = width_ * 0.5f - buttonWidth * 0.5f;
-    const float y = height_ - 130.0f;
+    const float y = height_ - 136.0f;
+    const GraphicsState saved = graphics.Save();
+    graphics.TranslateTransform(x, y);
+    graphics.RotateTransform(-1.2f);
     GraphicsPath button;
-    AddRoundedRectangle(button, x, y, buttonWidth, 64.0f, 18.0f);
+    AddWobblyRectangle(button, 0.0f, 0.0f, buttonWidth, 68.0f, 3.0f, 1607U + boil);
     SolidBrush fill(kNeonPink);
     Pen edge(Color(255, 255, 255, 255), 4.0f);
+    edge.SetLineJoin(LineJoinRound);
     graphics.FillPath(&fill, &button);
     graphics.DrawPath(&edge, &button);
-    Font font(L"Segoe UI", 25.0f, FontStyleBold, UnitPixel);
-    DrawCenteredText(graphics, L"RESET AURA", font, {x, y, x + buttonWidth, y + 64.0f}, light);
+    Font font(PosterFamily(), 30.0f, FontStyleBold, UnitPixel);
+    DrawCenteredText(graphics, L"RESET AURA", font, {0.0f, 2.0f, buttonWidth, 66.0f}, light);
+    graphics.Restore(saved);
   }
 
   if (state.emergencyProgress > 0.0f) {
     const float width = std::min(560.0f, width_ - 40.0f);
     const float x = (width_ - width) * 0.5f;
     const float y = height_ - 38.0f;
-    SolidBrush track(Color(225, 20, 20, 26));
-    SolidBrush progress(kNeonPink);
-    graphics.FillRectangle(&track, x, y, width, 22.0f);
-    graphics.FillRectangle(&progress, x, y, width * std::clamp(state.emergencyProgress, 0.0f, 1.0f), 22.0f);
-    Font font(L"Segoe UI", 14.0f, FontStyleBold, UnitPixel);
-    DrawCenteredText(graphics, L"Maintenez Esc pour fermer et restaurer le bureau", font,
+    SolidBrush track(Color(230, 20, 20, 26));
+    SolidBrush progress(kMatrixGreen);
+    GraphicsPath frame;
+    AddWobblyRectangle(frame, x, y, width, 24.0f, 1.8f, 2311U + boil);
+    graphics.FillPath(&track, &frame);
+    graphics.FillRectangle(&progress, x + 3.0f, y + 3.0f,
+                           (width - 6.0f) * std::clamp(state.emergencyProgress, 0.0f, 1.0f), 18.0f);
+    Font font(UiFamily(), 14.0f, FontStyleBold, UnitPixel);
+    DrawCenteredText(graphics, L"Maintenez Esc pour tout fermer et restaurer le bureau", font,
                      {x, y - 26.0f, x + width, y - 2.0f}, light);
   }
 }
@@ -566,9 +1278,9 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
   if (state.mode == RunMode::Lab && age < 2.0) {
     SolidBrush blueScreen(Color(255, 18, 92, 171));
     graphics.FillRectangle(&blueScreen, 0, 0, width_, height_);
-    Font face(L"Segoe UI", 76.0f, FontStyleRegular, UnitPixel);
-    Font title(L"Segoe UI", 28.0f, FontStyleRegular, UnitPixel);
-    Font detail(L"Segoe UI", 18.0f, FontStyleRegular, UnitPixel);
+    Font face(UiFamily(), 76.0f, FontStyleRegular, UnitPixel);
+    Font title(UiFamily(), 28.0f, FontStyleRegular, UnitPixel);
+    Font detail(UiFamily(), 18.0f, FontStyleRegular, UnitPixel);
     SolidBrush white(Color::White);
     DrawCenteredText(graphics, L":(", face,
                      {20.0f, height_ * 0.22f, static_cast<float>(width_ - 20), height_ * 0.40f}, white);
@@ -583,8 +1295,8 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
   Pen spinner(kNeonPink, 8.0f);
   graphics.DrawArc(&spinner, width_ * 0.5f - 38.0f, height_ * 0.42f - 38.0f, 76.0f, 76.0f,
                    static_cast<float>(age * 220.0), 250.0f);
-  Font title(L"Segoe UI", 34.0f, FontStyleRegular, UnitPixel);
-  Font detail(L"Segoe UI", 18.0f, FontStyleRegular, UnitPixel);
+  Font title(UiFamily(), 34.0f, FontStyleRegular, UnitPixel);
+  Font detail(UiFamily(), 18.0f, FontStyleRegular, UnitPixel);
   SolidBrush white(Color::White);
   DrawCenteredText(graphics, L"Resetting aura...", title,
                    {20.0f, height_ * 0.53f, static_cast<float>(width_ - 20), height_ * 0.63f}, white);

@@ -122,6 +122,57 @@ void TestGooseLocomotion() {
          "tiny preview bounds collapse safely to their center");
 }
 
+void TestGooseAnimationState() {
+  gooserot::GooseEntity goose({400.0f, 300.0f});
+  const gooserot::RectF bounds{0.0f, 0.0f, 800.0f, 600.0f};
+
+  goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.BeakOpen() < 0.05f, "an idle goose keeps its beak shut");
+
+  goose.Honk(0.5f);
+  Expect(goose.IsHonking(), "honking starts immediately");
+  for (int i = 0; i < 6; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.BeakOpen() > 0.4f, "honking opens the beak");
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(!goose.IsHonking() && goose.BeakOpen() < 0.05f, "the honk expires and the beak closes");
+
+  goose.SetLatched(true);
+  goose.Honk(1.0f);
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.NeckExtension() > 0.9f, "latching onto the cursor stretches the neck");
+  Expect(goose.BeakOpen() < 0.05f, "a latched beak stays clamped even during a honk");
+  const gooserot::Vec2 desiredBeak{700.0f, 250.0f};
+  const gooserot::Vec2 bodyTarget = goose.BodyTargetForBeak(desiredBeak);
+  const gooserot::Vec2 projectedBeak = bodyTarget + (goose.Rig().beakTip - goose.Position());
+  Expect(gooserot::Distance(projectedBeak, desiredBeak) < 0.01f,
+         "beak targeting converts the desired tip into a body target");
+  goose.SetLatched(false);
+
+  constexpr gooserot::Vec2 beakTargets[] = {
+      {36.0f, 300.0f}, {764.0f, 300.0f}, {400.0f, 36.0f}, {400.0f, 564.0f}};
+  for (const gooserot::Vec2 beakTarget : beakTargets) {
+    gooserot::GooseEntity tracker({400.0f, 300.0f});
+    bool reached = false;
+    for (int frame = 0; frame < 450 && !reached; ++frame) {
+      tracker.SetTarget(tracker.BodyTargetForBeak(beakTarget), gooserot::SpeedTier::Charge, true);
+      tracker.Update(1.0f / 30.0f, bounds);
+      reached = tracker.BeakDistanceTo(beakTarget) < 14.0f;
+    }
+    Expect(reached, "the animated beak converges on targets near every screen edge");
+  }
+
+  // Facing +X: head and beak lead, tail trails, feet straddle the body.
+  goose.SetPosition({400.0f, 300.0f});
+  goose.SetTarget({700.0f, 300.0f}, gooserot::SpeedTier::Run);
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  const gooserot::GooseRig& rig = goose.Rig();
+  Expect(rig.beakTip.x > rig.headCenter.x && rig.headCenter.x > goose.Position().x,
+         "the head and beak lead the body");
+  Expect(rig.tailTip.x < goose.Position().x - 30.0f, "the tail trails the body");
+  Expect((rig.leftFoot.y < goose.Position().y) != (rig.rightFoot.y < goose.Position().y),
+         "the feet straddle the body axis");
+}
+
 void TestWindowClamp() {
   const gooserot::RectF work{0.0f, 0.0f, 1920.0f, 1040.0f};
   const auto moved = gooserot::ClampWindowRect({1900.0f, -50.0f, 2300.0f, 250.0f}, work);
@@ -136,6 +187,7 @@ int main() {
   TestArgumentParsing();
   TestTimeline();
   TestGooseLocomotion();
+  TestGooseAnimationState();
   TestWindowClamp();
   if (failures == 0) {
     std::cout << "All GooseRot core tests passed.\n";

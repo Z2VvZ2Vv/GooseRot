@@ -104,12 +104,14 @@ if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
 
   add_executable(gooserot_win32_tests
     tests/win32_integration_tests.cpp
+    src/companion_windows.cpp
+    src/companion_windows.hpp
     src/desktop_director.cpp
     src/desktop_director.hpp
     src/recovery_watchdog.cpp
     src/recovery_watchdog.hpp
   )
-  target_link_libraries(gooserot_win32_tests PRIVATE gooserot_core user32)
+  target_link_libraries(gooserot_win32_tests PRIVATE gooserot_core user32 gdi32)
   if(MSVC)
     set_property(TARGET gooserot_win32_tests PROPERTY
       MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

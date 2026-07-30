@@ -38,7 +38,7 @@ Sans réponse, la boîte se ferme seule après quelques secondes et l’oie sél
 
 > Apology barely accepted.
 
-### 0:40 — Auto-Typing
+### 0:40 — Auto-Typing (et la fenêtre qui refuse de partir)
 
 L’oie ouvre un faux Bloc-notes appartenant au processus GooseRot et y compose rapidement un flux aléatoire de brainrot :
 
@@ -48,13 +48,15 @@ L’oie ouvre un faux Bloc-notes appartenant au processus GooseRot et y compose 
 
 Le texte est recomposé en permanence depuis une banque de mots, de nombres, d’emojis et de ponctuation. L’oie écrit **en boucle jusqu’au gag suivant à `1:00`**, sans répéter exactement la même phrase. À `1:00`, elle ajoute une dernière ligne — `SESSION SAVED. +67 AURA.` — puis réduit directement le Bloc-notes dans la barre des tâches.
 
+Tenter de fermer cette fenêtre ne marche pas. Le `[X]` est refusé trois fois : le titre change (`NON - Grindset`, `Untitled - Grindset (le bouton est décoratif)`), la fenêtre se décale de 67 pixels et l’oie commente. À la quatrième tentative elle se ferme… et revient aussitôt sous le nom `Untitled - Grindset (2) - récupéré automatiquement`. Après ce retour unique, elle se ferme normalement.
+
 ## Phase 2 — 1:00 à 2:15 : Cursor & Window Hijack
 
 ### 1:00 — Sprint & Double Offset
 
 L’oie prend le contrôle à la fois du curseur et des fenêtres, toujours avec le nombre `67` comme règle.
 
-Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l’oie sprinte jusqu’au pointeur, s’y accroche avec son bec et **traîne elle-même le curseur de 67 pixels vers la droite**. Elle affiche aussitôt une bulle :
+Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l’oie sprinte jusqu’au pointeur, s’y accroche avec son bec et **traîne elle-même le curseur de 67 pixels vers la droite**. La traction dure environ une seconde : un lien rose relie le bec au pointeur, un anneau pulse autour du curseur et le mot `GRABBED` s’affiche dessous. Chaque pas repart de la position réelle du pointeur, donc résister à la souris ne fait que déplacer le point de départ. Si le bord de l’écran bloque, l’oie tire dans l’autre sens, puis abandonne proprement. Elle affiche aussitôt une bulle :
 
 > NO CLICK. ONLY 67.  
 > Cursor privileges revoked.  
@@ -74,6 +76,8 @@ Le déplacement de fenêtres se reproduit automatiquement toutes les quelques se
 > AFK IS NOT A DEFENSE.
 
 Le curseur reste toujours dans les limites de l’écran. Les fenêtres restent entièrement visibles et reviennent à leur position initiale lors de la fermeture de GooseRot.
+
+Le déplacement des fenêtres tierces s’arrête à `2:15`. La chasse au curseur, elle, continue ponctuellement jusqu’à `4:15`, quand la chorégraphie finale des trois oies prend le relais.
 
 ### 1:30 — Brainrot Subtitles
 
@@ -95,11 +99,13 @@ Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme
 
 ### 2:15 — Duplication
 
-L’oie tremble puis se divise en trois oies distinctes.
+L’oie tremble puis se divise en trois oies distinctes, toutes cacardent, et l’essaim de popups commence.
+
+Des fenêtres GooseRot apparaissent régulièrement : `aura_report_FINAL_v3.txt`, `ne_pas_fermer.exe`, `Propriétés de : Ohio`… Chacune propose un bouton `FERMER`. **Le fermer en fait apparaître deux autres.** Le compteur de fenêtres ouvertes s’affiche dans le HUD. Au plafond de neuf fenêtres, elles résistent une fois (`NON. (réessayez, pour voir)`) puis se laissent fermer, pour que le bureau puisse se vider.
 
 ### 2:45 — The Graffiti & Vibe
 
-- Oie 1 : crée une fenêtre transparente sur le bureau affichant un `67` grossièrement peint à la bombe en rose néon.
+- Oie 1 : peint un `67` géant en rose néon, **trait par trait, en direct**. Le tag occupe environ la moitié de la hauteur de l’écran. L’oie marche le long du tracé en suivant la buse, la peinture apparaît derrière elle, des coulures se mettent à couler sous les traits déjà posés et l’overspray s’accumule autour. Le tag est peint en une quinzaine de secondes.
 - Oies 2 et 3 : se regroupent autour du `67` et démarrent une animation de balancement synchronisé, comme si elles vibraient devant le graffiti.
 
 ### 3:15 — The Sigma Trap
@@ -119,6 +125,26 @@ Le bouton `[ SIGMA CHAD ]` s’éloigne de 100 pixels dès que le pointeur le su
 ### 3:30 — Screen Shake
 
 Pour compenser l’absence de son dans la VM, l’overlay principal déclenche une secousse rapide de 4 pixels toutes les deux secondes.
+
+### Tout du long — Dégradation de l’affichage
+
+Une intensité de glitch monte avec la timeline (0 avant `1:30`, environ 0,25 à `2:45`, 0,4 à `3:30`, 0,6 à `4:00`, 0,75 à `4:30`, presque 1 à la fin) et chaque gros gag ajoute un pic qui retombe. Elle pilote, toujours à l’intérieur de l’overlay :
+
+- des bandes de déchirure horizontales décalées en rose et cyan ;
+- des blocs de framebuffer « corrompus » ;
+- des scanlines CRT qui défilent ;
+- une aberration chromatique rouge/cyan sur les textes lourds ;
+- des curseurs fantômes qui se multiplient autour du vrai pointeur ;
+- un faux cadre `explorer.exe — (Ne répond pas)` qui dérive ;
+- de brefs flashs blancs ou bleus.
+
+### Tout du long — Fausses notifications
+
+Des notifications style Windows glissent depuis le coin bas-droit, peintes dans l’overlay et jamais envoyées au centre de notifications :
+
+> Sécurité Windows — Menace détectée : negative rizz.
+> Windows Update — Installation de 67 mises à jour de l’aura…
+> Explorateur de fichiers — explorer.exe ne répond plus. *(mensonge, il va très bien)*
 
 ### 4:00 — Color Filter
 
@@ -187,7 +213,9 @@ Afficher discrètement un compteur d’Aura dès `0:15`, puis le faire évoluer 
 - Vert Matrix : `#39FF14`
 - Rouge du compte à rebours : `#FF2438`
 - Blanc cassé des bulles : `#FFFBEA`
+- Encre des contours : `#1C1922`
 - Style du `67` : bords irréguliers, coulures et léger halo lumineux
+- Règle générale de l’interface : **rien n’est un rectangle arrondi propre**. Les plaques du HUD, les notifications et les bulles sont tracées à main levée, avec un bord qui frémit lentement, un coin coupé, une légère inclinaison et parfois un bout de scotch. Les tracés sont déterministes (bruit indexé par frame) pour éviter le grésillement pixel par pixel.
 
 ## Garde-fous de conception
 

@@ -17,11 +17,13 @@ bool AskForConsent(const gooserot::AppConfig& config) {
   if (config.preview) return true;
   std::wstring message = L"GooseRot va afficher un overlay pendant cinq minutes.\r\n\r\n";
   if (config.desktopEffects) {
-    message += L"Avec votre accord, l'oie pourra déplacer ponctuellement le curseur et certaines fenêtres, "
-               L"puis restaurera leur position.\r\n";
+    message += L"Avec votre accord, l'oie pourra attraper le curseur pour le traîner de 67 pixels et "
+               L"déplacer certaines fenêtres, puis restaurera leur position.\r\n";
   }
-  message += L"Aucun presse-papiers, fichier système, démarrage, BSOD ou redémarrage réel ne sera modifié.\r\n\r\n"
-             L"Maintenez Esc pendant 2 secondes pour fermer à tout moment.\r\n\r\n"
+  message += L"Pour le gag, les fenêtres de GooseRot refusent parfois de se fermer et se dupliquent "
+             L"(neuf au maximum). Elles appartiennent toutes à GooseRot et disparaissent à la fermeture.\r\n"
+             L"Aucun presse-papiers, fichier système, démarrage, BSOD ou redémarrage réel ne sera modifié.\r\n\r\n"
+             L"Maintenez Esc pendant 2 secondes pour tout fermer à tout moment.\r\n\r\n"
              L"Démarrer la démonstration ?";
   const UINT icon = config.mode == gooserot::RunMode::Safe ? MB_ICONINFORMATION : MB_ICONWARNING;
   return MessageBoxW(nullptr, message.c_str(), L"GooseRot — consentement explicite",

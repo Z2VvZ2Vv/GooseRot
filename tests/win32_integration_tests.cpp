@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <cwchar>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 
+#include "companion_windows.hpp"
 #include "desktop_director.hpp"
 #include "recovery_watchdog.hpp"
 
@@ -278,6 +280,47 @@ void TestCrashRecovery() {
   CloseVictim(victim);
 }
 
+HWND FindPopupWindow() {
+  return FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr);
+}
+
+void TestPopupSwarmMultiplicationAndDrain() {
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  std::mt19937 random(67);
+
+  {
+    gooserot::PopupSwarm swarm;
+    swarm.Spawn(instance, random, 1);
+    Expect(swarm.Count() == 1, "popup swarm creates its first window");
+    HWND popup = FindPopupWindow();
+    Expect(popup != nullptr, "popup window is discoverable");
+    if (popup) SendMessageW(popup, WM_CLOSE, 0, 0);
+    swarm.Tick(instance, random, 1.0);
+    Expect(swarm.Count() == 2, "closing below the cap replaces one popup with two");
+    swarm.CloseAll();
+  }
+
+  {
+    gooserot::PopupSwarm swarm;
+    swarm.Spawn(instance, random, gooserot::PopupSwarm::kMaximumPopups);
+    Expect(swarm.AtCap(), "popup swarm reaches but never exceeds its cap");
+
+    int safety = 0;
+    while (swarm.Count() > 0 && safety++ < 20) {
+      HWND popup = FindPopupWindow();
+      Expect(popup != nullptr, "a tracked popup has a live window");
+      if (!popup) break;
+      SendMessageW(popup, WM_CLOSE, 0, 0);
+      Expect(IsWindow(popup) != FALSE, "at the cap each popup refuses its first close");
+      SendMessageW(popup, WM_CLOSE, 0, 0);
+      swarm.Tick(instance, random, 2.0 + safety);
+    }
+    Expect(swarm.Count() == 0, "after reaching the cap the entire swarm can drain");
+    swarm.Spawn(instance, random, 1);
+    Expect(swarm.Count() == 0, "a drained swarm does not restart automatically");
+  }
+}
+
 bool ParseUnsigned(const wchar_t* text, unsigned long long& value) {
   if (!text || !*text || *text == L'+' || *text == L'-') return false;
   wchar_t* end = nullptr;
@@ -306,6 +349,7 @@ int wmain(int argc, wchar_t** argv) {
   TestResponsiveWindow();
   TestSlowWindowFallback();
   TestCrashRecovery();
+  TestPopupSwarmMultiplicationAndDrain();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";
     return 0;

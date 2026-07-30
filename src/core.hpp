@@ -105,6 +105,7 @@ enum class SpeedTier { Walk, Run, Charge };
 struct GooseRig {
   Vec2 underbodyCenter;
   Vec2 bodyCenter;
+  Vec2 tailTip;
   Vec2 neckBase;
   Vec2 neckCenter;
   Vec2 headCenter;
@@ -133,6 +134,11 @@ class GooseEntity {
   void SetPosition(Vec2 position);
   void Update(float deltaSeconds, RectF bounds);
 
+  // Opens the beak and throws honk rings for the requested duration.
+  void Honk(float seconds);
+  // Latching on the cursor keeps the neck out and the beak clamped shut.
+  void SetLatched(bool latched) { latched_ = latched; }
+
   Vec2 Position() const { return position_; }
   Vec2 Velocity() const { return velocity_; }
   Vec2 Target() const { return target_; }
@@ -141,6 +147,23 @@ class GooseEntity {
   SpeedTier Tier() const { return tier_; }
   const GooseRig& Rig() const { return rig_; }
   const GooseParameters& Parameters() const { return parameters_; }
+
+  float NeckExtension() const { return neckExtension_; }
+  float BeakOpen() const { return beakOpen_; }
+  float WingFlap() const { return wingFlap_; }
+  float StepPhase() const { return stepClock_; }
+  bool IsHonking() const { return honkTimer_ > 0.0f; }
+  bool IsLatched() const { return latched_; }
+  bool IsAngry() const { return tier_ == SpeedTier::Charge || honkTimer_ > 0.0f; }
+
+  // Converts a desired beak-tip position into the body target that keeps the
+  // current procedural rig aligned with it.
+  Vec2 BodyTargetForBeak(Vec2 desiredBeakTip) const {
+    return desiredBeakTip - (rig_.beakTip - position_);
+  }
+  float BeakDistanceTo(Vec2 target) const { return Distance(rig_.beakTip, target); }
+
+  static constexpr float kBoundsMargin = 48.0f;
 
  private:
   void UpdateRig(float deltaSeconds);
@@ -154,8 +177,13 @@ class GooseEntity {
   float directionRadians_ = 0.0f;
   float neckExtension_ = 0.0f;
   float stepClock_ = 0.0f;
+  float flapClock_ = 0.0f;
+  float beakOpen_ = 0.0f;
+  float wingFlap_ = 0.0f;
+  float honkTimer_ = 0.0f;
   SpeedTier tier_ = SpeedTier::Walk;
   bool extendNeck_ = false;
+  bool latched_ = false;
   GooseRig rig_;
 };
 

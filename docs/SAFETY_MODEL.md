@@ -8,13 +8,25 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 
 ## Effets autorisés en `safe`
 
-- overlays transparents ;
+- overlays transparents, y compris déchirures, scanlines, blocs corrompus, faux curseurs, faux cadres « Ne répond pas » et fausses notifications, tous peints à l’intérieur de l’overlay ;
 - déplacement borné et restauré des fenêtres ;
-- déplacement ponctuel du curseur ;
+- traction progressive du curseur sur 67 pixels, bornée à l’écran courant et restaurée ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
+- fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
 - faux glitch, faux BSOD et faux firmware ;
 - faux redémarrage rendu dans l’overlay, sans appel système.
+
+## Fenêtres récalcitrantes
+
+Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une fenêtre fermée en fait apparaître deux » est borné par construction :
+
+- il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
+- le nombre total de popups est plafonné à neuf ; une fois ce plafond atteint, chaque popup résiste une fois puis l’essaim peut être vidé jusqu’à zéro ;
+- le faux Bloc-notes refuse trois fermetures, revient une seule fois, puis se ferme pour de bon ;
+- les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
+- dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
+- le consentement initial annonce explicitement ce comportement.
 
 ## Effets interdits en `safe`
 
@@ -23,6 +35,7 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - modification de BCD, Winlogon, Run/RunOnce, Startup ou des tâches planifiées ;
 - persistance après déconnexion ou redémarrage ;
 - désactivation de Defender, SmartScreen, UAC ou du Gestionnaire des tâches ;
+- fenêtre non fermable appartenant à une autre application, ou popup sans plafond ;
 - élévation, exploitation ou contournement de droits ;
 - dissimulation du processus ou communication réseau cachée ;
 - fermeture forcée d’applications avec des données non enregistrées.
@@ -74,7 +87,7 @@ Un processus de secours du même exécutable surveille le moteur via une mémoir
 - la position initiale du curseur et le focus sont restaurés ;
 - aucun BSOD réel ni processus de représailles n’existe ; après terminaison, le seul effet permis au processus de secours est la restauration.
 
-Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné et la restauration par le watchdog après un `ExitProcess` volontaire du parent de test.
+Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, ainsi que le plafond et le drainage complet de l’essaim de popups.
 
 ## Consentement et environnement
 

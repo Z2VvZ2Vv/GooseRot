@@ -263,6 +263,8 @@ float GooseEntity::Acceleration() const {
                                     : parameters_.accelerationNormal;
 }
 
+void GooseEntity::Honk(float seconds) { honkTimer_ = std::max(honkTimer_, seconds); }
+
 void GooseEntity::Update(float deltaSeconds, RectF bounds) {
   const float dt = std::clamp(deltaSeconds, 0.0f, 0.1f);
   const Vec2 toTarget = target_ - position_;
@@ -280,7 +282,7 @@ void GooseEntity::Update(float deltaSeconds, RectF bounds) {
     position_ += velocity_ * dt;
   }
 
-  constexpr float margin = 36.0f;
+  constexpr float margin = kBoundsMargin;
   if (bounds.Width() <= margin * 2.0f) position_.x = bounds.Center().x;
   else position_.x = std::clamp(position_.x, bounds.left + margin, bounds.right - margin);
   if (bounds.Height() <= margin * 2.0f) position_.y = bounds.Center().y;
@@ -292,26 +294,43 @@ void GooseEntity::Update(float deltaSeconds, RectF bounds) {
 void GooseEntity::UpdateRig(float deltaSeconds) {
   const Vec2 forward{std::cos(directionRadians_), std::sin(directionRadians_)};
   const Vec2 side{-forward.y, forward.x};
-  const float desiredExtension = (extendNeck_ || tier_ != SpeedTier::Walk) ? 1.0f : 0.0f;
+  const float desiredExtension =
+      (extendNeck_ || latched_ || tier_ != SpeedTier::Walk) ? 1.0f : 0.0f;
   neckExtension_ = MoveTowards(neckExtension_, desiredExtension, deltaSeconds * 5.5f);
 
-  rig_.underbodyCenter = position_ - forward * 7.0f;
-  rig_.bodyCenter = position_ - forward * 2.0f;
-  rig_.neckBase = position_ + forward * 10.0f;
-  const float neckForward = 3.0f + (16.0f - 3.0f) * neckExtension_;
-  const float neckLift = 20.0f + (10.0f - 20.0f) * neckExtension_;
-  rig_.neckCenter = rig_.neckBase + forward * neckForward - side * (neckLift * 0.20f);
-  rig_.headCenter = rig_.neckCenter + forward * (13.0f + neckExtension_ * 4.0f);
-  rig_.beakTip = rig_.headCenter + forward * 21.0f;
-  rig_.leftEye = rig_.headCenter + forward * 5.0f - side * 5.0f;
-  rig_.rightEye = rig_.headCenter + forward * 5.0f + side * 5.0f;
+  honkTimer_ = std::max(0.0f, honkTimer_ - deltaSeconds);
+  const float desiredBeak = latched_          ? 0.0f
+                            : honkTimer_ > 0.0f ? 1.0f
+                            : tier_ == SpeedTier::Charge ? 0.35f
+                                                         : 0.0f;
+  beakOpen_ = MoveTowards(beakOpen_, desiredBeak, deltaSeconds * 9.0f);
+
+  const float flapAmplitude = tier_ == SpeedTier::Charge ? 0.55f
+                              : tier_ == SpeedTier::Run  ? 0.26f
+                                                         : 0.06f;
+  flapClock_ += deltaSeconds * (tier_ == SpeedTier::Charge ? 26.0f : 12.0f);
+  wingFlap_ = std::sin(flapClock_) * flapAmplitude;
 
   const float interval = tier_ == SpeedTier::Charge ? parameters_.stepTimeCharged
                                                      : parameters_.stepTimeNormal;
   stepClock_ += deltaSeconds * (2.0f * kPi / std::max(0.05f, interval * 2.0f));
-  const float stride = std::min(7.0f, Length(velocity_) * 0.035f);
-  rig_.leftFoot = position_ - forward * 7.0f - side * 6.0f + forward * (std::sin(stepClock_) * stride);
-  rig_.rightFoot = position_ - forward * 7.0f + side * 6.0f + forward * (std::sin(stepClock_ + kPi) * stride);
+
+  // Top-down layout: the body spans roughly [-31, +30] along `forward` and
+  // ±21 along `side`, so the neck, tail and feet all clear that silhouette.
+  rig_.underbodyCenter = position_ - forward * 10.0f;
+  rig_.bodyCenter = position_ - forward * 2.0f;
+  rig_.tailTip = position_ - forward * 44.0f;
+  rig_.neckBase = position_ + forward * 16.0f;
+  const float sway = std::sin(stepClock_ * 0.5f) * 3.0f * (1.0f - neckExtension_ * 0.6f);
+  rig_.neckCenter = rig_.neckBase + forward * (12.0f + 15.0f * neckExtension_) + side * sway;
+  rig_.headCenter = rig_.neckCenter + forward * (15.0f + 7.0f * neckExtension_);
+  rig_.beakTip = rig_.headCenter + forward * 24.0f;
+  rig_.leftEye = rig_.headCenter + forward * 2.5f - side * 6.5f;
+  rig_.rightEye = rig_.headCenter + forward * 2.5f + side * 6.5f;
+
+  const float stride = std::min(9.0f, Length(velocity_) * 0.04f);
+  rig_.leftFoot = position_ - forward * 8.0f - side * 22.0f + forward * (std::sin(stepClock_) * stride);
+  rig_.rightFoot = position_ - forward * 8.0f + side * 22.0f + forward * (std::sin(stepClock_ + kPi) * stride);
 }
 
 RectF ClampWindowRect(RectF window, RectF workArea) {
