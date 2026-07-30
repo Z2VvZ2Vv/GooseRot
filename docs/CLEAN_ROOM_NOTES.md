@@ -34,9 +34,8 @@ Les comportements historiques actifs sont la promenade, les traces de boue, le r
 - aucune capture de saisie ou modification du presse-papiers ;
 - déplacement direct, ponctuel et restauré du curseur au lieu de le verrouiller avec `Cursor.Clip` ;
 - faux Bloc-notes interne afin que le texte ne puisse jamais atteindre une application utilisateur ;
-- sortie d’urgence de deux secondes et restauration centralisée.
+- dans l’implémentation actuelle, sortie d’urgence de deux secondes et restauration centralisée dans tous les profils ; le contrat cible réserve cette sortie à `safe`.
 
 ## Frontière de redistribution
 
 Le dossier local `DesktopGoose v0.31/` reste exclu de Git et des releases. Les sons historiques ont une provenance tierce et le logiciel officiel interdit sa redistribution ; les mèmes historiques n’offrent pas tous une attribution exploitable. Le build GooseRot embarque donc exclusivement les fichiers originaux de `Assets/Generated/` et du code écrit pour ce dépôt.
-

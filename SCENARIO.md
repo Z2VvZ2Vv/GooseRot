@@ -4,13 +4,13 @@
 > Version : 0.3  
 > Durée totale : 5 minutes  
 > Plateforme cible : Windows, idéalement dans une VM de démonstration  
-> Ambiance : desktop goose, brainrot TikTok, faux chaos système, aucun son requis
+> Ambiance : desktop goose, brainrot TikTok, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, aucun son requis
 
 > Profils : `safe`, `normal` et `lab` — voir `docs/PRODUCT_SPEC.md` et `docs/SAFETY_MODEL.md`
 
 ## Intention
 
-GooseRot est un programme comique Windows mettant en scène une oie qui infiltre progressivement le bureau pendant cinq minutes. L’expérience commence comme une petite nuisance absurde, escalade vers un chaos visuel contrôlé, puis se termine proprement.
+GooseRot est un programme comique Windows mettant en scène une oie qui infiltre progressivement le bureau pendant cinq minutes. En `safe` et `normal`, l’expérience commence comme une petite nuisance absurde, escalade vers un chaos visuel contrôlé, puis se termine proprement. En `lab`, la même mise en scène masque une phase destructive réelle et se termine sur une VM saccagée.
 
 Principe essentiel : **l’oie provoque elle-même le chaos**. Les actions de l’utilisateur peuvent déclencher des réactions bonus, mais la timeline ne doit jamais attendre un mouvement, un clic ou une réponse pour continuer. Même devant un bureau totalement inactif, les cinq minutes doivent rester remplies d’animations, de fenêtres déplacées, de textes et de gags autonomes.
 
@@ -146,9 +146,13 @@ Les oies tournent rapidement en cercle autour du pointeur.
 
 L’oie principale marche sur un bouton virtuel `[ RESET AURA ]`.
 
-### 5:00 — Graceful Shutdown
+### 5:00 — Fin selon le profil
 
-L’application restaure d’abord le bureau et se ferme proprement. Tous les profils utilisent un faux redémarrage visuel ; aucun redémarrage Windows réel n’est implémenté. Le profil `lab --fake-reboot` lance la Preview de **AURA 67: Firmware Frenzy** lorsqu’elle est disponible. Un bundle UEFI/BIOS expérimental peut être construit séparément, mais il est non signé, non installable et non validé à l’exécution. `lab --boot-game` reste donc désactivé et n’émet jamais de faux handoff.
+En `safe` et `normal`, l’application restaure le bureau, affiche un faux redémarrage puis se ferme proprement. En `lab`, aucune restauration n’est attendue : les fichiers, le Registre et la chaîne de démarrage de la VM sont considérés comme corrompus, et le prochain boot peut échouer. La machine invitée doit être arrêtée depuis l’hyperviseur puis remplacée par un snapshot propre.
+
+L’appui de deux secondes sur `Esc` est une sortie d’urgence uniquement en `safe`. Il ne doit pas interrompre `normal` ou `lab`.
+
+Le code actuel n’est pas encore aligné avec ce scénario cible : ses effets `lab` restent non destructeurs et l’appui long sur `Esc` y est encore traité.
 
 ---
 
@@ -187,17 +191,18 @@ Afficher discrètement un compteur d’Aura dès `0:15`, puis le faire évoluer 
 
 ## Garde-fous de conception
 
-Pour que le gag reste amusant et testable :
+Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` soit sans ambiguïté :
 
 - afficher au lancement un mode démo explicitement consenti ;
 - réserver les hooks globaux ainsi que le déplacement du curseur et des fenêtres à la VM ou à un mode opt-in ;
-- fournir une sortie d’urgence toujours active, par exemple `Ctrl + Shift + Esc` maintenu deux secondes ;
+- fournir en `safe` une sortie d’urgence par `Esc` maintenu deux secondes ; ne pas exposer cette sortie dans `normal` ou `lab` ;
+- afficher avant `lab` un avertissement bloquant annonçant la corruption des fichiers, du Registre et du démarrage ;
+- interdire `lab` hors d’une VM isolée et jetable ;
 - ne jamais lire ou modifier le presse-papiers système ;
 - fermer uniquement le Bloc-notes lancé par GooseRot ;
 - ne jamais enregistrer les frappes ni lire le contenu du presse-papiers ;
 - permettre de désactiver les secousses et les flashes ;
-- utiliser uniquement un faux écran de redémarrage ;
-- ne jamais demander ou forcer un redémarrage Windows réel.
+- utiliser uniquement un faux écran de redémarrage en `safe` et `normal`.
 
 ## Découpage technique envisagé
 

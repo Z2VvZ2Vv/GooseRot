@@ -12,7 +12,7 @@ L’oie est un acteur visible. Lorsqu’un effet concerne le curseur, une fenêt
 |---|---|---:|---:|---|
 | Inoffensif | `safe` | Non | Aucune | Démo, vidéo, poste personnel |
 | Normal | `normal` | Non, simulé | Aucune | VM ou poste de test consenti |
-| VM Chaos | `lab` | Non, simulé | Aucune | Snapshot jetable |
+| Destructeur | `lab` | Possible / système potentiellement non amorçable | Oui, irréversibles | VM isolée et jetable uniquement |
 
 ### `safe`
 
@@ -31,11 +31,14 @@ L’oie est un acteur visible. Lorsqu’un effet concerne le curseur, une fenêt
 
 ### `lab`
 
-- densité d’overlays et vitesse d’animation supérieures ;
-- glitch et faux BSOD visuels à la fin ;
-- `--fake-reboot` peut enchaîner sur la Preview sûre du mini-jeu ;
-- `--boot-game` est réservé à un futur package firmware signé et validé à l’exécution ; il échoue fermé avec le bundle expérimental actuel ;
-- aucune écriture boot, modification du firmware ou persistance.
+- **profil volontairement destructeur, sans restauration promise** ;
+- réservé à une VM isolée, jetable, sans dossier partagé, périphérique attaché, donnée importante ni secret ;
+- corrompt ou supprime des fichiers et dégrade le Registre Windows ;
+- endommage la configuration ou la chaîne de démarrage, de sorte que Windows peut ne plus démarrer ;
+- laisse volontairement le système dans un état saccagé et potentiellement irrécupérable à la fin ;
+- ne propose pas la sortie par appui long sur `Esc` ; la récupération se fait exclusivement hors de la machine invitée, par arrêt et restauration du snapshot dans l’hyperviseur.
+
+> **État de l’implémentation :** ce bloc décrit le contrat cible de `lab`. Le code actuellement présent dans le dépôt conserve encore la restauration et la sortie `Esc`, et n’implémente pas ces effets destructeurs. Cet écart doit rester explicite jusqu’à l’alignement du binaire.
 
 ## Commandes prévues
 
@@ -61,7 +64,8 @@ Options de développement :
 
 ## Contrôles invariants
 
-- maintenir `Esc` pendant deux secondes : arrêt d’urgence dans tous les profils ;
-- `Ctrl+Shift+Esc` et le Gestionnaire des tâches restent utilisables dans tous les profils ;
+- maintenir `Esc` pendant deux secondes : restauration et arrêt d’urgence **uniquement en `safe`** ;
+- `normal` et `lab` ne doivent pas traiter cet appui long comme une commande de sortie ;
+- le Gestionnaire des tâches reste utilisable en `safe` ; aucune disponibilité n’est garantie après les dégradations du profil `lab` ;
 - une seconde instance quitte immédiatement ;
 - le presse-papiers n’est jamais lu, journalisé ou envoyé ailleurs.

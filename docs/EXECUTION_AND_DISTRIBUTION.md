@@ -39,6 +39,8 @@ Les images intermédiaires vérifiées sont placées dans `build-firmware/boot/f
 
 ## Lancement local avec `Win+R`
 
+> **DANGER — `lab` détruit son environnement par contrat.** À la fin, les fichiers, le Registre et la chaîne de démarrage peuvent être corrompus et Windows peut ne plus démarrer. Utiliser exclusivement une VM isolée et jetable, sans données ni secrets, avec un snapshot restaurable depuis l’hyperviseur. L’appui de deux secondes sur `Esc` permet de quitter uniquement `safe` ; il ne constitue pas une sortie de `normal` ou `lab`.
+
 Lorsque l’exécutable est déjà présent sur la machine :
 
 ```text
@@ -47,6 +49,8 @@ C:\Chemin\GooseRot.exe --mode normal
 C:\Chemin\GooseRot.exe --mode lab --vm-confirmed
 C:\Chemin\GooseRot.exe --mode lab --vm-confirmed --boot-game  # réservé, échoue : bundle non signé/non validé
 ```
+
+Les lignes `lab` ci-dessus documentent l’interface de commande, pas une recommandation d’exécution. Le code actuel n’est pas encore aligné avec le contrat destructeur et conserve des protections supplémentaires ; cette divergence est temporaire et ne doit pas servir de garantie de sécurité.
 
 Les chemins contenant des espaces doivent être entourés de guillemets.
 
@@ -72,7 +76,7 @@ Si un script GitHub est ajouté plus tard, son périmètre est le téléchargeme
 
 Le binaire évite les dépendances modernes non présentes sur Windows 7. Il utilise la conscience DPI système historique via `SetProcessDPIAware` et conserve un rendu GDI+ classique ; il n'annonce pas de prise en charge DPI per-monitor.
 
-GooseRot ne demande pas les droits administrateur et n’appelle aucune API de redémarrage. La conclusion est rendue comme un faux redémarrage compatible avec toutes les versions ciblées.
+Dans l’implémentation actuelle, GooseRot ne demande pas les droits administrateur et n’appelle aucune API de redémarrage. Cette phrase décrit l’état présent du code, pas le contrat cible destructeur de `lab`. En `safe` et `normal`, la conclusion reste un faux redémarrage compatible avec toutes les versions ciblées.
 
 ## Publication
 
@@ -81,10 +85,11 @@ Avant chaque release :
 1. construire en Release `/MT` ;
 2. vérifier les imports du PE sur Windows 7 ;
 3. analyser le binaire avec au moins deux moteurs antivirus ;
-4. exécuter les profils dans des snapshots propres ;
-5. vérifier l’arrêt d’urgence ;
-6. vérifier la restauration des fenêtres et confirmer que le presse-papiers est resté intact ;
-7. produire le SHA-256 ;
-8. signer puis publier le binaire et le hash.
+4. exécuter `safe` et `normal` dans des snapshots propres ;
+5. exécuter `lab` uniquement dans une VM isolée et jetable, puis restaurer son snapshot depuis l’hyperviseur ;
+6. vérifier que l’arrêt d’urgence par appui long sur `Esc` fonctionne en `safe` et n’est pas exposé en `normal` ou `lab` ;
+7. vérifier la restauration des fenêtres en `safe` et confirmer que le presse-papiers est resté intact ;
+8. produire le SHA-256 ;
+9. signer puis publier le binaire et le hash.
 
 Le bundle firmware ne peut rejoindre un canal de publication qu’après des tests runtime reproductibles sous OVMF et SeaBIOS sur supports virtuels vierges, une revue du comportement clavier/vidéo/timer/reset, puis une signature et une mise à jour explicite de `runtimeValidated`. Ces étapes ne sont pas réalisées dans l’état actuel.

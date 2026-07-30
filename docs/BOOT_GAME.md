@@ -47,6 +47,8 @@ Le jeu n’utilise aucun son. Les retours reposent sur le mouvement, les flashes
 | `R` après la partie | Demander un redémarrage de la plateforme |
 | `Esc` maintenu deux secondes | Fermer la Preview, retourner au firmware en UEFI ou arrêter le CPU en BIOS |
 
+Ces contrôles décrivent le sous-projet autonome GooseBoot dans son état actuel. Ils ne constituent pas une sortie du profil GooseRot `lab` : au niveau produit, l’appui long sur `Esc` est réservé à GooseRot `safe`. Le raccordement actuel de `lab --fake-reboot` à la Preview est un comportement transitoire non aligné avec ce contrat.
+
 La souris n’est pas utilisée.
 
 ## Artefacts expérimentaux produits

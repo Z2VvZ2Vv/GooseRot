@@ -2,7 +2,13 @@
 
 GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de cinq minutes sur un bureau Windows : oie procédurale, bulles, compteur d’Aura, faux Bloc-notes, déplacements bornés de 67 pixels, duplication en trois oies, stickers, graffiti, filtres, compte à rebours et faux redémarrage.
 
-La sécurité prime sur le gag : aucun profil ne provoque de BSOD réel, ne bloque le Gestionnaire des tâches, ne lit ou modifie le presse-papiers, ne redémarre Windows, ne touche au boot et ne crée de persistance. `safe` est le profil par défaut, un consentement explicite précède les effets bureau et `Esc` maintenu deux secondes restaure puis ferme l’application.
+> [!CAUTION]
+> Le profil `lab` est un **destructeur volontaire**, pas une variante plus intense de la démo. À la fin de son exécution, la machine doit être considérée comme sacrifiée : fichiers supprimés ou corrompus, Registre Windows endommagé et chaîne de démarrage rendue inutilisable. Il est réservé à une VM jetable, isolée, sans données ni secrets, avec un snapshot hors ligne prêt à être restauré. Ne jamais l’exécuter sur un PC physique ou une VM importante.
+
+Le profil `safe` reste la variante inoffensive et le seul profil offrant la sortie intégrée d’urgence : maintenir `Esc` pendant deux secondes restaure le bureau puis ferme l’application. Cette sortie n’est pas disponible en `normal` ou en `lab`. En `lab`, la seule récupération prévue est l’arrêt forcé et la restauration de la VM par l’hyperviseur.
+
+> [!NOTE]
+> Cette documentation fixe le contrat produit visé. L’implémentation actuelle n’a pas encore été alignée : elle conserve des protections et une sortie `Esc` dans tous les profils et n’implémente pas les destructions décrites pour `lab`. Ne pas confondre ce constat avec une garantie pour une future build `lab`.
 
 ## État de l’implémentation
 
@@ -71,6 +77,8 @@ GooseRot.exe --mode normal
 GooseRot.exe --mode lab --vm-confirmed
 ```
 
+`lab` est destructeur par contrat : la commande ci-dessus ne doit être utilisée que dans une VM jetable dont la perte totale est acceptée. Maintenir `Esc` pendant deux secondes ne constitue une sortie garantie qu’en `safe`.
+
 Options utiles :
 
 ```text
@@ -83,7 +91,7 @@ Options utiles :
 --seed 67
 ```
 
-`--duration-scale 0.1` joue la timeline dix fois plus vite. En profil `lab`, `--fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les deux exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). `--boot-game` échoue volontairement : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
+`--duration-scale 0.1` joue la timeline dix fois plus vite. Dans l’implémentation actuelle non destructive, `lab --fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les deux exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). Ce comportement de restauration appartient à l’état transitoire du code et non au contrat cible destructeur de `lab`. `--boot-game` échoue actuellement de façon volontaire : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
 
 La Preview du mini-jeu se construit avec le projet racine ou séparément :
 

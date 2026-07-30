@@ -1,5 +1,7 @@
 # GooseRot — architecture technique
 
+> **Contrat cible :** `lab` est un profil destructeur réservé à une VM isolée et jetable ; il peut corrompre les fichiers, le Registre et le démarrage. La sortie par `Esc` maintenu deux secondes appartient exclusivement à `safe`. Le code actuel n’est pas encore aligné : ses chemins restent réversibles et son traitement de `Esc` est commun aux profils.
+
 ## Choix de plateforme
 
 Le livrable principal sera une application **C++ Win32 native**, compilée en `x86` et liée avec le runtime MSVC statique (`/MT`). Ce choix permet un seul exécutable sans installation de .NET ou du Visual C++ Redistributable. Le binaire 32 bits fonctionne nativement sur Windows 7 32 bits et via WoW64 sur les éditions 64 bits de Windows 7 à Windows 11.
@@ -58,7 +60,7 @@ GooseRotApp
 
 ### `SafetySupervisor`
 
-Possède la priorité sur tous les autres modules. Il gère l’arrêt d’urgence, l’unicité du processus, l’état de restauration en mémoire partagée, la restauration et les timeouts.
+Dans l’implémentation actuelle, il possède la priorité sur tous les autres modules et gère l’arrêt d’urgence, l’unicité du processus, l’état de restauration en mémoire partagée, la restauration et les timeouts. Dans le contrat cible, l’appui de deux secondes sur `Esc` et la restauration d’urgence sont activés uniquement en `safe` ; `normal` et `lab` ne doivent pas emprunter ce chemin de sortie.
 
 ### `TimelineEngine`
 
@@ -98,7 +100,7 @@ Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son con
 
 ### `ShutdownDirector`
 
-La conclusion est un faux redémarrage rendu dans l’overlay. Le module n’active aucun privilège, n’appelle aucune API de redémarrage et ferme GooseRot après restauration.
+En `safe` et `normal`, la conclusion est un faux redémarrage rendu dans l’overlay, suivi d’une fermeture propre. Dans l’état actuel du code, ce même chemin est encore utilisé en `lab`. Le contrat cible de `lab` exclut cette restauration : la VM doit être considérée comme sacrifiée après la corruption des fichiers, du Registre et du démarrage.
 
 ### `BootGameHandoff`
 
@@ -133,4 +135,4 @@ Matrice minimale :
 - double écran avec coordonnées négatives ;
 - VM à 2 vCPU et 2 Go de RAM.
 
-Les tests `lab` s’exécutent uniquement sur un snapshot jetable, même si tous les effets système restent réversibles.
+Les tests `lab` s’exécutent uniquement sur une VM isolée et jetable. Tant que les destructions ne sont pas implémentées, les tests doivent signaler explicitement qu’ils ne valident que l’ancien comportement réversible. Une fois le contrat cible aligné, la réussite attendue inclut une VM inutilisable et une récupération exclusivement par restauration du snapshot depuis l’hyperviseur.
