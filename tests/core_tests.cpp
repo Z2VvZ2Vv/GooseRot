@@ -137,10 +137,29 @@ void TestGooseAnimationState() {
   Expect(!goose.IsHonking() && goose.BeakOpen() < 0.05f, "the honk expires and the beak closes");
 
   goose.SetLatched(true);
+  goose.Honk(1.0f);
   for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
   Expect(goose.NeckExtension() > 0.9f, "latching onto the cursor stretches the neck");
-  Expect(goose.BeakOpen() < 0.05f, "a latched beak stays clamped");
+  Expect(goose.BeakOpen() < 0.05f, "a latched beak stays clamped even during a honk");
+  const gooserot::Vec2 desiredBeak{700.0f, 250.0f};
+  const gooserot::Vec2 bodyTarget = goose.BodyTargetForBeak(desiredBeak);
+  const gooserot::Vec2 projectedBeak = bodyTarget + (goose.Rig().beakTip - goose.Position());
+  Expect(gooserot::Distance(projectedBeak, desiredBeak) < 0.01f,
+         "beak targeting converts the desired tip into a body target");
   goose.SetLatched(false);
+
+  constexpr gooserot::Vec2 beakTargets[] = {
+      {36.0f, 300.0f}, {764.0f, 300.0f}, {400.0f, 36.0f}, {400.0f, 564.0f}};
+  for (const gooserot::Vec2 beakTarget : beakTargets) {
+    gooserot::GooseEntity tracker({400.0f, 300.0f});
+    bool reached = false;
+    for (int frame = 0; frame < 450 && !reached; ++frame) {
+      tracker.SetTarget(tracker.BodyTargetForBeak(beakTarget), gooserot::SpeedTier::Charge, true);
+      tracker.Update(1.0f / 30.0f, bounds);
+      reached = tracker.BeakDistanceTo(beakTarget) < 14.0f;
+    }
+    Expect(reached, "the animated beak converges on targets near every screen edge");
+  }
 
   // Facing +X: head and beak lead, tail trails, feet straddle the body.
   goose.SetPosition({400.0f, 300.0f});

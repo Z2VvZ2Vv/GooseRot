@@ -428,10 +428,12 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
   ShowWindow(popup->window, SW_SHOWNOACTIVATE);
   UpdateWindow(popup->window);
   popups_.push_back(std::move(popup));
+  if (AtCap()) draining_ = true;
   return true;
 }
 
 void PopupSwarm::Spawn(HINSTANCE instance, std::mt19937& random, int count) {
+  if (draining_) return;
   for (int index = 0; index < count && !AtCap(); ++index) CreatePopup(instance, random);
 }
 
@@ -461,11 +463,13 @@ void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTi
   }
 }
 
-// Closing a popup is never free: below the cap it buys two more.
+// Closing a popup is never free until the cap has been reached. From that point
+// on the swarm enters a permanent draining state: every remaining popup pushes
+// back once, then closes without multiplying so the user can empty the desktop.
 void PopupSwarm::RequestClose(Popup& popup) {
   ++closeAttempts_;
   ++popup.refusals;
-  if (!AtCap()) {
+  if (!draining_) {
     pendingSpawns_ += 2;
     popup.dead = true;
     if (popup.window) DestroyWindow(popup.window);
@@ -495,6 +499,8 @@ void PopupSwarm::CloseAll() {
   }
   popups_.clear();
   pendingSpawns_ = 0;
+  closeAttempts_ = 0;
+  draining_ = false;
 }
 
 LRESULT CALLBACK PopupSwarm::WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {

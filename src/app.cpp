@@ -462,11 +462,22 @@ void GooseRotApp::UpdateDesktopActions() {
     nextCursorAction_ = logicalTime_ + 15.0;
   }
   if (pendingAction_.kind == PendingActionKind::Cursor) {
-    geese_.front().SetTarget(overlay_.ScreenToCanvas(desktop_->CursorPosition()), SpeedTier::Charge, true);
+    AimLeadGooseBeakAt(overlay_.ScreenToCanvas(desktop_->CursorPosition()), SpeedTier::Charge);
+  } else if (pendingAction_.kind == PendingActionKind::Window) {
+    AimLeadGooseBeakAt(overlay_.ScreenToCanvas(pendingAction_.windowTarget.titleBarPoint),
+                       SpeedTier::Charge);
   }
-  // The beak has to actually reach the pointer; 34 px is roughly the distance
-  // between the body centre and the tip of the beak.
-  if (pendingAction_.kind != PendingActionKind::None && geese_.front().DistanceToTarget() < 34.0f) {
+  bool reached = false;
+  if (pendingAction_.kind == PendingActionKind::Cursor) {
+    reached = geese_.front().BeakDistanceTo(
+                  overlay_.ScreenToCanvas(desktop_->CursorPosition())) < 14.0f;
+  } else if (pendingAction_.kind == PendingActionKind::Window) {
+    reached = geese_.front().BeakDistanceTo(
+                  overlay_.ScreenToCanvas(pendingAction_.windowTarget.titleBarPoint)) < 14.0f;
+  } else if (pendingAction_.kind == PendingActionKind::FauxPanel) {
+    reached = geese_.front().DistanceToTarget() < 34.0f;
+  }
+  if (pendingAction_.kind != PendingActionKind::None && reached) {
     ExecutePendingAction();
   } else if (pendingAction_.kind != PendingActionKind::None && logicalTime_ >= pendingAction_.executeAt) {
     SetBubble(pendingAction_.kind == PendingActionKind::Window
@@ -480,9 +491,11 @@ void GooseRotApp::UpdateDesktopActions() {
 void GooseRotApp::ScheduleCursorAction(bool userTriggered) {
   const POINT cursor = desktop_->CursorPosition();
   const Vec2 target = overlay_.ScreenToCanvas(cursor);
-  geese_.front().SetTarget(target, SpeedTier::Charge, true);
+  const Vec2 bodyTarget = geese_.front().BodyTargetForBeak(target);
+  geese_.front().SetTarget(bodyTarget, SpeedTier::Charge, true);
   const double travel = std::clamp(
-      static_cast<double>(Distance(geese_.front().Position(), target)) / 400.0 + 2.5, 4.5, 15.0);
+      static_cast<double>(Distance(geese_.front().Position(), bodyTarget)) / 400.0 + 2.5,
+      4.5, 15.0);
   pendingAction_ = {PendingActionKind::Cursor, logicalTime_ + travel, {}, 0};
   SetBubble(userTriggered ? L"NO CLICK. ONLY 67." : L"AFK IS NOT A DEFENSE.", 3.0);
 }
@@ -532,7 +545,7 @@ void GooseRotApp::UpdateCursorGrab(double logicalDelta) {
   }
 
   // Stay glued to the pointer for as long as the beak holds it.
-  geese_.front().SetTarget(overlay_.ScreenToCanvas(desktop_->CursorPosition()), SpeedTier::Charge, true);
+  AimLeadGooseBeakAt(overlay_.ScreenToCanvas(desktop_->CursorPosition()), SpeedTier::Charge);
 
   constexpr double kDragSeconds = 0.9;
   const int step = std::max(1, static_cast<int>(std::ceil(67.0 * logicalDelta / kDragSeconds)));
@@ -565,10 +578,12 @@ void GooseRotApp::ScheduleWindowAction() {
     return;
   }
   const Vec2 canvasTarget = overlay_.ScreenToCanvas(target->titleBarPoint);
-  geese_.front().SetTarget(canvasTarget, SpeedTier::Charge, true);
+  const Vec2 bodyTarget = geese_.front().BodyTargetForBeak(canvasTarget);
+  geese_.front().SetTarget(bodyTarget, SpeedTier::Charge, true);
   std::uniform_int_distribution<int> direction(0, 3);
   const double travel = std::clamp(
-      static_cast<double>(Distance(geese_.front().Position(), canvasTarget)) / 400.0 + 1.5, 3.5, 15.0);
+      static_cast<double>(Distance(geese_.front().Position(), bodyTarget)) / 400.0 + 1.5,
+      3.5, 15.0);
   pendingAction_ = {PendingActionKind::Window, logicalTime_ + travel, *target, direction(random_)};
 }
 
@@ -689,6 +704,11 @@ Vec2 GooseRotApp::RandomCanvasPoint(float margin) {
 void GooseRotApp::SetBubble(std::wstring text, double durationSeconds) {
   bubbleText_ = std::move(text);
   bubbleUntil_ = logicalTime_ + durationSeconds;
+}
+
+void GooseRotApp::AimLeadGooseBeakAt(Vec2 target, SpeedTier tier) {
+  if (geese_.empty()) return;
+  geese_.front().SetTarget(geese_.front().BodyTargetForBeak(target), tier, true);
 }
 
 void GooseRotApp::BeginShutdown() {

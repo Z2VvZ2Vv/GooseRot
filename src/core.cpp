@@ -299,8 +299,8 @@ void GooseEntity::UpdateRig(float deltaSeconds) {
   neckExtension_ = MoveTowards(neckExtension_, desiredExtension, deltaSeconds * 5.5f);
 
   honkTimer_ = std::max(0.0f, honkTimer_ - deltaSeconds);
-  const float desiredBeak = honkTimer_ > 0.0f ? 1.0f
-                            : latched_        ? 0.0f
+  const float desiredBeak = latched_          ? 0.0f
+                            : honkTimer_ > 0.0f ? 1.0f
                             : tier_ == SpeedTier::Charge ? 0.35f
                                                          : 0.0f;
   beakOpen_ = MoveTowards(beakOpen_, desiredBeak, deltaSeconds * 9.0f);

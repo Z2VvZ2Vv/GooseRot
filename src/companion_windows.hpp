@@ -125,6 +125,7 @@ class PopupSwarm {
   int pendingSpawns_ = 0;
   int closeAttempts_ = 0;
   int spawnCounter_ = 0;
+  bool draining_ = false;
 };
 
 }  // namespace gooserot

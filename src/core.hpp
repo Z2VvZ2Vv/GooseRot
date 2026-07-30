@@ -156,6 +156,13 @@ class GooseEntity {
   bool IsLatched() const { return latched_; }
   bool IsAngry() const { return tier_ == SpeedTier::Charge || honkTimer_ > 0.0f; }
 
+  // Converts a desired beak-tip position into the body target that keeps the
+  // current procedural rig aligned with it.
+  Vec2 BodyTargetForBeak(Vec2 desiredBeakTip) const {
+    return desiredBeakTip - (rig_.beakTip - position_);
+  }
+  float BeakDistanceTo(Vec2 target) const { return Distance(rig_.beakTip, target); }
+
   static constexpr float kBoundsMargin = 48.0f;
 
  private:

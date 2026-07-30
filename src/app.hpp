@@ -55,6 +55,7 @@ class GooseRotApp {
   void AddAura(int delta);
   void KickGlitch(float amount);
   void SetBubble(std::wstring text, double durationSeconds);
+  void AimLeadGooseBeakAt(Vec2 target, SpeedTier tier);
   void BeginShutdown();
   bool Cleanup();
   bool LaunchBootPreview();
