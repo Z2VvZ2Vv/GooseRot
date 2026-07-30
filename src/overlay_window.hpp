@@ -22,16 +22,34 @@ struct VisualSprite {
   double lifetime = 8.0;
 };
 
+// Fake system notification drawn inside the overlay. Nothing is ever posted to
+// the real Windows notification centre.
+struct ToastNotice {
+  std::wstring title;
+  std::wstring body;
+  double createdAt = 0.0;
+  double lifetime = 6.5;
+};
+
 struct RenderState {
   double logicalTime = 0.0;
   RunMode mode = RunMode::Safe;
   const std::vector<GooseEntity>* geese = nullptr;
   const std::vector<VisualSprite>* sprites = nullptr;
+  const std::vector<ToastNotice>* toasts = nullptr;
   std::wstring bubbleText;
   Vec2 bubbleAnchor;
   int aura = 0;
+  int auraDelta = 0;
+  double auraDeltaAt = -1000.0;
   POINT cursor{};
   float emergencyProgress = 0.0f;
+  // 0 = clean desktop, 1 = the display is actively falling apart.
+  float glitch = 0.0f;
+  // 0 = bare wall, 1 = the 67 tag is finished.
+  float graffitiProgress = 0.0f;
+  int popupCount = 0;
+  bool cursorLatched = false;
   bool clipboardBadge = false;
   bool graffiti = false;
   bool colorFilter = false;
@@ -57,6 +75,8 @@ class OverlayWindow {
   RectF CanvasBounds() const;
   Vec2 ScreenToCanvas(POINT screenPoint) const;
   bool IsPreview() const { return preview_; }
+  // Where the spray can currently is, so the geese can follow their own tag.
+  Vec2 GraffitiPaintHead(float progress) const;
 
  private:
   struct ResourceImage {
@@ -79,6 +99,10 @@ class OverlayWindow {
   void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void Present();
 
@@ -94,6 +118,8 @@ class OverlayWindow {
   int screenOriginY_ = 0;
   bool preview_ = false;
   bool primaryMonitorOnly_ = false;
+  // Advances once per rendered frame and drives every deterministic wobble.
+  unsigned frame_ = 0;
   ULONG_PTR gdiplusToken_ = 0;
   std::function<void()> tickHandler_;
   std::function<void()> closeHandler_;

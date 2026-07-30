@@ -31,7 +31,11 @@ class DesktopDirector {
 
   std::optional<WindowTarget> PickRandomWindow(std::mt19937& random) const;
   bool MoveWindowBy67(const WindowTarget& target, int direction);
-  bool PushCursorRight67();
+  // Drags the pointer one step from wherever it currently is and reports how
+  // far it actually travelled. Called every frame while the goose has the
+  // cursor in its beak, so a user fighting back simply gets dragged from the
+  // new position instead of cancelling the whole gag.
+  int DragCursorBy(int deltaX, int deltaY);
   POINT CursorPosition() const;
   void PollPendingMutations();
   bool Restore();

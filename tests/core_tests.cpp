@@ -122,6 +122,38 @@ void TestGooseLocomotion() {
          "tiny preview bounds collapse safely to their center");
 }
 
+void TestGooseAnimationState() {
+  gooserot::GooseEntity goose({400.0f, 300.0f});
+  const gooserot::RectF bounds{0.0f, 0.0f, 800.0f, 600.0f};
+
+  goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.BeakOpen() < 0.05f, "an idle goose keeps its beak shut");
+
+  goose.Honk(0.5f);
+  Expect(goose.IsHonking(), "honking starts immediately");
+  for (int i = 0; i < 6; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.BeakOpen() > 0.4f, "honking opens the beak");
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(!goose.IsHonking() && goose.BeakOpen() < 0.05f, "the honk expires and the beak closes");
+
+  goose.SetLatched(true);
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.NeckExtension() > 0.9f, "latching onto the cursor stretches the neck");
+  Expect(goose.BeakOpen() < 0.05f, "a latched beak stays clamped");
+  goose.SetLatched(false);
+
+  // Facing +X: head and beak lead, tail trails, feet straddle the body.
+  goose.SetPosition({400.0f, 300.0f});
+  goose.SetTarget({700.0f, 300.0f}, gooserot::SpeedTier::Run);
+  for (int i = 0; i < 30; ++i) goose.Update(1.0f / 30.0f, bounds);
+  const gooserot::GooseRig& rig = goose.Rig();
+  Expect(rig.beakTip.x > rig.headCenter.x && rig.headCenter.x > goose.Position().x,
+         "the head and beak lead the body");
+  Expect(rig.tailTip.x < goose.Position().x - 30.0f, "the tail trails the body");
+  Expect((rig.leftFoot.y < goose.Position().y) != (rig.rightFoot.y < goose.Position().y),
+         "the feet straddle the body axis");
+}
+
 void TestWindowClamp() {
   const gooserot::RectF work{0.0f, 0.0f, 1920.0f, 1040.0f};
   const auto moved = gooserot::ClampWindowRect({1900.0f, -50.0f, 2300.0f, 250.0f}, work);
@@ -136,6 +168,7 @@ int main() {
   TestArgumentParsing();
   TestTimeline();
   TestGooseLocomotion();
+  TestGooseAnimationState();
   TestWindowClamp();
   if (failures == 0) {
     std::cout << "All GooseRot core tests passed.\n";

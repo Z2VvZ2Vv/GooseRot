@@ -2,16 +2,21 @@
 
 GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de cinq minutes sur un bureau Windows : oie procédurale, bulles, compteur d’Aura, faux Bloc-notes, déplacements bornés de 67 pixels, duplication en trois oies, stickers, graffiti, filtres, compte à rebours et faux redémarrage.
 
-La sécurité prime sur le gag : aucun profil ne provoque de BSOD réel, ne bloque le Gestionnaire des tâches, ne lit ou modifie le presse-papiers, ne redémarre Windows, ne touche au boot et ne crée de persistance. `safe` est le profil par défaut, un consentement explicite précède les effets bureau et `Esc` maintenu deux secondes restaure puis ferme l’application.
+La sécurité prime sur le gag : aucun profil ne provoque de BSOD réel, ne bloque le Gestionnaire des tâches, ne lit ou modifie le presse-papiers, ne redémarre Windows, ne touche au boot et ne crée de persistance. Les fenêtres qui refusent de se fermer et se dupliquent appartiennent toutes à GooseRot, sont plafonnées à neuf et disparaissent au nettoyage. `safe` est le profil par défaut, un consentement explicite précède les effets bureau et annonce ce comportement, et `Esc` maintenu deux secondes restaure le bureau puis ferme tout.
 
 ## État de l’implémentation
 
 - moteur C++17 et timeline monotone indépendante du framerate ;
 - overlay Win32/GDI+ transparent, click-through et multi-écran ;
-- oie dessinée procéduralement à partir des constantes publiques de l’API de modding ;
+- oie dessinée procéduralement en vue de dessus : corps, queue en éventail, ailes repliées, cou en S, bec articulé qui cacarde, pattes palmées, sourcils quand elle charge ;
+- moteur de glitch piloté par la timeline : déchirures, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas », flashs ;
+- tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse ;
+- interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
 - trois entités indépendantes, bulles, overlays PNG embarqués et effets des cinq phases ;
-- déplacements optionnels du curseur et des fenêtres, bornés puis restaurés ;
-- fenêtres Aura/Sigma interactives et faux Bloc-notes appartenant uniquement à GooseRot ;
+- traction progressive du curseur sur 67 pixels avec verrouillage bec/pointeur visible, bornée puis restaurée ;
+- déplacements optionnels des fenêtres, bornés puis restaurés ;
+- fenêtres Aura/Sigma interactives, faux Bloc-notes qui refuse de se fermer et essaim de popups plafonné qui se duplique quand on le ferme — tout appartient à GooseRot ;
+- fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau ;
 - cœur AURA 67 déterministe et `GooseBootPreview.exe` sûr dans `boot/` ;

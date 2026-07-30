@@ -275,27 +275,35 @@ bool DesktopDirector::MoveWindowBy67(const WindowTarget& target, int direction) 
   return false;
 }
 
-bool DesktopDirector::PushCursorRight67() {
-  if (!enabled_ || !RecoveryHealthy()) return false;
+int DesktopDirector::DragCursorBy(int deltaX, int deltaY) {
+  if (!enabled_ || !RecoveryHealthy()) return 0;
   POINT cursor{};
-  if (!GetCursorPos(&cursor)) return false;
+  if (!GetCursorPos(&cursor)) return 0;
   MONITORINFO monitorInfo{};
   monitorInfo.cbSize = sizeof(monitorInfo);
   const HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-  if (!GetMonitorInfoW(monitor, &monitorInfo)) return false;
-  int x = cursor.x;
-  if (cursor.x + 67 <= monitorInfo.rcMonitor.right - 1) x = cursor.x + 67;
-  else if (cursor.x - 67 >= monitorInfo.rcMonitor.left) x = cursor.x - 67;
-  else return false;
-  const int y = cursor.y;
+  if (!GetMonitorInfoW(monitor, &monitorInfo)) return 0;
+
+  // The pointer never leaves the monitor it started this step on.
+  const int x = std::clamp(static_cast<int>(cursor.x) + deltaX,
+                           static_cast<int>(monitorInfo.rcMonitor.left),
+                           static_cast<int>(monitorInfo.rcMonitor.right) - 1);
+  const int y = std::clamp(static_cast<int>(cursor.y) + deltaY,
+                           static_cast<int>(monitorInfo.rcMonitor.top),
+                           static_cast<int>(monitorInfo.rcMonitor.bottom) - 1);
+  if (x == cursor.x && y == cursor.y) return 0;
+
   if (watchdog_) watchdog_->MarkCursorMoved();
   SetCursorPos(x, y);
   POINT actual{};
-  const bool moved = GetCursorPos(&actual) && actual.x == x && actual.y == y &&
-                     std::abs(actual.x - cursor.x) == 67;
-  cursorMoved_ = cursorMoved_ || moved || actual.x != cursor.x || actual.y != cursor.y;
-  if (!moved) SetCursorPos(cursor.x, cursor.y);
-  return moved;
+  if (!GetCursorPos(&actual)) {
+    cursorMoved_ = true;
+    return 0;
+  }
+  const int appliedX = actual.x - cursor.x;
+  const int appliedY = actual.y - cursor.y;
+  cursorMoved_ = cursorMoved_ || appliedX != 0 || appliedY != 0;
+  return deltaX != 0 ? appliedX : appliedY;
 }
 
 POINT DesktopDirector::CursorPosition() const {
