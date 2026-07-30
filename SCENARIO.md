@@ -77,11 +77,11 @@ Le déplacement de fenêtres se reproduit automatiquement toutes les quelques se
 
 Le curseur reste toujours dans les limites de l’écran. Les fenêtres restent entièrement visibles et reviennent à leur position initiale lors de la fermeture de GooseRot.
 
-Le déplacement des fenêtres tierces s’arrête à `2:15`. La chasse au curseur, elle, continue ponctuellement jusqu’à `4:15`, quand la chorégraphie finale des trois oies prend le relais.
+Le déplacement des fenêtres tierces s’arrête à `2:15`. La chasse ponctuelle au curseur laisse place à `3:30` à une tempête permanente, tandis que la troupe continue de grandir jusqu’à la fin.
 
 ### 1:30 — Brainrot Subtitles
 
-Des images de mèmes TikTok — visages de chats en réaction, badges « Aura Points », etc. — apparaissent automatiquement sous forme d’overlays transparents, à intervalles irréguliers. Du texte défile au-dessus de l’oie :
+Des images brainrot — créatures italiennes et visages de chats en réaction — sont apportées une par une dans le bec des oies, déposées dans des zones qui protègent le HUD, puis restent visibles jusqu’à la conclusion. Du texte défile au-dessus de l’oie :
 
 > Tralala la la la... 🎶  
 > Tutti frutti cappuccina ☕  
@@ -91,9 +91,9 @@ Des images de mèmes TikTok — visages de chats en réaction, badges « Aura Po
 
 Un gag visuel simule un verrouillage du collage sans installer de hook et sans lire ou modifier le presse-papiers :
 
-> +9999 AURA
+> +10,000 AURA
 
-Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme badge `CLIPBOARD CERTIFIED: +9999 AURA` au milieu de l’écran, puis le traîne jusqu’à un coin comme un autocollant mal posé.
+Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme badge `CLIPBOARD CERTIFIED: +10,000 AURA` au milieu de l’écran, puis le traîne dans une zone réservée en bas à gauche. Le badge est rendu devant les images afin de rester lisible.
 
 ## Phase 3 — 2:15 à 3:30 : The “Spray-Painted 67” Squad
 
@@ -101,7 +101,7 @@ Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme
 
 L’oie tremble puis se divise en trois oies distinctes, toutes cacardent, et l’essaim de popups commence.
 
-Des fenêtres GooseRot apparaissent régulièrement : `aura_report_FINAL_v3.txt`, `ne_pas_fermer.exe`, `Propriétés de : Ohio`… Chacune propose un bouton `FERMER`. **Le fermer en fait apparaître deux autres.** Le compteur de fenêtres ouvertes s’affiche dans le HUD. Au plafond de neuf fenêtres, elles résistent une fois (`NON. (réessayez, pour voir)`) puis se laissent fermer, pour que le bureau puisse se vider.
+Des fenêtres GooseRot imitent aléatoirement `Task Manager`, `File Explorer`, `Untitled - Notepad`, `Windows Security`, `Command Prompt` et d’autres outils système. **En fermer une en fait apparaître deux autres.** Le compteur de fenêtres ouvertes s’affiche dans le HUD. Au plafond protecteur de 67 fenêtres, toutes les fermetures ordinaires sont refusées ; seul le nettoyage de fin ou `Esc` maintenu deux secondes les détruit directement.
 
 ### 2:45 — The Graffiti & Vibe
 
@@ -125,6 +125,8 @@ Le bouton `[ SIGMA CHAD ]` s’éloigne de 100 pixels dès que le pointeur le su
 ### 3:30 — Screen Shake
 
 Pour compenser l’absence de son dans la VM, l’overlay principal déclenche une secousse rapide de 4 pixels toutes les deux secondes.
+
+Au même instant, le curseur entre dans une tempête : une cible mouvante et un tremblement haute fréquence le tirent continuellement. L’intensité monte jusqu’à rendre la reprise de contrôle pratiquement impossible à la fin, sans empêcher la sortie d’urgence par `Esc`.
 
 ### Tout du long — Dégradation de l’affichage
 
@@ -152,7 +154,7 @@ Un overlay transparent plein écran, à 15 % d’opacité, alterne la teinte du 
 
 ### 4:15 — Final Monologue
 
-Les trois oies encerclent le pointeur et affichent simultanément :
+La troupe, déjà bien plus nombreuse que les trois oies initiales, encercle le pointeur et affiche :
 
 > CRITICAL ERROR: MAXIMUM BRAINROT REACHED.
 
@@ -166,15 +168,15 @@ Un grand compte à rebours rouge apparaît en haut de l’écran :
 
 ### 4:45 — The Circle Dance
 
-Les oies tournent rapidement en cercle autour du pointeur.
+Le nombre d’oies accélère jusqu’à 67. Elles quittent leur spirale autour du pointeur et se répartissent sur une grille mouvante qui remplit tout l’écran.
 
 ### 4:59 — The Final Click
 
-L’oie principale marche sur un bouton virtuel `[ RESET AURA ]`.
+L’oie principale marche sur un bouton virtuel `[ DO NOT PRESS ]`.
 
 ### 5:00 — Fin selon le profil
 
-En `safe` et `normal`, l’application restaure le bureau, affiche un faux redémarrage puis se ferme proprement. En `lab`, aucune restauration n’est attendue : les fichiers, le Registre et la chaîne de démarrage de la VM sont considérés comme corrompus, et le prochain boot peut échouer. La machine invitée doit être arrêtée depuis l’hyperviseur puis remplacée par un snapshot propre.
+Dans l’implémentation actuelle, une explosion rose/verte dévore l’overlay, l’écran devient noir, puis une dernière oie entre depuis un coin et annonce `GOODBYE, DUDE. YOU SHOULD'VE LISTENED.` avant la fermeture propre. Le nettoyage et la restauration ont lieu avant cette conclusion visuelle. Le contrat cible destructeur de `lab` décrit plus bas reste volontairement non implémenté.
 
 L’appui de deux secondes sur `Esc` est une sortie d’urgence uniquement en `safe`. Il ne doit pas interrompre `normal` ou `lab`.
 
@@ -196,7 +198,7 @@ Afficher discrètement un compteur d’Aura dès `0:15`, puis le faire évoluer 
 - tentative de collage : `+9 999`
 - apparition du graffiti : compteur remplacé momentanément par `67`
 
-À `4:59`, le bouton `[ RESET AURA ]` ramène le compteur à `0`, ce qui donne une vraie conclusion visuelle.
+À `4:59`, le bouton `[ DO NOT PRESS ]` déclenche l’explosion du noyau d’Aura au lieu de remettre le compteur à zéro.
 
 ### Micro-gags possibles
 
@@ -205,7 +207,7 @@ Afficher discrètement un compteur d’Aura dès `0:15`, puis le faire évoluer 
 - Une notification factice annonce : `Windows Defender has detected: negative rizz`.
 - Après avoir choisi `[ NPC ]`, la boîte répond : `Honesty bonus: +2 Aura`.
 - Le bouton `[ SIGMA CHAD ]` fuit dans une direction différente à chaque survol, mais reste toujours visible.
-- Pendant le compte à rebours, les trois oies tiennent de minuscules pancartes `6`, `7` et `RESET`.
+- Pendant le compte à rebours, quelques oies tiennent de minuscules pancartes `6`, `7` et `TOO LATE`.
 
 ### Signature visuelle
 

@@ -76,7 +76,7 @@ Si un script GitHub est ajouté plus tard, son périmètre est le téléchargeme
 
 Le binaire évite les dépendances modernes non présentes sur Windows 7. Il utilise la conscience DPI système historique via `SetProcessDPIAware` et conserve un rendu GDI+ classique ; il n'annonce pas de prise en charge DPI per-monitor.
 
-Dans l’implémentation actuelle, GooseRot ne demande pas les droits administrateur et n’appelle aucune API de redémarrage. Cette phrase décrit l’état présent du code, pas le contrat cible destructeur de `lab`. En `safe` et `normal`, la conclusion reste un faux redémarrage compatible avec toutes les versions ciblées.
+Dans l’implémentation actuelle, GooseRot ne demande pas les droits administrateur et n’appelle aucune API de redémarrage. Cette phrase décrit l’état présent du code, pas le contrat cible destructeur de `lab`. En `safe` et `normal`, la conclusion reste une explosion et une coupure noire entièrement rendues dans l’overlay, compatibles avec toutes les versions ciblées.
 
 ## Publication
 

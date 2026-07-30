@@ -76,7 +76,7 @@ bool ParseTimestamp(const std::wstring& value, double& seconds) {
 bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& error) {
   auto requireValue = [&](int& index, const wchar_t* option) -> const wchar_t* {
     if (index + 1 >= argc) {
-      error = std::wstring(L"Valeur manquante après ") + option;
+      error = std::wstring(L"Missing value after ") + option;
       return nullptr;
     }
     return argv[++index];
@@ -93,20 +93,20 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
       else if (_wcsicmp(value, L"normal") == 0) config.mode = RunMode::Normal;
       else if (_wcsicmp(value, L"lab") == 0) config.mode = RunMode::Lab;
       else {
-        error = L"Mode inconnu. Valeurs acceptées : safe, normal, lab.";
+        error = L"Unknown mode. Accepted values: safe, normal, lab.";
         return false;
       }
     } else if (Equals(argument, L"--start-at")) {
       const wchar_t* value = requireValue(index, L"--start-at");
       if (!value || !ParseTimestamp(value, config.startAtSeconds)) {
-        if (error.empty()) error = L"--start-at attend MM:SS ou un nombre de secondes positif.";
+        if (error.empty()) error = L"--start-at expects MM:SS or a positive number of seconds.";
         return false;
       }
     } else if (Equals(argument, L"--duration-scale")) {
       const wchar_t* value = requireValue(index, L"--duration-scale");
       if (!value || !ParseDouble(value, config.durationScale) || config.durationScale < 0.01 ||
           config.durationScale > 100.0) {
-        if (error.empty()) error = L"--duration-scale doit être compris entre 0.01 et 100.";
+        if (error.empty()) error = L"--duration-scale must be between 0.01 and 100.";
         return false;
       }
     } else if (Equals(argument, L"--seed")) {
@@ -117,7 +117,7 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
       const unsigned long long parsed = std::wcstoull(value, &end, 10);
       if (value[0] == L'+' || value[0] == L'-' || end == value || *end != L'\0' ||
           errno == ERANGE || parsed > std::numeric_limits<std::uint32_t>::max()) {
-        error = L"--seed attend un entier non signé.";
+        error = L"--seed expects an unsigned integer.";
         return false;
       }
       config.seed = static_cast<std::uint32_t>(parsed);
@@ -135,26 +135,26 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
     } else if (Equals(argument, L"--no-desktop-effects")) {
       config.desktopEffects = false;
     } else {
-      error = std::wstring(L"Option inconnue : ") + argument;
+      error = std::wstring(L"Unknown option: ") + argument;
       return false;
     }
   }
 
   if (config.mode == RunMode::Lab && !config.vmConfirmed && !config.preview) {
-    error = L"Le profil lab exige --vm-confirmed (ou --preview pour un rendu sans effets bureau).";
+    error = L"Lab mode requires --vm-confirmed (or --preview for rendering without desktop effects).";
     return false;
   }
   if (config.fakeReboot && config.mode != RunMode::Lab) {
-    error = L"--fake-reboot lance la Preview AURA 67 et exige --mode lab.";
+    error = L"--fake-reboot launches the AURA 67 Preview and requires --mode lab.";
     return false;
   }
   if (config.bootGame) {
-    error = L"--boot-game est réservé à une future release contenant des artefacts "
-            L"UEFI/BIOS signés et vérifiables. Utilisez --mode lab --fake-reboot pour la Preview sûre.";
+    error = L"--boot-game is reserved for a future release with signed, verifiable UEFI/BIOS "
+            L"artifacts. Use --mode lab --fake-reboot for the safe Preview.";
     return false;
   }
   if (config.startAtSeconds > 300.0) {
-    error = L"--start-at ne peut pas dépasser 05:00.";
+    error = L"--start-at cannot exceed 05:00.";
     return false;
   }
   return true;
@@ -170,26 +170,26 @@ const wchar_t* ModeName(RunMode mode) {
 }
 
 std::wstring UsageText() {
-  return LR"(GooseRot — démonstration desktop autonome
+  return LR"(GooseRot - standalone desktop experience
 
 Usage:
   GooseRot.exe [options]
 
 Options:
-  --mode safe|normal|lab     Profil visuel (safe par défaut)
-  --start-at MM:SS           Démarrer à un instant de la timeline
-  --duration-scale N         0.1 = timeline dix fois plus rapide
-  --seed N                   Seed déterministe (67 par défaut)
-  --primary-monitor-only     Limiter le rendu à l'écran principal
-  --fake-reboot              Lancer GooseBootPreview après la conclusion (lab)
-  --boot-game                Réservé : indisponible sans artefacts firmware vérifiés
-  --vm-confirmed             Confirmation requise pour le profil lab
-  --preview                  Fenêtre 960x540, aucun effet sur le bureau
-  --no-desktop-effects       Désactiver mouvements de curseur/fenêtres
-  --help                     Afficher cette aide
+  --mode safe|normal|lab     Visual profile (safe by default)
+  --start-at MM:SS           Start at a specific timeline position
+  --duration-scale N         0.1 = timeline runs ten times faster
+  --seed N                   Deterministic seed (67 by default)
+  --primary-monitor-only     Limit rendering to the primary monitor
+  --fake-reboot              Launch GooseBootPreview after the finale (lab)
+  --boot-game                Reserved: unavailable without verified firmware artifacts
+  --vm-confirmed             Required confirmation for lab mode
+  --preview                  960x540 window with no desktop effects
+  --no-desktop-effects       Disable cursor and external-window movement
+  --help                     Show this help
 
-Tous les profils gardent Esc maintenu 2 secondes comme sortie d'urgence.
-Les BSOD, redémarrages, hooks presse-papiers et effets boot sont simulés.)";
+Every profile keeps the 2-second Esc emergency exit.
+BSOD, reboot, clipboard hooks and boot effects are simulated.)";
 }
 
 TimelineEngine::TimelineEngine()
@@ -208,8 +208,8 @@ TimelineEngine::TimelineEngine()
           {TimelineEventId::FinalMonologue, 255.0, L"Final Monologue"},
           {TimelineEventId::Countdown, 270.0, L"Final Countdown"},
           {TimelineEventId::CircleDance, 285.0, L"Circle Dance"},
-          {TimelineEventId::ResetAura, 299.0, L"Reset Aura"},
-          {TimelineEventId::Shutdown, 300.0, L"Graceful Shutdown"},
+          {TimelineEventId::ResetAura, 299.0, L"Final Trigger"},
+          {TimelineEventId::Shutdown, 300.0, L"Aura Core Explosion"},
       }) {
   Reset();
 }

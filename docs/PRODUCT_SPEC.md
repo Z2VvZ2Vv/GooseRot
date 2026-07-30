@@ -19,14 +19,14 @@ L’oie est un acteur visible. Lorsqu’un effet concerne le curseur, une fenêt
 - joue toute la timeline ;
 - simule l’interception du presse-papiers dans ses propres overlays ;
 - déplace temporairement le curseur et les fenêtres ;
-- affiche un faux redémarrage autour `5:00`, puis se ferme ;
+- affiche une explosion factice, une coupure noire et l’oie d’adieu autour de `5:00`, puis se ferme ;
 - restaure toutes les fenêtres déplacées et laisse le presse-papiers intact.
 
 ### `normal`
 
 - mêmes effets que `safe` ;
 - le gag de collage reste une simulation visuelle et ne lit pas le presse-papiers ;
-- autour de `5:00`, un redémarrage visuel est simulé ;
+- autour de `5:00`, une explosion et une coupure noire sont simulées ;
 - n’utilise ni élévation UAC, ni fermeture forcée des applications ;
 
 ### `lab`

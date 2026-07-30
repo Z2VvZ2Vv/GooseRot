@@ -259,8 +259,8 @@ void NotepadWindow::RefuseClose() {
   if (!window_) return;
 
   constexpr std::array<const wchar_t*, 4> titles = {
-      L"Untitled - Grindset (non enregistré)", L"NON - Grindset",
-      L"Untitled - Grindset (le bouton est décoratif)", L"Untitled - Grindset (67)"};
+      L"Untitled - Grindset (unsaved)", L"NO - Grindset",
+      L"Untitled - Grindset (the close button is decorative)", L"Untitled - Grindset (67)"};
   SetWindowTextW(window_,
                  titles[static_cast<std::size_t>(refusals_ - 1) % titles.size()]);
 
@@ -300,7 +300,7 @@ void NotepadWindow::Tick(double logicalTime) {
     const int previousRefusals = refusals_;
     if (Show(instance_)) {
       refusals_ = previousRefusals;
-      SetWindowTextW(window_, L"Untitled - Grindset (2) - récupéré automatiquement");
+      SetWindowTextW(window_, L"Untitled - Grindset (2) - recovered automatically");
     }
     return;
   }
@@ -348,27 +348,36 @@ namespace {
 
 constexpr int kPopupCloseButtonId = 6711;
 
-constexpr std::array<const wchar_t*, 9> kPopupTitles = {
-    L"aura_report_FINAL_v3.txt",
-    L"ne_pas_fermer.exe",
-    L"Grindset Monitor",
-    L"skibidi.dll — informations",
-    L"Reçu — Aura Points",
-    L"Analyse du jawline",
-    L"gooserot_ne_ferme_pas.log",
-    L"Assistant Rizz (bêta)",
-    L"Propriétés de : Ohio"};
+constexpr std::array<const wchar_t*, 12> kPopupTitles = {
+    L"Task Manager",
+    L"File Explorer",
+    L"Untitled - Notepad",
+    L"Windows Security",
+    L"Control Panel",
+    L"Command Prompt",
+    L"System Properties",
+    L"goose.exe - Application Error",
+    L"Aura Report - FINAL",
+    L"Ohio - File Explorer",
+    L"Rizz Assistant (Beta)",
+    L"67 processes - Task Manager"};
 
-constexpr std::array<const wchar_t*, 9> kPopupLines = {
-    L"Cette fenêtre ne peut pas être fermée.\r\nEssayez quand même, ça m'amuse.",
-    L"Vous avez fermé une fenêtre.\r\nDeux ont pris sa place. C'est la règle.",
-    L"Erreur 67 : le bouton [Fermer] a été taxé.\r\n(fanum tax appliquée)",
-    L"Indexation de votre rizz : 67 %\r\nNe débranchez pas votre aura.",
-    L"sigma.exe a-t-il cessé de fonctionner ?\r\nNon. Il n'a jamais commencé.",
-    L"Analyse du jawline terminée.\r\nRésultat : discutable.",
-    L"Votre streak de mewing est interrompue.\r\nL'oie a tout vu.",
-    L"Un NPC a été détecté sur ce poste.\r\nC'est vous. Bonne journée.",
-    L"Ce dossier contient 67 éléments.\r\nTous s'appellent 67."};
+constexpr std::array<const wchar_t*, 12> kPopupLines = {
+    L"CPU 100%\r\nGooseRot (67 processes)",
+    L"This PC > Aura > Ohio\r\n67 items found.",
+    L"HONK HONK HONK\r\nThe goose saved this file for you.",
+    L"Threat detected: critical brainrot.\r\nRecommended action: listen to the goose.",
+    L"Your desktop settings are now managed\r\nby GooseRot Administrator.",
+    L"C:\\AURA> goose.exe --take-over\r\nAccess granted. Bad idea.",
+    L"System protection: emotionally unavailable.\r\nAura integrity: 0%.",
+    L"goose.exe is not responding.\r\nIt is, however, multiplying.",
+    L"Clipboard certified: +10,000 aura.\r\nNo refunds. No appeals.",
+    L"This folder contains 67 items.\r\nEvery single one is named 67.",
+    L"NPC detected at this workstation.\r\nYes, that means you.",
+    L"Memory 99%  Disk 100%  Aura 0%\r\nClosing privileges have been revoked."};
+
+constexpr std::array<const wchar_t*, 6> kPopupButtons = {
+    L"END TASK", L"CLOSE", L"OK", L"REMOVE", L"CANCEL", L"MAKE IT STOP"};
 
 }  // namespace
 
@@ -416,7 +425,8 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
                                  WS_CHILD | WS_VISIBLE | SS_CENTER, 16, 20, kWidth - 40, 74,
                                  popup->window, nullptr, instance, nullptr);
   popup->button = CreateWindowExW(
-      0, L"BUTTON", L"FERMER", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+      0, L"BUTTON", kPopupButtons[variant % kPopupButtons.size()],
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
       kWidth / 2 - 70, 104, 140, 32, popup->window,
       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPopupCloseButtonId)), instance, nullptr);
   popup->font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -428,12 +438,10 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
   ShowWindow(popup->window, SW_SHOWNOACTIVATE);
   UpdateWindow(popup->window);
   popups_.push_back(std::move(popup));
-  if (AtCap()) draining_ = true;
   return true;
 }
 
 void PopupSwarm::Spawn(HINSTANCE instance, std::mt19937& random, int count) {
-  if (draining_) return;
   for (int index = 0; index < count && !AtCap(); ++index) CreatePopup(instance, random);
 }
 
@@ -463,27 +471,24 @@ void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTi
   }
 }
 
-// Closing a popup is never free until the cap has been reached. From that point
-// on the swarm enters a permanent draining state: every remaining popup pushes
-// back once, then closes without multiplying so the user can empty the desktop.
+// Closing a popup is never free. Before the protective cap, one close produces
+// two replacements. At the cap, close controls are permanently refused; only
+// the emergency cleanup path calls CloseAll().
 void PopupSwarm::RequestClose(Popup& popup) {
   ++closeAttempts_;
   ++popup.refusals;
-  if (!draining_) {
+  if (!AtCap()) {
     pendingSpawns_ += 2;
     popup.dead = true;
     if (popup.window) DestroyWindow(popup.window);
     return;
   }
-  if (popup.refusals < 2) {
-    // At the cap they push back once before giving in.
-    popup.jiggleUntil = lastTickTime_ + 0.6;
-    if (popup.label) SetWindowTextW(popup.label, L"NON.\r\n(réessayez, pour voir)");
-    if (popup.button) SetWindowTextW(popup.button, L"FERMER (vraiment)");
-    return;
+  popup.jiggleUntil = lastTickTime_ + 1.2;
+  if (popup.label) {
+    SetWindowTextW(popup.label,
+                   L"ACCESS DENIED.\r\n67 windows own this desktop now.");
   }
-  popup.dead = true;
-  if (popup.window) DestroyWindow(popup.window);
+  if (popup.button) SetWindowTextW(popup.button, L"CLOSE DENIED");
 }
 
 bool PopupSwarm::ConsumeCloseAttempt() {
@@ -500,7 +505,6 @@ void PopupSwarm::CloseAll() {
   popups_.clear();
   pendingSpawns_ = 0;
   closeAttempts_ = 0;
-  draining_ = false;
 }
 
 LRESULT CALLBACK PopupSwarm::WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {

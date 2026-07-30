@@ -10,19 +10,19 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 
 - overlays transparents, y compris déchirures, scanlines, blocs corrompus, faux curseurs, faux cadres « Ne répond pas » et fausses notifications, tous peints à l’intérieur de l’overlay ;
 - déplacement borné et restauré des fenêtres ;
-- traction progressive du curseur sur 67 pixels, bornée à l’écran courant et restaurée ;
+- traction initiale du curseur sur 67 pixels, puis tempête de mouvement bornée à l’écran et restaurée lors du nettoyage ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
 - faux glitch, faux BSOD et faux firmware ;
-- faux redémarrage rendu dans l’overlay, sans appel système.
+- explosion, coupure noire et conclusion rendues dans l’overlay, sans appel système.
 
 ## Fenêtres récalcitrantes
 
 Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une fenêtre fermée en fait apparaître deux » est borné par construction :
 
 - il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
-- le nombre total de popups est plafonné à neuf ; une fois ce plafond atteint, chaque popup résiste une fois puis l’essaim peut être vidé jusqu’à zéro ;
+- le nombre total de popups est plafonné à 67 ; une fois ce plafond atteint, les fermetures ordinaires restent refusées et seul le chemin privilégié de nettoyage les détruit ;
 - le faux Bloc-notes refuse trois fermetures, revient une seule fois, puis se ferme pour de bon ;
 - les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
@@ -87,7 +87,7 @@ Un processus de secours du même exécutable surveille le moteur via une mémoir
 - la position initiale du curseur et le focus sont restaurés ;
 - aucun BSOD réel ni processus de représailles n’existe ; après terminaison, le seul effet permis au processus de secours est la restauration.
 
-Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, ainsi que le plafond et le drainage complet de l’essaim de popups.
+Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, ainsi que le plafond, le refus de fermeture et le nettoyage privilégié complet de l’essaim de popups.
 
 ## Consentement et environnement
 

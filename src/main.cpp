@@ -15,18 +15,19 @@ namespace {
 
 bool AskForConsent(const gooserot::AppConfig& config) {
   if (config.preview) return true;
-  std::wstring message = L"GooseRot va afficher un overlay pendant cinq minutes.\r\n\r\n";
+  std::wstring message = L"GooseRot will take over the desktop visually for five minutes.\r\n\r\n";
   if (config.desktopEffects) {
-    message += L"Avec votre accord, l'oie pourra attraper le curseur pour le traîner de 67 pixels et "
-               L"déplacer certaines fenêtres, puis restaurera leur position.\r\n";
+    message += L"With your consent, the geese will move and violently shake the pointer, and may "
+               L"temporarily move selected windows before restoring their positions.\r\n";
   }
-  message += L"Pour le gag, les fenêtres de GooseRot refusent parfois de se fermer et se dupliquent "
-             L"(neuf au maximum). Elles appartiennent toutes à GooseRot et disparaissent à la fermeture.\r\n"
-             L"Aucun presse-papiers, fichier système, démarrage, BSOD ou redémarrage réel ne sera modifié.\r\n\r\n"
-             L"Maintenez Esc pendant 2 secondes pour tout fermer à tout moment.\r\n\r\n"
-             L"Démarrer la démonstration ?";
+  message += L"GooseRot may create up to 67 fake Task Manager, File Explorer, Notepad and system "
+             L"windows. They may multiply and refuse normal close requests. Every one belongs to "
+             L"GooseRot and is destroyed during cleanup.\r\n"
+             L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
+             L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.\r\n\r\n"
+             L"Start the experience?";
   const UINT icon = config.mode == gooserot::RunMode::Safe ? MB_ICONINFORMATION : MB_ICONWARNING;
-  return MessageBoxW(nullptr, message.c_str(), L"GooseRot — consentement explicite",
+  return MessageBoxW(nullptr, message.c_str(), L"GooseRot - explicit consent",
                      MB_OKCANCEL | MB_DEFBUTTON2 | MB_TOPMOST | icon) == IDOK;
 }
 
@@ -60,16 +61,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   gooserot::AppConfig config;
   std::wstring error;
   if (!arguments || !gooserot::ParseArguments(argumentCount, arguments, config, error)) {
-    if (error.empty()) error = L"Impossible de lire la ligne de commande.";
+    if (error.empty()) error = L"Unable to read the command line.";
     error += L"\r\n\r\n" + gooserot::UsageText();
-    MessageBoxW(nullptr, error.c_str(), L"GooseRot — arguments invalides", MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr, error.c_str(), L"GooseRot - invalid arguments", MB_OK | MB_ICONERROR);
     if (arguments) LocalFree(arguments);
     OleUninitialize();
     return 2;
   }
 
   if (config.showHelp) {
-    MessageBoxW(nullptr, gooserot::UsageText().c_str(), L"GooseRot — aide", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(nullptr, gooserot::UsageText().c_str(), L"GooseRot - help", MB_OK | MB_ICONINFORMATION);
     LocalFree(arguments);
     OleUninitialize();
     return 0;
@@ -87,7 +88,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   if (AskForConsent(config)) {
     gooserot::GooseRotApp app(instance, config);
     if (!app.Initialize(error)) {
-      MessageBoxW(nullptr, error.c_str(), L"GooseRot — initialisation impossible", MB_OK | MB_ICONERROR);
+      MessageBoxW(nullptr, error.c_str(), L"GooseRot - initialization failed", MB_OK | MB_ICONERROR);
       result = 4;
     } else {
       result = app.Run();

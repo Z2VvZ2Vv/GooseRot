@@ -1,6 +1,6 @@
 # GooseRot
 
-GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de cinq minutes sur un bureau Windows : oie procédurale, bulles, compteur d’Aura, faux Bloc-notes, déplacements bornés de 67 pixels, duplication en trois oies, stickers, graffiti, filtres, compte à rebours et faux redémarrage.
+GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de cinq minutes sur un bureau Windows : oies procédurales, images brainrot persistantes, faux outils Windows, tempête de curseur, graffiti, filtres, compte à rebours et explosion finale sur écran noir.
 
 > [!CAUTION]
 > Le profil `lab` est un **destructeur volontaire**, pas une variante plus intense de la démo. À la fin de son exécution, la machine doit être considérée comme sacrifiée : fichiers supprimés ou corrompus, Registre Windows endommagé et chaîne de démarrage rendue inutilisable. Il est réservé à une VM jetable, isolée, sans données ni secrets, avec un snapshot hors ligne prêt à être restauré. Ne jamais l’exécuter sur un PC physique ou une VM importante.
@@ -10,7 +10,7 @@ Le profil `safe` reste la variante inoffensive et le seul profil offrant la sort
 > [!NOTE]
 > Cette documentation fixe le contrat produit visé. L’implémentation actuelle n’a pas encore été alignée : elle conserve des protections et une sortie `Esc` dans tous les profils et n’implémente pas les destructions décrites pour `lab`. Ne pas confondre ce constat avec une garantie pour une future build `lab`.
 
-Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : les fenêtres récalcitrantes appartiennent à GooseRot, l’essaim est plafonné à neuf puis peut être vidé, et le nettoyage les détruit toutes. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
+Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : les fenêtres récalcitrantes appartiennent à GooseRot, l’essaim est plafonné à 67 et refuse les fermetures ordinaires au plafond, tandis que le nettoyage d’urgence les détruit toutes. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
 
 ## État de l’implémentation
 
@@ -20,16 +20,16 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - moteur de glitch piloté par la timeline : déchirures, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas », flashs ;
 - tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
-- trois entités indépendantes, bulles, overlays PNG embarqués et effets des cinq phases ;
-- traction progressive du curseur sur 67 pixels avec verrouillage bec/pointeur visible, bornée puis restaurée ;
+- jusqu’à 67 entités indépendantes, bulles, images PNG livrées par les oies puis laissées à l’écran et effets des cinq phases ;
+- traction initiale du curseur sur 67 pixels, puis tempête de mouvement de plus en plus violente entre `3:30` et la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
-- fenêtres Aura/Sigma interactives, faux Bloc-notes qui refuse de se fermer et essaim de popups plafonné qui se duplique quand on le ferme — tout appartient à GooseRot ;
+- fenêtres Aura/Sigma interactives, faux Bloc-notes et faux Task Manager, File Explorer, Windows Security ou Command Prompt ; l’essaim plafonné se duplique et refuse les fermetures au plafond — tout appartient à GooseRot ;
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau ;
 - cœur AURA 67 déterministe et `GooseBootPreview.exe` sûr dans `boot/` ;
 - adaptateurs freestanding UEFI x64 et BIOS, construits sur demande et vérifiés statiquement ;
-- tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent et le drainage de l’essaim de popups.
+- tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le plafond, le refus de fermeture et le nettoyage d’urgence de l’essaim.
 
 Le bundle firmware reste strictement expérimental : il est non signé, non installable et n’a pas été exécuté sous QEMU/OVMF ou SeaBIOS. Le build vérifie les formats, tailles, signatures, points d’entrée, sections et imports, mais pas le comportement au démarrage. Aucun installateur, chemin firmware d’écriture disque ou procédure de modification du démarrage n’est fourni, et `--boot-game` continue donc d’échouer fermé.
 

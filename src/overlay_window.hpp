@@ -16,10 +16,14 @@ namespace gooserot {
 struct VisualSprite {
   int resourceId = 0;
   Vec2 center;
+  Vec2 targetCenter;
   float size = 180.0f;
   float angleDegrees = 0.0f;
   double createdAt = 0.0;
-  double lifetime = 8.0;
+  double lifetime = 320.0;
+  double deliveryDeadline = 0.0;
+  std::size_t carrierIndex = 0;
+  bool carried = false;
 };
 
 // Fake system notification drawn inside the overlay. Nothing is ever posted to
@@ -46,6 +50,8 @@ struct RenderState {
   float emergencyProgress = 0.0f;
   // 0 = clean desktop, 1 = the display is actively falling apart.
   float glitch = 0.0f;
+  // 0 = normal pointer, 1 = the flock is violently steering it.
+  float cursorChaos = 0.0f;
   // 0 = bare wall, 1 = the 67 tag is finished.
   float graffitiProgress = 0.0f;
   int popupCount = 0;
@@ -99,6 +105,7 @@ class OverlayWindow {
   void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawClipboardBadge(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;

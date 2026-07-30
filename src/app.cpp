@@ -12,7 +12,7 @@ namespace gooserot {
 namespace {
 
 constexpr double kTimelineEnd = 300.0;
-constexpr double kShutdownVisualDuration = 4.5;
+constexpr double kShutdownVisualDuration = 7.5;
 
 double CounterSeconds(const LARGE_INTEGER& value, const LARGE_INTEGER& frequency) {
   return static_cast<double>(value.QuadPart) / static_cast<double>(frequency.QuadPart);
@@ -28,7 +28,7 @@ GooseRotApp::~GooseRotApp() { Cleanup(); }
 bool GooseRotApp::Initialize(std::wstring& error) {
   if (!QueryPerformanceFrequency(&performanceFrequency_) || performanceFrequency_.QuadPart <= 0 ||
       !QueryPerformanceCounter(&lastCounter_)) {
-    error = L"L'horloge monotone haute résolution est indisponible.";
+    error = L"The high-resolution monotonic clock is unavailable.";
     return false;
   }
   logicalTime_ = config_.startAtSeconds;
@@ -61,26 +61,18 @@ int GooseRotApp::Run() {
   Cleanup();
   if (bootPreviewLaunchFailed_) {
     MessageBoxW(nullptr,
-                L"GooseBootPreview.exe est introuvable. Construisez la cible GooseBootPreview "
-                L"dans le même dossier de sortie que GooseRot.exe.",
-                L"GooseRot — Preview indisponible", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                L"GooseBootPreview.exe was not found. Build GooseBootPreview in the same "
+                L"output directory as GooseRot.exe.",
+                L"GooseRot — Preview unavailable", MB_OK | MB_ICONWARNING | MB_TOPMOST);
   }
   return exitCode_;
 }
 
 void GooseRotApp::ApplyBaseline(double logicalTime) {
   if (logicalTime >= 15.0) aura_ = -10000;
-  if (logicalTime > 120.0) aura_ += 9999;
+  if (logicalTime > 120.0) aura_ += 10000;
   if (logicalTime >= 203.0) aura_ -= 999998;
-  if (logicalTime >= 299.0) aura_ = 0;
-
-  if (logicalTime >= 135.0) {
-    const Vec2 center = overlay_.CanvasBounds().Center();
-    while (geese_.size() < 3) {
-      const float offset = static_cast<float>(geese_.size()) * 35.0f;
-      geese_.emplace_back(center + Vec2{offset - 35.0f, 28.0f});
-    }
-  }
+  EnsureGooseCount();
 
   if (logicalTime > 0.0 && logicalTime < 7.0) {
     SetBubble(L"Mewing in progress... DO NOT DISTURB.", 7.0 - logicalTime);
@@ -98,10 +90,21 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
     sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
                       L"SIGMA CHAD", L"NPC", true, logicalTime);
   }
-  if (logicalTime >= 135.0) nextPopupAt_ = logicalTime + 2.0;
+  if (logicalTime >= 135.0) {
+    const int baselinePopups = std::clamp(
+        1 + static_cast<int>((logicalTime - 135.0) / 2.5), 1, PopupSwarm::kMaximumPopups);
+    popups_.Spawn(instance_, random_, baselinePopups);
+    nextPopupAt_ = logicalTime + 0.8;
+  }
+  if (logicalTime >= 45.0) {
+    const std::size_t baselineSprites = std::min<std::size_t>(
+        config_.mode == RunMode::Lab ? 48U : 36U,
+        1U + static_cast<std::size_t>((logicalTime - 45.0) / 7.0));
+    while (sprites_.size() < baselineSprites) SpawnSprite();
+  }
   nextWindowAction_ = std::max(60.0, logicalTime + 2.0);
   nextCursorAction_ = std::max(70.0, logicalTime + 4.0);
-  nextSpriteAt_ = std::max(90.0, logicalTime + 1.0);
+  nextSpriteAt_ = std::max(45.0, logicalTime + 1.0);
 }
 
 void GooseRotApp::Tick() {
@@ -138,6 +141,7 @@ void GooseRotApp::Tick() {
 
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
   if (!shutdownStarted_) {
+    EnsureGooseCount();
     UpdatePrompts();
     UpdateNotepad();
     UpdatePopups();
@@ -150,6 +154,7 @@ void GooseRotApp::Tick() {
     }
     UpdateDesktopActions();
     UpdateCursorGrab(logicalDelta);
+    UpdateCursorChaos();
     UpdateSprites();
     UpdateGlitch(logicalDelta);
   } else if (!cleanupDone_) {
@@ -189,7 +194,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       auraReferenceCursor_ = desktop_->CursorPosition();
       geese_.front().Honk(0.5f);
       SetBubble(L"I can feel your aura moving...", 5.0);
-      PushToast(L"Sécurité Windows", L"Menace détectée : negative rizz.\nAucune action requise. Ni possible.");
+      PushToast(L"Windows Security", L"Threat detected: negative rizz.\nNo action is available. Or useful.");
       break;
     case TimelineEventId::NotepadStart:
       notepadText_.clear();
@@ -217,9 +222,9 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       KickGlitch(0.2f);
       break;
     case TimelineEventId::ClipboardBadge:
-      AddAura(9999);
-      SetBubble(L"+9999 AURA\nClipboard certified (visual simulation).", 6.0);
-      PushToast(L"Presse-papiers", L"Collage certifié. +9999 AURA.\nRien n'a été lu ni copié.");
+      AddAura(10000);
+      SetBubble(L"+10,000 AURA\nClipboard certified. Nothing was copied.", 6.0);
+      PushToast(L"Clipboard", L"Paste certified. +10,000 AURA.\nNo clipboard data was read.");
       break;
     case TimelineEventId::Duplicate: {
       const Vec2 center = overlay_.CanvasBounds().Center();
@@ -233,7 +238,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
     }
     case TimelineEventId::Graffiti:
       SetBubble(L"67 PIXELS. PERFECTLY CALCULATED.", 6.0);
-      PushToast(L"Windows Update", L"Installation de 67 mises à jour de l'aura…\nNe redémarrez rien, c'est faux.");
+      PushToast(L"Windows Update", L"Installing 67 aura updates...\nDo not restart. This is extremely fake.");
       break;
     case TimelineEventId::SigmaPrompt:
       sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
@@ -242,7 +247,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
     case TimelineEventId::ScreenShake:
       SetBubble(L"Visual instability detected.", 4.0);
       KickGlitch(0.5f);
-      PushToast(L"Explorateur de fichiers", L"explorer.exe ne répond plus.\n(mensonge, il va très bien)");
+      PushToast(L"File Explorer", L"explorer.exe is not responding.\n(It is fine. The geese are lying.)");
       break;
     case TimelineEventId::ColorFilter:
       SetBubble(L"Matrix Green vs Neon Pink.", 4.0);
@@ -254,18 +259,18 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       KickGlitch(0.7f);
       break;
     case TimelineEventId::Countdown:
-      SetBubble(L"Thirty seconds until aura reset.", 5.0);
-      PushToast(L"Système", L"Réinitialisation de l'aura dans 00:30.\nWindows n'est pas concerné.");
+      SetBubble(L"THIRTY SECONDS UNTIL TOTAL COLLAPSE.", 5.0);
+      PushToast(L"System", L"Desktop integrity expires in 00:30.\nThe geese are in control now.");
       break;
     case TimelineEventId::CircleDance:
       for (GooseEntity& goose : geese_) goose.Honk(1.0f);
       SetBubble(L"THE CIRCLE OF 67.", 5.0);
       break;
     case TimelineEventId::ResetAura:
-      AddAura(-aura_);
       geese_.front().SetTarget({overlay_.CanvasBounds().Center().x,
                                 overlay_.CanvasBounds().bottom - 98.0f}, SpeedTier::Charge, true);
-      SetBubble(L"RESETTING AURA.", 1.2);
+      SetBubble(L"LAST CHANCE. DO NOT PRESS IT.", 1.2);
+      KickGlitch(1.0f);
       break;
     case TimelineEventId::Shutdown:
       BeginShutdown();
@@ -378,22 +383,23 @@ float GooseRotApp::GraffitiProgress() const {
 
 void GooseRotApp::UpdatePopups() {
   if (nextPopupAt_ < 1e8 && logicalTime_ >= nextPopupAt_ && !popups_.AtCap()) {
-    popups_.Spawn(instance_, random_, 1);
-    std::uniform_real_distribution<double> delay(config_.mode == RunMode::Lab ? 7.0 : 12.0,
-                                                 config_.mode == RunMode::Lab ? 13.0 : 22.0);
+    const int burst = logicalTime_ >= 270.0 ? 4 : logicalTime_ >= 210.0 ? 3 : logicalTime_ >= 165.0 ? 2 : 1;
+    popups_.Spawn(instance_, random_, burst);
+    std::uniform_real_distribution<double> delay(config_.mode == RunMode::Lab ? 0.8 : 1.4,
+                                                 config_.mode == RunMode::Lab ? 1.8 : 3.0);
     nextPopupAt_ = logicalTime_ + delay(random_);
   }
   popups_.Tick(instance_, random_, logicalTime_);
 
   if (popups_.ConsumeCloseAttempt()) {
     constexpr std::array<const wchar_t*, 5> lines = {
-        L"Une fenêtre fermée = deux fenêtres.\nC'est mathématique.",
-        L"Le bouton FERMER est décoratif.",
-        L"Tu peux pas fermer le grindset.",
-        L"J'ai dupliqué ta décision.",
-        L"Chaque clic finance mon aura."};
+        L"ONE WINDOW CLOSED. TWO WINDOWS SPAWNED.\nGOOSE MATHEMATICS.",
+        L"THE CLOSE BUTTON IS PURELY DECORATIVE.",
+        L"YOU CANNOT CLOSE THE GRINDSET.",
+        L"I DUPLICATED YOUR DECISION.",
+        L"EVERY CLICK FUNDS ANOTHER GOOSE."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
-    SetBubble(popups_.AtCap() ? L"Ok ok. Celle-là je te la laisse." : lines[pick(random_)], 4.5);
+    SetBubble(popups_.AtCap() ? L"67 WINDOWS. CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
     if (!geese_.empty()) geese_.front().Honk(0.45f);
     KickGlitch(0.18f);
   }
@@ -404,10 +410,10 @@ void GooseRotApp::UpdateNotepad() {
   // the window's counters.
   if (notepad_.ConsumeRefusal()) {
     constexpr std::array<const wchar_t*, 4> lines = {
-        L"Non. Je n'ai pas fini d'écrire.",
-        L"Le bouton [X] a été taxé.",
-        L"Encore un clic et je duplique tout.",
-        L"Bon. Elle revient dans une seconde."};
+        L"NO. I AM NOT DONE TYPING.",
+        L"THE [X] BUTTON HAS BEEN TAXED.",
+        L"CLICK AGAIN. I DARE YOU.",
+        L"FINE. IT WILL BE BACK IMMEDIATELY."};
     const std::size_t index =
         static_cast<std::size_t>(std::max(0, notepad_.Refusals() - 1)) % lines.size();
     SetBubble(lines[index], 4.0);
@@ -420,7 +426,7 @@ void GooseRotApp::UpdateNotepad() {
       L"skibidi", L"rizzler", L"alpha", L"grindset", L"no-cap", L"fr-fr",
       L"ohio", L"sigma", L"mewing", L"streak", L"aura", L"farming",
       L"level-67", L"fanum-tax", L"jawline", L"protocol", L"activated",
-      L"brainrot", L"goose", L"honk", L"NPC", L"certified", L"+9999", L"tralalero"};
+      L"brainrot", L"goose", L"honk", L"NPC", L"certified", L"+10000", L"tralalero"};
   std::uniform_int_distribution<std::size_t> word(0, words.size() - 1);
   int additions = 0;
   while (lastTypedAt_ + 0.18 <= logicalTime_ && additions < 80) {
@@ -524,15 +530,15 @@ void GooseRotApp::EndCursorGrab(bool succeeded) {
   grabRemainingPixels_ = 0;
   if (!geese_.empty()) geese_.front().SetLatched(false);
   if (!succeeded) {
-    SetBubble(L"Le curseur était coincé au bord.\nJ'ai fait semblant.", 4.0);
+    SetBubble(L"THE CURSOR HIT THE EDGE.\nI WILL BREAK IT AGAIN LATER.", 4.0);
     return;
   }
   AddAura(-67);
   constexpr std::array<const wchar_t*, 4> lines = {
-      L"Curseur déplacé de 67 pixels. Exactement.",
-      L"Ton aim avait une aura négative.",
+      L"CURSOR MOVED BY EXACTLY 67 PIXELS.",
+      L"YOUR AIM HAD NEGATIVE AURA.",
       L"NO CLICK. ONLY 67.",
-      L"Repose-le où tu veux, je recommencerai."};
+      L"PUT IT BACK. I WILL STEAL IT AGAIN."};
   std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
   SetBubble(lines[pick(random_)], 4.5);
 }
@@ -568,6 +574,31 @@ void GooseRotApp::UpdateCursorGrab(double logicalDelta) {
     return;
   }
   if (logicalTime_ >= grabDeadline_) EndCursorGrab(grabRemainingPixels_ < 34);
+}
+
+void GooseRotApp::UpdateCursorChaos() {
+  if (!desktop_ || shutdownStarted_ || logicalTime_ < 210.0 || cursorLatched_) {
+    cursorChaos_ = 0.0f;
+    return;
+  }
+
+  cursorChaos_ = static_cast<float>(std::clamp((logicalTime_ - 210.0) / 75.0, 0.0, 1.0));
+  const RectF bounds = overlay_.CanvasBounds();
+  const Vec2 center = bounds.Center();
+  const float phase = static_cast<float>(logicalTime_);
+  const Vec2 attractor{
+      center.x + std::sin(phase * (2.1f + cursorChaos_ * 3.7f)) * bounds.Width() * 0.38f,
+      center.y + std::cos(phase * (2.7f + cursorChaos_ * 4.9f)) * bounds.Height() * 0.34f};
+  const Vec2 cursor = overlay_.ScreenToCanvas(desktop_->CursorPosition());
+  const Vec2 pull = (attractor - cursor) * (0.08f + cursorChaos_ * 0.58f);
+  const float jitterAmplitude = 3.0f + cursorChaos_ * 38.0f;
+  const Vec2 jitter{
+      std::sin(phase * 41.0f) * jitterAmplitude + std::cos(phase * 67.0f) * jitterAmplitude * 0.55f,
+      std::cos(phase * 47.0f) * jitterAmplitude + std::sin(phase * 71.0f) * jitterAmplitude * 0.55f};
+  const float maximumStep = 8.0f + cursorChaos_ * 62.0f;
+  const Vec2 step = ClampMagnitude(pull + jitter, maximumStep);
+  desktop_->DragCursorBy(static_cast<int>(std::round(step.x)),
+                         static_cast<int>(std::round(step.y)));
 }
 
 void GooseRotApp::ScheduleWindowAction() {
@@ -626,13 +657,34 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
   const bool leadBusy = cursorLatched_ || pendingAction_.kind != PendingActionKind::None;
 
   if (!shutdownStarted_) {
-    if (logicalTime_ >= 299.0) {
-      geese_.front().SetTarget({center.x, bounds.bottom - 98.0f}, SpeedTier::Charge, true);
-    } else if (logicalTime_ >= 255.0 && geese_.size() >= 3) {
-      const float speed = logicalTime_ >= 285.0 ? 4.2f : 1.1f;
-      const float radius = logicalTime_ >= 285.0 ? 92.0f : 120.0f;
+    if (logicalTime_ >= 285.0 && geese_.size() >= 3) {
+      const float aspect = std::max(0.5f, bounds.Width() / std::max(1.0f, bounds.Height()));
+      const int columns = std::max(1, static_cast<int>(std::ceil(
+          std::sqrt(static_cast<float>(geese_.size()) * aspect))));
+      const int rows = std::max(1, static_cast<int>((geese_.size() + columns - 1) / columns));
+      const float cellWidth = bounds.Width() / columns;
+      const float cellHeight = bounds.Height() / rows;
       for (std::size_t index = 0; index < geese_.size(); ++index) {
-        const float angle = static_cast<float>(logicalTime_ * speed + index * 2.0943951);
+        const int column = static_cast<int>(index) % columns;
+        const int row = static_cast<int>(index) / columns;
+        const float wobbleX = std::sin(static_cast<float>(logicalTime_ * 3.0 + index * 1.7)) *
+                              std::min(20.0f, cellWidth * 0.16f);
+        const float wobbleY = std::cos(static_cast<float>(logicalTime_ * 3.7 + index * 2.1)) *
+                              std::min(16.0f, cellHeight * 0.14f);
+        geese_[index].SetTarget(
+            {bounds.left + (column + 0.5f) * cellWidth + wobbleX,
+             bounds.top + (row + 0.5f) * cellHeight + wobbleY},
+            SpeedTier::Charge, true);
+      }
+      if (logicalTime_ >= 299.0) {
+        geese_.front().SetTarget({center.x, bounds.bottom - 98.0f}, SpeedTier::Charge, true);
+      }
+    } else if (logicalTime_ >= 255.0 && geese_.size() >= 3) {
+      constexpr float kGoldenAngle = 2.39996323f;
+      const float maximumRadius = std::min(bounds.Width(), bounds.Height()) * 0.44f;
+      for (std::size_t index = 0; index < geese_.size(); ++index) {
+        const float angle = static_cast<float>(logicalTime_ * 1.8) + index * kGoldenAngle;
+        const float radius = std::min(maximumRadius, 58.0f + std::sqrt(static_cast<float>(index)) * 43.0f);
         geese_[index].SetTarget(cursor + Vec2{std::cos(angle) * radius, std::sin(angle) * radius},
                                 SpeedTier::Charge, true);
       }
@@ -662,20 +714,39 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
         if (goose.DistanceToTarget() < 18.0f) goose.SetTarget(RandomCanvasPoint(65.0f), SpeedTier::Walk);
       }
     }
+
+    // A carried brainrot image temporarily overrides that goose's choreography
+    // so the prop visibly travels across the desktop before being abandoned.
+    for (const VisualSprite& sprite : sprites_) {
+      if (!sprite.carried || sprite.carrierIndex >= geese_.size()) continue;
+      if (sprite.carrierIndex == 0 && leadBusy) continue;
+      GooseEntity& carrier = geese_[sprite.carrierIndex];
+      carrier.SetTarget(carrier.BodyTargetForBeak(sprite.targetCenter), SpeedTier::Run, true);
+    }
   }
 
   for (GooseEntity& goose : geese_) goose.Update(deltaSeconds, bounds);
 }
 
 void GooseRotApp::UpdateSprites() {
-  sprites_.erase(std::remove_if(sprites_.begin(), sprites_.end(), [this](const VisualSprite& sprite) {
-                   return logicalTime_ - sprite.createdAt > sprite.lifetime;
-                 }), sprites_.end());
-  if (logicalTime_ >= 90.0 && logicalTime_ < 210.0 && logicalTime_ >= nextSpriteAt_) {
-    const std::size_t limit = config_.mode == RunMode::Lab ? 24U : 12U;
+  for (VisualSprite& sprite : sprites_) {
+    if (!sprite.carried || sprite.carrierIndex >= geese_.size()) continue;
+    const GooseEntity& carrier = geese_[sprite.carrierIndex];
+    sprite.center = carrier.Rig().beakTip;
+    if (carrier.BeakDistanceTo(sprite.targetCenter) < 28.0f ||
+        logicalTime_ >= sprite.deliveryDeadline) {
+      sprite.carried = false;
+      sprite.center = sprite.targetCenter;
+    }
+  }
+
+  if (logicalTime_ >= 45.0 && logicalTime_ < 298.0 && logicalTime_ >= nextSpriteAt_) {
+    const std::size_t limit = config_.mode == RunMode::Lab ? 48U : 36U;
     if (sprites_.size() < limit) SpawnSprite();
-    std::uniform_real_distribution<double> delay(config_.mode == RunMode::Lab ? 1.4 : 3.0,
-                                                  config_.mode == RunMode::Lab ? 3.5 : 7.0);
+    const bool late = logicalTime_ >= 210.0;
+    std::uniform_real_distribution<double> delay(
+        late ? (config_.mode == RunMode::Lab ? 0.7 : 1.2) : 3.0,
+        late ? (config_.mode == RunMode::Lab ? 1.5 : 2.6) : 6.0);
     nextSpriteAt_ = logicalTime_ + delay(random_);
   }
 }
@@ -685,11 +756,68 @@ void GooseRotApp::SpawnSprite() {
       IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
       IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS};
   std::uniform_int_distribution<std::size_t> resource(0, resources.size() - 1);
-  std::uniform_real_distribution<float> size(130.0f, 235.0f);
+  std::uniform_real_distribution<float> size(108.0f, 176.0f);
   std::uniform_real_distribution<float> angle(-12.0f, 12.0f);
-  std::uniform_real_distribution<double> life(6.5, 10.5);
-  sprites_.push_back({resources[resource(random_)], RandomCanvasPoint(125.0f), size(random_), angle(random_),
-                      logicalTime_, life(random_)});
+  VisualSprite sprite;
+  sprite.resourceId = resources[resource(random_)];
+  sprite.size = size(random_);
+  sprite.angleDegrees = angle(random_);
+  sprite.createdAt = logicalTime_;
+  sprite.lifetime = std::max(12.0, 310.0 - logicalTime_);
+  sprite.targetCenter = FindSpriteLandingPoint(sprite.size);
+  sprite.carrierIndex = geese_.size() > 1
+                            ? 1U + sprites_.size() % (geese_.size() - 1U)
+                            : 0U;
+  sprite.carried = !geese_.empty();
+  sprite.deliveryDeadline = logicalTime_ + 5.0;
+  sprite.center = sprite.carried ? geese_[sprite.carrierIndex].Rig().beakTip
+                                  : sprite.targetCenter;
+  sprites_.push_back(sprite);
+}
+
+Vec2 GooseRotApp::FindSpriteLandingPoint(float size) {
+  const RectF bounds = overlay_.CanvasBounds();
+  const float margin = std::max(58.0f, size * 0.55f);
+  Vec2 fallback = RandomCanvasPoint(margin);
+  for (int attempt = 0; attempt < 48; ++attempt) {
+    const Vec2 candidate = RandomCanvasPoint(margin);
+    fallback = candidate;
+    const bool auraHud = candidate.x > bounds.right - 340.0f && candidate.y < bounds.top + 160.0f;
+    const bool clipboardZone = candidate.x < bounds.left + 480.0f &&
+                               candidate.y > bounds.bottom - 230.0f;
+    const bool graffitiCore = candidate.x > bounds.left + bounds.Width() * 0.28f &&
+                               candidate.x < bounds.left + bounds.Width() * 0.72f &&
+                               candidate.y > bounds.top + bounds.Height() * 0.17f &&
+                               candidate.y < bounds.top + bounds.Height() * 0.78f;
+    if (auraHud || clipboardZone || (logicalTime_ >= 135.0 && graffitiCore)) continue;
+
+    bool overlaps = false;
+    for (const VisualSprite& existing : sprites_) {
+      const float minimum = (size + existing.size) * 0.34f;
+      if (Distance(candidate, existing.targetCenter) < minimum) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (!overlaps) return candidate;
+  }
+  return fallback;
+}
+
+std::size_t GooseRotApp::DesiredGooseCount() const {
+  if (logicalTime_ < 135.0) return 1;
+  if (logicalTime_ < 210.0) return 3;
+  const double progress = std::clamp((logicalTime_ - 210.0) / 89.0, 0.0, 1.0);
+  return static_cast<std::size_t>(3 + std::floor(std::pow(progress, 0.72) * 64.0));
+}
+
+void GooseRotApp::EnsureGooseCount() {
+  const std::size_t desired = DesiredGooseCount();
+  while (geese_.size() < desired) {
+    GooseEntity goose(RandomCanvasPoint(58.0f));
+    goose.Honk(0.35f);
+    geese_.push_back(goose);
+  }
 }
 
 Vec2 GooseRotApp::RandomCanvasPoint(float margin) {
@@ -715,7 +843,6 @@ void GooseRotApp::BeginShutdown() {
   if (shutdownStarted_) return;
   shutdownStarted_ = true;
   completedTimeline_ = true;
-  aura_ = 0;
   Cleanup();
 }
 
@@ -729,6 +856,7 @@ bool GooseRotApp::Cleanup() {
   popups_.CloseAll();
   nextPopupAt_ = 1e9;
   cursorLatched_ = false;
+  cursorChaos_ = 0.0f;
   if (!geese_.empty()) geese_.front().SetLatched(false);
   pendingAction_ = {};
   if (desktop_ && !desktop_->Restore()) return false;
@@ -779,6 +907,7 @@ RenderState GooseRotApp::BuildRenderState() const {
   state.cursor = desktop_ ? desktop_->CursorPosition() : POINT{};
   state.emergencyProgress = static_cast<float>(emergencyHeldSeconds_ / 2.0);
   state.glitch = glitch_;
+  state.cursorChaos = cursorChaos_;
   state.graffitiProgress = GraffitiProgress();
   state.popupCount = popups_.Count();
   state.cursorLatched = cursorLatched_;

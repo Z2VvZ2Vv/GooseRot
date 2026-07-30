@@ -284,7 +284,7 @@ HWND FindPopupWindow() {
   return FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr);
 }
 
-void TestPopupSwarmMultiplicationAndDrain() {
+void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
   HINSTANCE instance = GetModuleHandleW(nullptr);
   std::mt19937 random(67);
 
@@ -305,19 +305,18 @@ void TestPopupSwarmMultiplicationAndDrain() {
     swarm.Spawn(instance, random, gooserot::PopupSwarm::kMaximumPopups);
     Expect(swarm.AtCap(), "popup swarm reaches but never exceeds its cap");
 
-    int safety = 0;
-    while (swarm.Count() > 0 && safety++ < 20) {
-      HWND popup = FindPopupWindow();
-      Expect(popup != nullptr, "a tracked popup has a live window");
-      if (!popup) break;
+    HWND popup = FindPopupWindow();
+    Expect(popup != nullptr, "a tracked popup has a live window");
+    if (popup) {
       SendMessageW(popup, WM_CLOSE, 0, 0);
-      Expect(IsWindow(popup) != FALSE, "at the cap each popup refuses its first close");
       SendMessageW(popup, WM_CLOSE, 0, 0);
-      swarm.Tick(instance, random, 2.0 + safety);
+      swarm.Tick(instance, random, 2.0);
+      Expect(IsWindow(popup) != FALSE, "at the cap every normal close is refused");
+      Expect(swarm.Count() == gooserot::PopupSwarm::kMaximumPopups,
+             "refused closes keep the capped swarm full");
     }
-    Expect(swarm.Count() == 0, "after reaching the cap the entire swarm can drain");
-    swarm.Spawn(instance, random, 1);
-    Expect(swarm.Count() == 0, "a drained swarm does not restart automatically");
+    swarm.CloseAll();
+    Expect(swarm.Count() == 0, "emergency cleanup destroys the entire capped swarm");
   }
 }
 
@@ -349,7 +348,7 @@ int wmain(int argc, wchar_t** argv) {
   TestResponsiveWindow();
   TestSlowWindowFallback();
   TestCrashRecovery();
-  TestPopupSwarmMultiplicationAndDrain();
+  TestPopupSwarmCapRefusalAndEmergencyCleanup();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";
     return 0;

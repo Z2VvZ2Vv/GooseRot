@@ -36,12 +36,12 @@ bool RecoveryWatchdog::Start(std::wstring& error) {
   mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
                                 static_cast<DWORD>(sizeof(SharedState)), mappingName_.c_str());
   if (!mapping_) {
-    error = L"Impossible de créer l'état partagé du watchdog de restauration.";
+    error = L"Unable to create the recovery watchdog shared state.";
     return false;
   }
   state_ = static_cast<SharedState*>(MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
   if (!state_) {
-    error = L"Impossible d'ouvrir l'état partagé du watchdog de restauration.";
+    error = L"Unable to open the recovery watchdog shared state.";
     CloseHandle(mapping_);
     mapping_ = nullptr;
     return false;
@@ -57,7 +57,7 @@ bool RecoveryWatchdog::Start(std::wstring& error) {
   const std::wstring readyEventName = mappingName_ + L".Ready";
   HANDLE readyEvent = CreateEventW(nullptr, TRUE, FALSE, readyEventName.c_str());
   if (!readyEvent) {
-    error = L"Impossible de créer le signal du watchdog de restauration.";
+    error = L"Unable to create the recovery watchdog ready signal.";
     Complete();
     return false;
   }
@@ -65,7 +65,7 @@ bool RecoveryWatchdog::Start(std::wstring& error) {
   wchar_t executable[MAX_PATH]{};
   const DWORD executableLength = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
   if (executableLength == 0 || executableLength >= std::size(executable)) {
-    error = L"Impossible de localiser GooseRot pour démarrer le watchdog.";
+    error = L"Unable to locate GooseRot to start the recovery watchdog.";
     CloseHandle(readyEvent);
     Complete();
     return false;
@@ -81,7 +81,7 @@ bool RecoveryWatchdog::Start(std::wstring& error) {
   const BOOL created = CreateProcessW(executable, mutableCommand.data(), nullptr, nullptr, FALSE,
                                       CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
   if (!created) {
-    error = L"Impossible de démarrer le watchdog de restauration.";
+    error = L"Unable to start the recovery watchdog.";
     CloseHandle(readyEvent);
     Complete();
     return false;
@@ -93,7 +93,7 @@ bool RecoveryWatchdog::Start(std::wstring& error) {
   CloseHandle(readyEvent);
   if (!childReady) {
     CloseHandle(process.hProcess);
-    error = L"Le watchdog de restauration n'a pas confirmé son démarrage.";
+    error = L"The recovery watchdog did not confirm startup.";
     Complete();
     return false;
   }

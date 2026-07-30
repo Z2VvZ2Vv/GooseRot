@@ -42,15 +42,18 @@ class GooseRotApp {
   void UpdateGooseTargets(float deltaSeconds);
   void UpdateSprites();
   void UpdateCursorGrab(double logicalDelta);
+  void UpdateCursorChaos();
   void UpdatePopups();
   void UpdateToasts();
   void UpdateGlitch(double logicalDelta);
+  void EnsureGooseCount();
   void ScheduleCursorAction(bool userTriggered);
   void ScheduleWindowAction();
   void ExecutePendingAction();
   void BeginCursorGrab();
   void EndCursorGrab(bool succeeded);
   void SpawnSprite();
+  Vec2 FindSpriteLandingPoint(float size);
   void PushToast(std::wstring title, std::wstring body, double lifetime = 6.5);
   void AddAura(int delta);
   void KickGlitch(float amount);
@@ -62,6 +65,7 @@ class GooseRotApp {
   RenderState BuildRenderState() const;
   Vec2 RandomCanvasPoint(float margin);
   float GraffitiProgress() const;
+  std::size_t DesiredGooseCount() const;
 
   HINSTANCE instance_ = nullptr;
   AppConfig config_;
@@ -99,6 +103,7 @@ class GooseRotApp {
   bool cursorLatched_ = false;
   float glitch_ = 0.0f;
   float glitchBoost_ = 0.0f;
+  float cursorChaos_ = 0.0f;
   bool auraPromptPending_ = false;
   bool leftMouseWasDown_ = false;
   bool shutdownStarted_ = false;

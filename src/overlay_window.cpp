@@ -264,7 +264,7 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
 
   GdiplusStartupInput input;
   if (GdiplusStartup(&gdiplusToken_, &input, nullptr) != Ok) {
-    error = L"Impossible d'initialiser GDI+.";
+    error = L"Unable to initialize GDI+.";
     return false;
   }
 
@@ -276,7 +276,7 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
   windowClass.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
   windowClass.lpszClassName = L"GooseRotOverlay";
   if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-    error = L"Impossible d'enregistrer la fenêtre GooseRot.";
+    error = L"Unable to register the GooseRot window.";
     return false;
   }
 
@@ -316,21 +316,21 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
   window_ = CreateWindowExW(extendedStyle, L"GooseRotOverlay", L"GooseRot — safe desktop demo",
                             style, x, y, width, height, nullptr, nullptr, instance_, this);
   if (!window_) {
-    error = L"Impossible de créer l'overlay GooseRot.";
+    error = L"Unable to create the GooseRot overlay.";
     return false;
   }
 
   RECT client{};
   GetClientRect(window_, &client);
   if (!RecreateSurface(client.right - client.left, client.bottom - client.top)) {
-    error = L"Impossible de créer la surface de rendu 32 bits.";
+    error = L"Unable to create the 32-bit rendering surface.";
     return false;
   }
   LoadImages();
   ShowWindow(window_, preview_ ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
   UpdateWindow(window_);
   if (SetTimer(window_, 67, 33, nullptr) == 0) {
-    error = L"Impossible de démarrer l'horloge de rendu.";
+    error = L"Unable to start the rendering clock.";
     return false;
   }
   return true;
@@ -491,6 +491,7 @@ void OverlayWindow::Render(const RenderState& state) {
     }
     DrawSceneEffects(graphics, state);
     DrawSprites(graphics, state);
+    DrawClipboardBadge(graphics, state);
     if (state.geese) {
       for (std::size_t index = 0; index < state.geese->size(); ++index) {
         DrawGoose(graphics, (*state.geese)[index], static_cast<int>(index));
@@ -831,7 +832,8 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(sprite.center.x, sprite.center.y);
     graphics.RotateTransform(sprite.angleDegrees);
-    const float size = sprite.size * pop;
+    const float carriedScale = sprite.carried ? 0.68f : 1.0f;
+    const float size = sprite.size * pop * carriedScale;
     const Rect destination(static_cast<INT>(-size * 0.5f), static_cast<INT>(-size * 0.5f),
                            static_cast<INT>(size), static_cast<INT>(size));
     graphics.DrawImage(image, destination, 0, 0, image->GetWidth(), image->GetHeight(), UnitPixel, &attributes);
@@ -847,28 +849,32 @@ void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& stat
   }
 
   if (state.graffiti) DrawGraffiti(graphics, state);
+}
 
-  if (state.clipboardBadge) {
-    const float age = static_cast<float>(state.logicalTime - 120.0);
-    const float travel = std::clamp(age / 5.0f, 0.0f, 1.0f);
-    const float x = (1.0f - travel) * width_ * 0.5f + travel * (width_ - 230.0f);
-    const float y = (1.0f - travel) * height_ * 0.5f + travel * 100.0f;
-    const GraphicsState saved = graphics.Save();
-    graphics.TranslateTransform(x, y);
-    graphics.RotateTransform(-7.0f + std::sin(static_cast<float>(state.logicalTime) * 2.4f) * 1.5f);
-    GraphicsPath badge;
-    AddWobblyRectangle(badge, -205.0f, -48.0f, 410.0f, 96.0f, 3.0f, 907U + frame_ / 6U % 3U);
-    SolidBrush fill(Color(235, 255, 251, 234));
-    Pen edge(kMatrixGreen, 6.0f);
-    edge.SetLineJoin(LineJoinRound);
-    graphics.FillPath(&fill, &badge);
-    graphics.DrawPath(&edge, &badge);
-    Font font(PosterFamily(), 27.0f, FontStyleBold, UnitPixel);
-    SolidBrush ink(Color(255, 18, 80, 10));
-    DrawCenteredText(graphics, L"CLIPBOARD CERTIFIED\n+9999 AURA", font,
-                     {-195.0f, -42.0f, 195.0f, 42.0f}, ink);
-    graphics.Restore(saved);
-  }
+void OverlayWindow::DrawClipboardBadge(Graphics& graphics, const RenderState& state) const {
+  if (!state.clipboardBadge) return;
+  const float age = static_cast<float>(state.logicalTime - 120.0);
+  const float travel = std::clamp(age / 5.0f, 0.0f, 1.0f);
+  // Settle in a protected lower-left lane, away from the aura counter and the
+  // toast stack. Drawing after sprites keeps the certification legible.
+  const float x = (1.0f - travel) * width_ * 0.5f + travel * 220.0f;
+  const float y = (1.0f - travel) * height_ * 0.5f + travel * (height_ - 148.0f);
+  const GraphicsState saved = graphics.Save();
+  graphics.TranslateTransform(x, y);
+  graphics.RotateTransform(-5.0f + std::sin(static_cast<float>(state.logicalTime) * 2.4f) * 1.5f);
+  GraphicsPath badge;
+  AddWobblyRectangle(badge, -196.0f, -46.0f, 392.0f, 92.0f, 3.0f,
+                      907U + frame_ / 6U % 3U);
+  SolidBrush fill(Color(244, 255, 251, 234));
+  Pen edge(kMatrixGreen, 6.0f);
+  edge.SetLineJoin(LineJoinRound);
+  graphics.FillPath(&fill, &badge);
+  graphics.DrawPath(&edge, &badge);
+  Font font(PosterFamily(), 26.0f, FontStyleBold, UnitPixel);
+  SolidBrush ink(Color(255, 18, 80, 10));
+  DrawCenteredText(graphics, L"CLIPBOARD CERTIFIED\n+10,000 AURA", font,
+                   {-186.0f, -40.0f, 186.0f, 40.0f}, ink);
+  graphics.Restore(saved);
 }
 
 void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) const {
@@ -1093,13 +1099,23 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
   }
 
   // Ghost cursors: the pointer appears to have multiplied.
-  const int ghosts = static_cast<int>(intensity * 9.0f);
+  const float cursorChaos = std::clamp(state.cursorChaos, 0.0f, 1.0f);
+  const int ghosts = static_cast<int>(intensity * 9.0f + cursorChaos * 28.0f);
   const Vec2 realCursor = ScreenToCanvas(state.cursor);
   for (int ghost = 0; ghost < ghosts; ++ghost) {
     const std::uint32_t seed = frame_ / 4U * 149U + static_cast<std::uint32_t>(ghost) * 383U;
-    const Vec2 spot{realCursor.x + NoiseSigned(seed) * 260.0f * intensity,
-                    realCursor.y + NoiseSigned(seed + 1U) * 210.0f * intensity};
+    const float spread = intensity + cursorChaos * 1.8f;
+    const Vec2 spot{realCursor.x + NoiseSigned(seed) * 260.0f * spread,
+                    realCursor.y + NoiseSigned(seed + 1U) * 210.0f * spread};
     DrawArrowCursor(graphics, spot, 1.15f, Color(150, 255, 255, 255), Color(190, 28, 25, 34));
+  }
+
+  if (cursorChaos > 0.58f) {
+    Font warning(PosterFamily(), 31.0f, FontStyleBold, UnitPixel);
+    DrawSplitText(graphics, L"CURSOR CONTROL LOST", warning,
+                  {realCursor.x - 240.0f, realCursor.y + 42.0f,
+                   realCursor.x + 240.0f, realCursor.y + 88.0f},
+                  kCriticalRed, 2.0f + cursorChaos * 8.0f);
   }
 
   // A window that stopped responding, drawn as a hollow ghost frame.
@@ -1120,7 +1136,7 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
     SolidBrush ink(Color(210, 255, 255, 255));
     StringFormat left;
     left.SetLineAlignment(StringAlignmentCenter);
-    graphics.DrawString(L"explorer.exe — (Ne répond pas)", -1, &font,
+    graphics.DrawString(L"explorer.exe - Not Responding", -1, &font,
                         Gdiplus::RectF(x + drift + 10.0f, y, w - 20.0f, 30.0f), &left, &ink);
   }
 
@@ -1133,27 +1149,8 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
 
 void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const {
   const std::uint32_t boil = frame_ / 6U % 3U;
-  Font small(UiFamily(), 16.0f, FontStyleBold, UnitPixel);
   SolidBrush dark(Color(226, 18, 18, 24));
   SolidBrush light(Color(245, 255, 255, 255));
-
-  // Profile tag, taped to the corner at an angle.
-  {
-    const GraphicsState saved = graphics.Save();
-    graphics.TranslateTransform(20.0f, 22.0f);
-    graphics.RotateTransform(-1.8f);
-    GraphicsPath profile;
-    AddWobblyRectangle(profile, 0.0f, 0.0f, 186.0f, 36.0f, 2.2f, 311U + boil);
-    Pen edge(Color(220, 255, 45, 170), 2.4f);
-    edge.SetLineJoin(LineJoinRound);
-    graphics.FillPath(&dark, &profile);
-    graphics.DrawPath(&edge, &profile);
-    SolidBrush tape(Color(120, 255, 251, 234));
-    graphics.FillRectangle(&tape, -8.0f, 4.0f, 26.0f, 13.0f);
-    std::wstring profileText = std::wstring(L"GooseRot · ") + ModeName(state.mode);
-    DrawCenteredText(graphics, profileText, small, {0.0f, 0.0f, 186.0f, 36.0f}, light);
-    graphics.Restore(saved);
-  }
 
   // Aura counter: shakes and flashes whenever the number moves.
   {
@@ -1192,7 +1189,7 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
 
   if (state.popupCount > 0) {
     std::wostringstream counter;
-    counter << L"fenêtres ouvertes : " << state.popupCount;
+    counter << L"WINDOWS OPEN: " << state.popupCount;
     Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
     SolidBrush ink(Color(200, 255, 45, 170));
     DrawCenteredText(graphics, counter.str(), font,
@@ -1252,7 +1249,7 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     graphics.FillPath(&fill, &button);
     graphics.DrawPath(&edge, &button);
     Font font(PosterFamily(), 30.0f, FontStyleBold, UnitPixel);
-    DrawCenteredText(graphics, L"RESET AURA", font, {0.0f, 2.0f, buttonWidth, 66.0f}, light);
+    DrawCenteredText(graphics, L"DO NOT PRESS", font, {0.0f, 2.0f, buttonWidth, 66.0f}, light);
     graphics.Restore(saved);
   }
 
@@ -1268,40 +1265,61 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     graphics.FillRectangle(&progress, x + 3.0f, y + 3.0f,
                            (width - 6.0f) * std::clamp(state.emergencyProgress, 0.0f, 1.0f), 18.0f);
     Font font(UiFamily(), 14.0f, FontStyleBold, UnitPixel);
-    DrawCenteredText(graphics, L"Maintenez Esc pour tout fermer et restaurer le bureau", font,
+    DrawCenteredText(graphics, L"Hold Esc to close everything and restore the desktop", font,
                      {x, y - 26.0f, x + width, y - 2.0f}, light);
   }
 }
 
 void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& state) const {
   const double age = state.logicalTime - 300.0;
-  if (state.mode == RunMode::Lab && age < 2.0) {
-    SolidBrush blueScreen(Color(255, 18, 92, 171));
-    graphics.FillRectangle(&blueScreen, 0, 0, width_, height_);
-    Font face(UiFamily(), 76.0f, FontStyleRegular, UnitPixel);
-    Font title(UiFamily(), 28.0f, FontStyleRegular, UnitPixel);
-    Font detail(UiFamily(), 18.0f, FontStyleRegular, UnitPixel);
-    SolidBrush white(Color::White);
-    DrawCenteredText(graphics, L":(", face,
-                     {20.0f, height_ * 0.22f, static_cast<float>(width_ - 20), height_ * 0.40f}, white);
-    DrawCenteredText(graphics, L"MAXIMUM BRAINROT reached a critical aura state.", title,
-                     {20.0f, height_ * 0.43f, static_cast<float>(width_ - 20), height_ * 0.56f}, white);
-    DrawCenteredText(graphics, L"SIMULATION — aucun crash système n'a été déclenché.", detail,
-                     {20.0f, height_ * 0.59f, static_cast<float>(width_ - 20), height_ * 0.68f}, white);
+  SolidBrush background(Color(255, 0, 0, 0));
+  graphics.FillRectangle(&background, 0, 0, width_, height_);
+
+  // A short, screen-filling aura-core detonation before the hard cut to black.
+  if (age < 1.15) {
+    const float blast = static_cast<float>(std::clamp(age / 1.15, 0.0, 1.0));
+    const Vec2 center{width_ * 0.5f, height_ * 0.48f};
+    if (age < 0.16) {
+      const BYTE alpha = static_cast<BYTE>(255.0 * (1.0 - age / 0.16));
+      SolidBrush flash(Color(alpha, 255, 255, 255));
+      graphics.FillRectangle(&flash, 0, 0, width_, height_);
+    }
+    for (int fragment = 0; fragment < 67; ++fragment) {
+      const std::uint32_t seed = static_cast<std::uint32_t>(fragment) * 977U + 67U;
+      const float angle = Noise01(seed) * 2.0f * kPi;
+      const float length = (70.0f + Noise01(seed + 1U) * width_ * 0.72f) * blast;
+      const float thickness = 2.0f + Noise01(seed + 2U) * 13.0f * (1.0f - blast * 0.45f);
+      const Color color = fragment % 3 == 0 ? kMatrixGreen
+                          : fragment % 3 == 1 ? kNeonPink
+                                              : Color(255, 255, 171, 36);
+      Pen ray(WithAlpha(color, 1.0f - blast * 0.72f), thickness);
+      ray.SetStartCap(LineCapRound);
+      ray.SetEndCap(LineCapRound);
+      graphics.DrawLine(&ray, center.x, center.y,
+                        center.x + std::cos(angle) * length,
+                        center.y + std::sin(angle) * length);
+    }
+    SolidBrush core(WithAlpha(Color(255, 255, 255, 255), 1.0f - blast));
+    const float radius = 36.0f + blast * std::min(width_, height_) * 0.46f;
+    FillCircle(graphics, core, center, radius);
+    Font detonation(PosterFamily(), 48.0f, FontStyleBold, UnitPixel);
+    DrawSplitText(graphics, L"AURA CORE DETONATED", detonation,
+                  {20.0f, height_ * 0.12f, static_cast<float>(width_ - 20), height_ * 0.28f},
+                  kCriticalRed, 4.0f + blast * 14.0f);
     return;
   }
-  SolidBrush background(Color(255, 5, 10, 18));
-  graphics.FillRectangle(&background, 0, 0, width_, height_);
-  Pen spinner(kNeonPink, 8.0f);
-  graphics.DrawArc(&spinner, width_ * 0.5f - 38.0f, height_ * 0.42f - 38.0f, 76.0f, 76.0f,
-                   static_cast<float>(age * 220.0), 250.0f);
-  Font title(UiFamily(), 34.0f, FontStyleRegular, UnitPixel);
-  Font detail(UiFamily(), 18.0f, FontStyleRegular, UnitPixel);
-  SolidBrush white(Color::White);
-  DrawCenteredText(graphics, L"Resetting aura...", title,
-                   {20.0f, height_ * 0.53f, static_cast<float>(width_ - 20), height_ * 0.63f}, white);
-  DrawCenteredText(graphics, L"Simulation sûre — aucune donnée système n'est modifiée", detail,
-                   {20.0f, height_ * 0.64f, static_cast<float>(width_ - 20), height_ * 0.71f}, white);
+
+  const float entrance = static_cast<float>(std::clamp((age - 1.15) / 1.35, 0.0, 1.0));
+  const float eased = 1.0f - std::pow(1.0f - entrance, 3.0f);
+  const Vec2 goosePosition{-90.0f + eased * (std::min(width_ * 0.27f, 330.0f) + 90.0f),
+                           height_ * 0.72f};
+  GooseEntity farewell(goosePosition);
+  farewell.Honk(8.0f);
+  DrawGoose(graphics, farewell, 0);
+  if (entrance > 0.55f) {
+    DrawSpeechBubble(graphics, L"GOODBYE, DUDE.\nYOU SHOULD'VE LISTENED.",
+                     farewell.Rig().beakTip);
+  }
 }
 
 void OverlayWindow::Present() {

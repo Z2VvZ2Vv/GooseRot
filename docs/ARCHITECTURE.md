@@ -107,7 +107,7 @@ Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son con
 
 ### `PopupSwarm`
 
-Gère un ensemble borné de popups GooseRot. Fermer une popup en programme deux autres tant que le plafond de neuf n’a jamais été atteint. Au plafond, l’essaim bascule définitivement en drainage : chaque popup résiste une fois puis se ferme sans se multiplier, ce qui permet de revenir à zéro. Les créations et destructions sont différées hors du gestionnaire de messages : `WM_CLOSE` marque seulement la popup comme morte et incrémente un compteur, et le `Tick` appelé depuis l’horloge de rendu recycle les entrées et crée les nouvelles fenêtres. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et sont toutes détruites par `CloseAll()`.
+Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que le plafond protecteur de 67 n’est pas atteint. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` reste le chemin privilégié du nettoyage de fin et de l’arrêt d’urgence. Les créations et destructions sont différées hors du gestionnaire de messages. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
 
 ### `GlitchLayer`
 
@@ -119,7 +119,7 @@ Le `67` est décrit comme trois tracés de points, pas comme un glyphe de police
 
 ### `ShutdownDirector`
 
-En `safe` et `normal`, la conclusion est un faux redémarrage rendu dans l’overlay, suivi d’une fermeture propre. Dans l’état actuel du code, ce même chemin est encore utilisé en `lab`. Le contrat cible de `lab` exclut cette restauration : la VM doit être considérée comme sacrifiée après la corruption des fichiers, du Registre et du démarrage.
+Dans l’état actuel du code, la conclusion commence par le nettoyage et la restauration, puis rend une explosion plein écran, une coupure noire et l’entrée d’une oie d’adieu avant la fermeture. Ce même chemin réversible est encore utilisé en `lab`. Le contrat cible de `lab` exclut cette restauration : la VM doit être considérée comme sacrifiée après la corruption des fichiers, du Registre et du démarrage.
 
 ### `BootGameHandoff`
 
@@ -136,8 +136,8 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
 - assets décodés une seule fois puis mis en cache ;
-- nombre maximal d’overlays image simultanés : 12 en `safe/normal`, 24 en `lab` ;
-- nombre maximal de popups GooseRot simultanées : 9, tous profils confondus ;
+- nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
+- nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
 - effets de glitch uniquement vectoriels : aucun accès pixel à pixel ni relecture de la surface, pour rester tenable en plein écran virtuel à 30 Hz ;
 - mémoire cible : moins de 150 Mo ;
 - usage CPU cible : moins de 10 % de deux vCPU hors pics de transition ;

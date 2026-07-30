@@ -44,7 +44,7 @@ class PromptWindow {
   int moveIndex_ = 0;
 };
 
-// The fake Bloc-notes. It belongs to GooseRot, it types on its own, and it
+// The fake Notepad. It belongs to GooseRot, it types on its own, and it
 // declines to be closed for a while — `Close()` still destroys it outright, so
 // cleanup and the emergency exit are never blocked.
 class NotepadWindow {
@@ -78,9 +78,9 @@ class NotepadWindow {
   bool respawnUsed_ = false;
 };
 
-// A bounded swarm of GooseRot popups. Closing one spawns two more until the cap
-// is reached; after that they close normally so the desktop can drain. Every
-// window is owned by this process and is destroyed by CloseAll().
+// A bounded swarm of GooseRot popups. Closing one spawns two more until the
+// protective ceiling is reached, where normal close requests are refused.
+// Emergency cleanup still destroys every window directly.
 class PopupSwarm {
  public:
   PopupSwarm() = default;
@@ -100,7 +100,7 @@ class PopupSwarm {
   // True once per close attempt, so the app can answer with a bubble.
   bool ConsumeCloseAttempt();
 
-  static constexpr int kMaximumPopups = 9;
+  static constexpr int kMaximumPopups = 67;
 
  private:
   struct Popup {
@@ -125,7 +125,6 @@ class PopupSwarm {
   int pendingSpawns_ = 0;
   int closeAttempts_ = 0;
   int spawnCounter_ = 0;
-  bool draining_ = false;
 };
 
 }  // namespace gooserot
