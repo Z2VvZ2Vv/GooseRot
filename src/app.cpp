@@ -1,5 +1,7 @@
 #include "app.hpp"
 
+#include <timeapi.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -66,11 +68,60 @@ bool GooseRotApp::Initialize(std::wstring& error) {
 }
 
 int GooseRotApp::Run() {
+  // Drive frames from a QPC-paced pump instead of WM_TIMER. WM_TIMER coalesces
+  // and, without a raised scheduler resolution, only lands on ~15.6 ms
+  // boundaries, so at a light CPU load the cadence wanders and the motion looks
+  // erratic. A 1 ms scheduler period plus a steady 60 Hz QPC schedule keeps the
+  // animation smooth while still idling the CPU between frames.
+  const bool raisedTimer = timeBeginPeriod(1) == TIMERR_NOERROR;
+  overlay_.StopRenderTimer();
+
+  LARGE_INTEGER frequency{};
+  QueryPerformanceFrequency(&frequency);
+  const LONGLONG framePeriod = frequency.QuadPart / 60;  // ticks per 60 Hz frame
+  LARGE_INTEGER nextFrame{};
+  QueryPerformanceCounter(&nextFrame);
+
   MSG message{};
-  while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-    TranslateMessage(&message);
-    DispatchMessageW(&message);
+  bool running = true;
+  while (running) {
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      if (message.message == WM_QUIT) {
+        running = false;
+        break;
+      }
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+    if (!running) break;
+
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    const LONGLONG remaining = nextFrame.QuadPart - now.QuadPart;
+    if (remaining > frequency.QuadPart / 2000) {  // more than ~0.5 ms early
+      const DWORD waitMs = static_cast<DWORD>((remaining * 1000) / frequency.QuadPart);
+      MsgWaitForMultipleObjectsEx(0, nullptr, waitMs == 0 ? 1 : waitMs, QS_ALLINPUT,
+                                  MWMO_INPUTAVAILABLE);
+      continue;
+    }
+
+    Tick();
+    if (exiting_) {
+      // Let the queued WM_CLOSE/WM_QUIT drain, then leave.
+      while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        if (message.message == WM_QUIT) break;
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+      }
+      break;
+    }
+
+    nextFrame.QuadPart += framePeriod;
+    QueryPerformanceCounter(&now);
+    if (nextFrame.QuadPart < now.QuadPart) nextFrame = now;  // dropped frames: don't spiral
   }
+
+  if (raisedTimer) timeEndPeriod(1);
   Cleanup();
   if (bootPreviewLaunchFailed_) {
     MessageBoxW(nullptr,
@@ -765,9 +816,14 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
 
     // A carried brainrot image temporarily overrides that goose's choreography
     // so the prop visibly travels across the desktop before being abandoned.
+    // Only the first prop per carrier may steer it; without this guard several
+    // in-flight props reassign the same goose's target every frame and it jitters.
+    std::vector<bool> carrierSteered(geese_.size(), false);
     for (const VisualSprite& sprite : sprites_) {
       if (!sprite.carried || sprite.carrierIndex >= geese_.size()) continue;
+      if (carrierSteered[sprite.carrierIndex]) continue;
       if (sprite.carrierIndex == 0 && leadBusy) continue;
+      carrierSteered[sprite.carrierIndex] = true;
       GooseEntity& carrier = geese_[sprite.carrierIndex];
       carrier.SetTarget(carrier.BodyTargetForBeak(sprite.targetCenter), SpeedTier::Run, true);
     }
@@ -813,13 +869,28 @@ void GooseRotApp::SpawnSprite() {
   sprite.createdAt = logicalTime_;
   sprite.lifetime = std::max(12.0, 310.0 - logicalTime_);
   sprite.targetCenter = FindSpriteLandingPoint(sprite.size);
-  sprite.carrierIndex = geese_.size() > 1
-                            ? 1U + sprites_.size() % (geese_.size() - 1U)
-                            : 0U;
-  sprite.carried = !geese_.empty();
+
+  // Hand the prop to a goose that is not already ferrying one. Capping carried
+  // props to one per goose is what keeps the carriers from thrashing; any prop
+  // that can't get a free carrier simply appears already resting at its spot.
+  std::vector<bool> carrierBusy(geese_.size(), false);
+  for (const VisualSprite& existing : sprites_) {
+    if (existing.carried && existing.carrierIndex < carrierBusy.size()) {
+      carrierBusy[existing.carrierIndex] = true;
+    }
+  }
+  std::size_t carrier = geese_.size();  // == size means "no free carrier"
+  const std::size_t firstCandidate = geese_.size() > 1 ? 1U : 0U;  // spare the lead goose
+  for (std::size_t index = firstCandidate; index < geese_.size(); ++index) {
+    if (!carrierBusy[index]) {
+      carrier = index;
+      break;
+    }
+  }
+  sprite.carried = carrier < geese_.size();
+  sprite.carrierIndex = sprite.carried ? carrier : 0U;
   sprite.deliveryDeadline = logicalTime_ + 5.0;
-  sprite.center = sprite.carried ? geese_[sprite.carrierIndex].Rig().beakTip
-                                  : sprite.targetCenter;
+  sprite.center = sprite.carried ? geese_[carrier].Rig().beakTip : sprite.targetCenter;
   sprites_.push_back(sprite);
 }
 

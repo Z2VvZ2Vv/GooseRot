@@ -71,6 +71,7 @@ target_link_libraries(GooseRot PRIVATE
   shell32
   ole32
   comctl32
+  winmm
 )
 
 if(MSVC)

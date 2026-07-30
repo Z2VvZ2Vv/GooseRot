@@ -76,6 +76,8 @@ class OverlayWindow {
   void Render(const RenderState& state);
   void Close();
   void RequestClose();
+  // Stops the WM_TIMER heartbeat so the caller's own frame pump owns cadence.
+  void StopRenderTimer();
 
   HWND Handle() const { return window_; }
   RectF CanvasBounds() const;

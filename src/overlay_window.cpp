@@ -1458,6 +1458,10 @@ void OverlayWindow::RequestClose() {
   if (window_) PostMessageW(window_, WM_CLOSE, 0, 0);
 }
 
+void OverlayWindow::StopRenderTimer() {
+  if (window_) KillTimer(window_, 67);
+}
+
 void OverlayWindow::Close() {
   if (window_) {
     KillTimer(window_, 67);
