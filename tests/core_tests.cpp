@@ -100,6 +100,18 @@ void TestCarrierAssignment() {
   Expect(PickFreeCarrier({0, 1, 1}, false) == kNoCarrier, "the lead remains reserved in a flock");
 }
 
+void TestPremultipliedAlphaBlend() {
+  using gooserot::BlendPremultipliedArgb;
+  Expect(BlendPremultipliedArgb(0x00000000U, 0xFF123456U) == 0xFF123456U,
+         "transparent source preserves the destination");
+  Expect(BlendPremultipliedArgb(0xFFABCDEFU, 0xFF123456U) == 0xFFABCDEFU,
+         "opaque source replaces the destination");
+  Expect(BlendPremultipliedArgb(0x80800000U, 0xFF0000FFU) == 0xFF80007FU,
+         "half-transparent premultiplied red blends over blue");
+  Expect(BlendPremultipliedArgb(0x80402010U, 0x00000000U) == 0x80402010U,
+         "premultiplied source is unchanged over transparency");
+}
+
 void TestTimeline() {
   gooserot::TimelineEngine timeline;
   auto events = timeline.Advance(0.0);
@@ -198,6 +210,7 @@ int main() {
   TestTimestampParsing();
   TestArgumentParsing();
   TestCarrierAssignment();
+  TestPremultipliedAlphaBlend();
   TestTimeline();
   TestGooseLocomotion();
   TestGooseAnimationState();

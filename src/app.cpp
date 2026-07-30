@@ -85,13 +85,23 @@ int GooseRotApp::Run() {
   MSG message{};
   bool running = true;
   while (running) {
-    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+    LARGE_INTEGER pumpStarted{};
+    QueryPerformanceCounter(&pumpStarted);
+    constexpr unsigned kMaximumMessagesPerPump = 64;
+    for (unsigned processed = 0; processed < kMaximumMessagesPerPump; ++processed) {
+      if (!PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) break;
       if (message.message == WM_QUIT) {
         running = false;
         break;
       }
       TranslateMessage(&message);
       DispatchMessageW(&message);
+      LARGE_INTEGER pumpNow{};
+      QueryPerformanceCounter(&pumpNow);
+      if (pumpNow.QuadPart >= nextFrame.QuadPart ||
+          pumpNow.QuadPart - pumpStarted.QuadPart >= frequency.QuadPart / 500) {
+        break;
+      }
     }
     if (!running) break;
 
@@ -107,8 +117,10 @@ int GooseRotApp::Run() {
 
     Tick();
     if (exiting_) {
-      // Let the queued WM_CLOSE/WM_QUIT drain, then leave.
-      while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      // Give the queued WM_CLOSE/WM_QUIT a bounded chance to drain. Cleanup and
+      // OverlayWindow::Close remain the fallback if the queue is still busy.
+      for (unsigned processed = 0; processed < kMaximumMessagesPerPump; ++processed) {
+        if (!PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) break;
         if (message.message == WM_QUIT) break;
         TranslateMessage(&message);
         DispatchMessageW(&message);

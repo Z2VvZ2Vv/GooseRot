@@ -28,6 +28,25 @@ Vec2 Normalize(Vec2 value);
 Vec2 ClampMagnitude(Vec2 value, float maximum);
 Vec2 Lerp(Vec2 from, Vec2 to, float amount);
 
+// Composites a premultiplied ARGB source pixel over a premultiplied destination.
+// Kept in the core so the renderer's fast software path remains unit-testable.
+inline std::uint32_t BlendPremultipliedArgb(std::uint32_t source, std::uint32_t destination) {
+  const unsigned sourceAlpha = source >> 24U;
+  if (sourceAlpha == 0U) return destination;
+  if (sourceAlpha == 255U) return source;
+  const unsigned inverseAlpha = 255U - sourceAlpha;
+  const unsigned blue = (source & 0xFFU) +
+                        (((destination & 0xFFU) * inverseAlpha + 127U) / 255U);
+  const unsigned green = ((source >> 8U) & 0xFFU) +
+                         ((((destination >> 8U) & 0xFFU) * inverseAlpha + 127U) / 255U);
+  const unsigned red = ((source >> 16U) & 0xFFU) +
+                       ((((destination >> 16U) & 0xFFU) * inverseAlpha + 127U) / 255U);
+  const unsigned alpha = sourceAlpha +
+                         ((((destination >> 24U) & 0xFFU) * inverseAlpha + 127U) / 255U);
+  return (blue & 0xFFU) | ((green & 0xFFU) << 8U) | ((red & 0xFFU) << 16U) |
+         ((alpha & 0xFFU) << 24U);
+}
+
 struct RectF {
   float left = 0.0f;
   float top = 0.0f;

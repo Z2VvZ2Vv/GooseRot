@@ -4,9 +4,11 @@
 #include <wtypes.h>
 #include <gdiplus.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core.hpp"
@@ -91,7 +93,15 @@ class OverlayWindow {
     HGLOBAL memory = nullptr;
     IStream* stream = nullptr;
     std::unique_ptr<Gdiplus::Image> image;
+    std::unique_ptr<Gdiplus::Bitmap> thumbnail;
     ~ResourceImage();
+  };
+
+  struct CachedSprite {
+    std::unique_ptr<Gdiplus::Bitmap> bitmap;
+    std::vector<std::uint32_t> pixels;
+    int width = 0;
+    int height = 0;
   };
 
   static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -100,22 +110,26 @@ class OverlayWindow {
   bool LoadImages();
   std::unique_ptr<ResourceImage> LoadResourceImage(int resourceId);
   Gdiplus::Image* FindImage(int resourceId) const;
+  CachedSprite* FindCachedSprite(int resourceId, int sizePixels, int angleTenths);
+  void BlendCachedSprite(const CachedSprite& sprite, int destinationX, int destinationY);
 
   void DrawPreviewDesktop(Gdiplus::Graphics& graphics) const;
   void DrawGoose(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawGooseCompact(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawSpeechBubble(Gdiplus::Graphics& graphics, const std::wstring& text, Vec2 anchor) const;
-  void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
-  void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawClipboardBadge(Gdiplus::Graphics& graphics, const RenderState& state) const;
-  void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state);
+  void DrawGraffitiUncached(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  bool BuildGraffitiCache(const RenderState& state);
   void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DismissShellSurface();
-  void Present();
+  bool Present();
 
   HINSTANCE instance_ = nullptr;
   HWND window_ = nullptr;
@@ -130,14 +144,32 @@ class OverlayWindow {
   bool preview_ = false;
   bool primaryMonitorOnly_ = false;
   ULONGLONG lastShellDismissAt_ = 0;
+  ULONGLONG lastTopmostRefreshAt_ = 0;
   ULONGLONG fpsSampleStartedAt_ = 0;
   unsigned fpsSampleFrames_ = 0;
+  double setupSampleMs_ = 0.0;
+  double sceneSampleMs_ = 0.0;
+  double spriteSampleMs_ = 0.0;
+  double gooseSampleMs_ = 0.0;
+  double effectsSampleMs_ = 0.0;
+  double presentSampleMs_ = 0.0;
+  unsigned presentFailureSample_ = 0;
+  unsigned topmostFailureSample_ = 0;
+  DWORD lastPresentError_ = ERROR_SUCCESS;
+  DWORD lastTopmostError_ = ERROR_SUCCESS;
   // Advances once per rendered frame and drives every deterministic wobble.
   unsigned frame_ = 0;
   ULONG_PTR gdiplusToken_ = 0;
   std::function<void()> tickHandler_;
   std::function<void()> closeHandler_;
   std::vector<std::pair<int, std::unique_ptr<ResourceImage>>> images_;
+  std::unordered_map<std::uint64_t, std::unique_ptr<CachedSprite>> spriteCache_;
+  unsigned spriteCacheBuildsThisFrame_ = 0;
+  std::unique_ptr<CachedSprite> graffitiCache_;
+  int graffitiCacheX_ = 0;
+  int graffitiCacheY_ = 0;
+  int graffitiCacheCanvasWidth_ = 0;
+  int graffitiCacheCanvasHeight_ = 0;
 };
 
 }  // namespace gooserot

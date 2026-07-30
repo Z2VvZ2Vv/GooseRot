@@ -115,7 +115,7 @@ Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows
 
 ### `GlitchLayer` et rendu dense
 
-Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame. Au-delà de douze oies ou 24 popups, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images opaques évitent la matrice de couleur GDI+ et les scanlines sont espacées.
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
 
 ### `LiveSprayTag`
 
@@ -136,13 +136,16 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 ## Performance VM
 
 - boucle Win32 cadencée par QPC à 60 images/seconde, avec résolution d'attente de 1 ms ;
+- pompe de messages bornée à 64 messages ou 2 ms avant de rendre, afin que les fenêtres de l'essaim ne puissent pas affamer la frame suivante ;
 - plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
 - assets décodés une seule fois puis mis en cache ;
+- images brainrot pré-réduites à 256 px, rotations finales pré-rastérisées et compositées directement en ARGB prémultiplié ;
+- graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
 - nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
-- effets de glitch uniquement vectoriels : aucun accès pixel à pixel ni relecture de la surface ;
+- effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni et le composite ARGB des caches locaux, sans aucune relecture du bureau ;
 - mémoire cible : moins de 150 Mo ;
 - usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;
 - absence de réseau après le lancement.

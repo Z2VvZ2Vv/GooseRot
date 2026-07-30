@@ -401,7 +401,8 @@ bool OverlayWindow::LoadImages() {
   bool loadedAny = false;
   for (const int id : ids) {
     auto image = LoadResourceImage(id);
-    if (image && image->image && image->image->GetLastStatus() == Ok) {
+    if (image && ((image->thumbnail && image->thumbnail->GetLastStatus() == Ok) ||
+                  (image->image && image->image->GetLastStatus() == Ok))) {
       images_.push_back({id, std::move(image)});
       loadedAny = true;
     }
@@ -434,14 +435,125 @@ std::unique_ptr<OverlayWindow::ResourceImage> OverlayWindow::LoadResourceImage(i
     return nullptr;
   }
   result->image.reset(Image::FromStream(result->stream, FALSE));
+  if (result->image && result->image->GetLastStatus() == Ok) {
+    constexpr INT kCachedSpritePixels = 256;
+    auto thumbnail = std::make_unique<Bitmap>(kCachedSpritePixels, kCachedSpritePixels,
+                                               PixelFormat32bppPARGB);
+    if (thumbnail->GetLastStatus() == Ok) {
+      Graphics cacheGraphics(thumbnail.get());
+      cacheGraphics.Clear(Color(0, 0, 0, 0));
+      cacheGraphics.SetCompositingMode(CompositingModeSourceCopy);
+      cacheGraphics.SetCompositingQuality(CompositingQualityHighQuality);
+      cacheGraphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+      cacheGraphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+      if (cacheGraphics.DrawImage(result->image.get(), Rect(0, 0, kCachedSpritePixels,
+                                                            kCachedSpritePixels)) == Ok) {
+        result->thumbnail = std::move(thumbnail);
+      }
+    }
+  }
+  if (result->thumbnail) {
+    result->image.reset();
+    result->stream->Release();
+    result->stream = nullptr;
+    result->memory = nullptr;
+  }
   return result;
 }
 
 Image* OverlayWindow::FindImage(int resourceId) const {
   for (const auto& item : images_) {
-    if (item.first == resourceId) return item.second->image.get();
+    if (item.first == resourceId) {
+      return item.second->thumbnail ? item.second->thumbnail.get() : item.second->image.get();
+    }
   }
   return nullptr;
+}
+
+OverlayWindow::CachedSprite* OverlayWindow::FindCachedSprite(int resourceId, int sizePixels,
+                                                             int angleTenths) {
+  const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<unsigned>(resourceId)) << 32U) |
+                            (static_cast<std::uint64_t>(static_cast<unsigned>(sizePixels) & 0xFFFFU)
+                             << 16U) |
+                            static_cast<std::uint16_t>(angleTenths + 32768);
+  const auto existing = spriteCache_.find(key);
+  if (existing != spriteCache_.end()) return existing->second.get();
+  constexpr unsigned kMaximumSpriteCacheBuildsPerFrame = 4;
+  if (spriteCacheBuildsThisFrame_ >= kMaximumSpriteCacheBuildsPerFrame) return nullptr;
+  ++spriteCacheBuildsThisFrame_;
+
+  Image* source = FindImage(resourceId);
+  if (!source || sizePixels <= 0) return nullptr;
+  const float angle = static_cast<float>(angleTenths) / 10.0f;
+  const float radians = angle * kPi / 180.0f;
+  const int extent = std::max(1, static_cast<int>(std::ceil(
+                                     sizePixels * (std::abs(std::cos(radians)) +
+                                                   std::abs(std::sin(radians))))) + 4);
+  auto bitmap = std::make_unique<Bitmap>(extent, extent, PixelFormat32bppPARGB);
+  if (bitmap->GetLastStatus() != Ok) return nullptr;
+
+  Graphics cacheGraphics(bitmap.get());
+  cacheGraphics.Clear(Color(0, 0, 0, 0));
+  cacheGraphics.SetCompositingMode(CompositingModeSourceCopy);
+  cacheGraphics.SetCompositingQuality(CompositingQualityHighQuality);
+  cacheGraphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+  cacheGraphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
+  cacheGraphics.TranslateTransform(extent * 0.5f, extent * 0.5f);
+  cacheGraphics.RotateTransform(angle);
+  const Rect destination(-sizePixels / 2, -sizePixels / 2, sizePixels, sizePixels);
+  if (cacheGraphics.DrawImage(source, destination) != Ok) return nullptr;
+  cacheGraphics.Flush(FlushIntentionSync);
+
+  auto cached = std::make_unique<CachedSprite>();
+  cached->width = extent;
+  cached->height = extent;
+  cached->pixels.resize(static_cast<std::size_t>(extent) * static_cast<std::size_t>(extent));
+  BitmapData data{};
+  const Rect bounds(0, 0, extent, extent);
+  if (bitmap->LockBits(&bounds, ImageLockModeRead, PixelFormat32bppPARGB, &data) != Ok) {
+    return nullptr;
+  }
+  const auto* firstRow = static_cast<const BYTE*>(data.Scan0);
+  for (int y = 0; y < extent; ++y) {
+    const auto* sourceRow = firstRow + static_cast<std::ptrdiff_t>(y) * data.Stride;
+    std::memcpy(cached->pixels.data() + static_cast<std::size_t>(y) * extent, sourceRow,
+                static_cast<std::size_t>(extent) * sizeof(std::uint32_t));
+  }
+  bitmap->UnlockBits(&data);
+  cached->bitmap = std::move(bitmap);
+
+  CachedSprite* result = cached.get();
+  spriteCache_.emplace(key, std::move(cached));
+  return result;
+}
+
+void OverlayWindow::BlendCachedSprite(const CachedSprite& sprite, int destinationX,
+                                      int destinationY) {
+  if (!surfacePixels_ || sprite.pixels.empty()) return;
+  const int sourceLeft = std::max(0, -destinationX);
+  const int sourceTop = std::max(0, -destinationY);
+  const int sourceRight = std::min(sprite.width, width_ - destinationX);
+  const int sourceBottom = std::min(sprite.height, height_ - destinationY);
+  if (sourceLeft >= sourceRight || sourceTop >= sourceBottom) return;
+
+  auto* destinationPixels = static_cast<std::uint32_t*>(surfacePixels_);
+  for (int y = sourceTop; y < sourceBottom; ++y) {
+    const std::uint32_t* source = sprite.pixels.data() +
+                                  static_cast<std::size_t>(y) * sprite.width + sourceLeft;
+    std::uint32_t* destination = destinationPixels +
+                                 static_cast<std::size_t>(destinationY + y) * width_ +
+                                 destinationX + sourceLeft;
+    for (int x = sourceLeft; x < sourceRight; ++x, ++source, ++destination) {
+      const std::uint32_t sourcePixel = *source;
+      const unsigned sourceAlpha = sourcePixel >> 24U;
+      if (sourceAlpha == 0U) continue;
+      if (sourceAlpha == 255U) {
+        *destination = sourcePixel;
+        continue;
+      }
+      *destination = BlendPremultipliedArgb(sourcePixel, *destination);
+    }
+  }
 }
 
 RectF OverlayWindow::CanvasBounds() const {
@@ -477,34 +589,48 @@ Vec2 OverlayWindow::GraffitiPaintHead(float progress) const {
 void OverlayWindow::Render(const RenderState& state) {
   if (!surfacePixels_ || width_ <= 0 || height_ <= 0) return;
   ++frame_;
-  ++fpsSampleFrames_;
-  const ULONGLONG now = GetTickCount64();
-  if (fpsSampleStartedAt_ == 0) fpsSampleStartedAt_ = now;
-  if (preview_ && now - fpsSampleStartedAt_ >= 1000) {
-    const double fps = static_cast<double>(fpsSampleFrames_) * 1000.0 /
-                       static_cast<double>(now - fpsSampleStartedAt_);
-    wchar_t title[96]{};
-    swprintf(title, std::size(title), L"GooseRot Preview - %.1f FPS", fps);
-    SetWindowTextW(window_, title);
-    fpsSampleStartedAt_ = now;
-    fpsSampleFrames_ = 0;
+  spriteCacheBuildsThisFrame_ = 0;
+  if (fpsSampleStartedAt_ == 0) fpsSampleStartedAt_ = GetTickCount64();
+  LARGE_INTEGER profileFrequency{};
+  LARGE_INTEGER profileStamp{};
+  QueryPerformanceFrequency(&profileFrequency);
+  QueryPerformanceCounter(&profileStamp);
+  const auto markProfile = [&]() {
+    LARGE_INTEGER current{};
+    QueryPerformanceCounter(&current);
+    const double milliseconds = static_cast<double>(current.QuadPart - profileStamp.QuadPart) *
+                                1000.0 / static_cast<double>(profileFrequency.QuadPart);
+    profileStamp = current;
+    return milliseconds;
+  };
+  if (preview_ || (!state.colorFilter && !state.fakeShutdown)) {
+    std::memset(surfacePixels_, 0,
+                static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4U);
   }
-  std::memset(surfacePixels_, 0, static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4U);
   Bitmap surface(width_, height_, width_ * 4, PixelFormat32bppPARGB,
                  static_cast<BYTE*>(surfacePixels_));
   Graphics graphics(&surface);
-  const bool heavyScene = (state.geese && state.geese->size() > 12U) || state.popupCount > 24;
+  const std::size_t spriteCount = state.sprites ? state.sprites->size() : 0U;
+  const std::uint64_t surfacePixels = static_cast<std::uint64_t>(width_) *
+                                      static_cast<std::uint64_t>(height_);
+  const bool heavyScene = (state.geese && state.geese->size() > 12U) ||
+                          state.popupCount > 24 || spriteCount > 8U ||
+                          surfacePixels > 3'000'000ULL;
   graphics.SetSmoothingMode(heavyScene ? SmoothingModeHighSpeed : SmoothingModeAntiAlias);
   graphics.SetInterpolationMode(heavyScene ? InterpolationModeLowQuality
                                            : InterpolationModeHighQualityBicubic);
   graphics.SetCompositingQuality(heavyScene ? CompositingQualityHighSpeed
                                             : CompositingQualityDefault);
   graphics.SetPixelOffsetMode(heavyScene ? PixelOffsetModeHighSpeed : PixelOffsetModeDefault);
-  graphics.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+  graphics.SetTextRenderingHint(heavyScene ? TextRenderingHintSingleBitPerPixelGridFit
+                                           : TextRenderingHintAntiAliasGridFit);
+  setupSampleMs_ += markProfile();
 
   if (preview_) DrawPreviewDesktop(graphics);
+  sceneSampleMs_ += markProfile();
   if (state.fakeShutdown) {
     DrawFakeShutdown(graphics, state);
+    effectsSampleMs_ += markProfile();
   } else {
     const GraphicsState saved = graphics.Save();
     // Shake: a steady beat from 3:30, plus an extra kick the more the display
@@ -522,8 +648,10 @@ void OverlayWindow::Render(const RenderState& state) {
                                   NoiseSigned(frame_ * 13U + 5U) * kick * 0.6f);
     }
     DrawSceneEffects(graphics, state);
+    sceneSampleMs_ += markProfile();
     DrawSprites(graphics, state);
     DrawClipboardBadge(graphics, state);
+    spriteSampleMs_ += markProfile();
     if (state.geese) {
       for (std::size_t index = 0; index < state.geese->size(); ++index) {
         if (heavyScene && index >= 3U) {
@@ -533,14 +661,43 @@ void OverlayWindow::Render(const RenderState& state) {
         }
       }
     }
+    gooseSampleMs_ += markProfile();
     DrawCursorLatch(graphics, state);
     if (!state.bubbleText.empty()) DrawSpeechBubble(graphics, state.bubbleText, state.bubbleAnchor);
     DrawHud(graphics, state);
     DrawToasts(graphics, state);
     DrawGlitch(graphics, state);
     graphics.Restore(saved);
+    effectsSampleMs_ += markProfile();
   }
-  Present();
+  if (!Present()) ++presentFailureSample_;
+  presentSampleMs_ += markProfile();
+  ++fpsSampleFrames_;
+  const ULONGLONG completedAt = GetTickCount64();
+  if (completedAt - fpsSampleStartedAt_ >= 1000) {
+    const double frames = static_cast<double>(fpsSampleFrames_);
+    const double fps = frames * 1000.0 /
+                       static_cast<double>(completedAt - fpsSampleStartedAt_);
+    wchar_t title[384]{};
+    swprintf(title, std::size(title),
+             L"GooseRot%ls - %.1f FPS | %dx%d | setup %.1f scene %.1f images %.1f geese %.1f fx %.1f present %.1f ms | fail %u/%u err %lu/%lu",
+             preview_ ? L" Preview" : L"", fps, width_, height_, setupSampleMs_ / frames,
+             sceneSampleMs_ / frames, spriteSampleMs_ / frames, gooseSampleMs_ / frames,
+             effectsSampleMs_ / frames, presentSampleMs_ / frames, presentFailureSample_,
+             topmostFailureSample_, static_cast<unsigned long>(lastPresentError_),
+             static_cast<unsigned long>(lastTopmostError_));
+    SetWindowTextW(window_, title);
+    fpsSampleStartedAt_ = completedAt;
+    fpsSampleFrames_ = 0;
+    setupSampleMs_ = 0.0;
+    sceneSampleMs_ = 0.0;
+    spriteSampleMs_ = 0.0;
+    gooseSampleMs_ = 0.0;
+    effectsSampleMs_ = 0.0;
+    presentSampleMs_ = 0.0;
+    presentFailureSample_ = 0;
+    topmostFailureSample_ = 0;
+  }
 }
 
 void OverlayWindow::DrawPreviewDesktop(Graphics& graphics) const {
@@ -886,8 +1043,15 @@ void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& tex
   DrawCenteredText(graphics, text, font, textRectangle, ink);
 }
 
-void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) const {
+void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) {
   if (!state.sprites) return;
+  Matrix sceneTransform;
+  REAL transform[6]{};
+  graphics.GetTransform(&sceneTransform);
+  sceneTransform.GetElements(transform);
+  const int sceneOffsetX = static_cast<int>(std::lround(transform[4]));
+  const int sceneOffsetY = static_cast<int>(std::lround(transform[5]));
+  bool gdiDrawingSinceFlush = true;
   for (const VisualSprite& sprite : *state.sprites) {
     Image* image = FindImage(sprite.resourceId);
     if (!image) continue;
@@ -898,13 +1062,40 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const float alpha = std::min(fadeIn, fadeOut);
     // Stickers slap down with a short overshoot instead of fading in politely.
     const float pop = age < 0.35 ? 1.0f + static_cast<float>(0.35 - age) * 0.75f : 1.0f;
-    const GraphicsState saved = graphics.Save();
-    graphics.TranslateTransform(sprite.center.x, sprite.center.y);
-    graphics.RotateTransform(sprite.angleDegrees);
     const float carriedScale = sprite.carried ? 0.68f : 1.0f;
     const float size = sprite.size * pop * carriedScale;
-    const Rect destination(static_cast<INT>(-size * 0.5f), static_cast<INT>(-size * 0.5f),
-                           static_cast<INT>(size), static_cast<INT>(size));
+    const bool stableGeometry = age >= 0.35;
+    CachedSprite* cached = stableGeometry
+                               ? FindCachedSprite(sprite.resourceId,
+                                                  std::max(1, static_cast<int>(std::lround(size))),
+                                                  static_cast<int>(std::lround(
+                                                      sprite.angleDegrees * 10.0f)))
+                               : nullptr;
+    if (cached && alpha >= 0.995f) {
+      if (gdiDrawingSinceFlush) {
+        graphics.Flush(FlushIntentionSync);
+        gdiDrawingSinceFlush = false;
+      }
+      BlendCachedSprite(*cached,
+                        sceneOffsetX + static_cast<int>(
+                                           std::lround(sprite.center.x - cached->width * 0.5f)),
+                        sceneOffsetY + static_cast<int>(
+                                           std::lround(sprite.center.y - cached->height * 0.5f)));
+      continue;
+    }
+    const GraphicsState saved = graphics.Save();
+    Rect destination{};
+    if (cached) {
+      destination = Rect(static_cast<INT>(std::lround(sprite.center.x - cached->width * 0.5f)),
+                         static_cast<INT>(std::lround(sprite.center.y - cached->height * 0.5f)),
+                         cached->width, cached->height);
+      image = cached->bitmap.get();
+    } else {
+      graphics.TranslateTransform(sprite.center.x, sprite.center.y);
+      graphics.RotateTransform(sprite.angleDegrees);
+      destination = Rect(static_cast<INT>(-size * 0.5f), static_cast<INT>(-size * 0.5f),
+                         static_cast<INT>(size), static_cast<INT>(size));
+    }
     if (alpha >= 0.995f) {
       graphics.DrawImage(image, destination);
     } else {
@@ -916,14 +1107,30 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
                          UnitPixel, &attributes);
     }
     graphics.Restore(saved);
+    gdiDrawingSinceFlush = true;
   }
 }
 
-void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& state) const {
+void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& state) {
   if (state.colorFilter) {
     const bool matrix = static_cast<int>((state.logicalTime - 240.0) / 2.0) % 2 == 0;
-    SolidBrush filter(matrix ? Color(38, 57, 255, 20) : Color(38, 255, 45, 170));
-    graphics.FillRectangle(&filter, 0, 0, width_, height_);
+    const Color filterColor = matrix ? Color(38, 57, 255, 20) : Color(38, 255, 45, 170);
+    if (!preview_ && surfacePixels_) {
+      graphics.Flush(FlushIntentionSync);
+      const unsigned alpha = filterColor.GetA();
+      const auto premultiply = [alpha](unsigned channel) {
+        return (channel * alpha + 127U) / 255U;
+      };
+      const std::uint32_t pixel = (alpha << 24U) |
+                                  (premultiply(filterColor.GetR()) << 16U) |
+                                  (premultiply(filterColor.GetG()) << 8U) |
+                                  premultiply(filterColor.GetB());
+      std::fill_n(static_cast<std::uint32_t*>(surfacePixels_),
+                  static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_), pixel);
+    } else {
+      SolidBrush filter(filterColor);
+      graphics.FillRectangle(&filter, 0, 0, width_, height_);
+    }
   }
 
   if (state.graffiti) DrawGraffiti(graphics, state);
@@ -955,7 +1162,116 @@ void OverlayWindow::DrawClipboardBadge(Graphics& graphics, const RenderState& st
   graphics.Restore(saved);
 }
 
-void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) const {
+void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) {
+  const float progress = std::clamp(state.graffitiProgress, 0.0f, 1.0f);
+  if (progress < 1.0f) {
+    DrawGraffitiUncached(graphics, state);
+    return;
+  }
+
+  if (graffitiCacheCanvasWidth_ != width_ || graffitiCacheCanvasHeight_ != height_) {
+    graffitiCache_.reset();
+    graffitiCacheCanvasWidth_ = width_;
+    graffitiCacheCanvasHeight_ = height_;
+  }
+  if (!graffitiCache_) BuildGraffitiCache(state);
+  if (!graffitiCache_) {
+    DrawGraffitiUncached(graphics, state);
+    return;
+  }
+  graphics.Flush(FlushIntentionSync);
+  Matrix sceneTransform;
+  REAL transform[6]{};
+  graphics.GetTransform(&sceneTransform);
+  sceneTransform.GetElements(transform);
+  BlendCachedSprite(*graffitiCache_,
+                    graffitiCacheX_ + static_cast<int>(std::lround(transform[4])),
+                    graffitiCacheY_ + static_cast<int>(std::lround(transform[5])));
+}
+
+bool OverlayWindow::BuildGraffitiCache(const RenderState& state) {
+  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
+  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  const std::vector<SprayStroke> strokes = BuildTagStrokes(center, scale);
+  float minimumX = static_cast<float>(width_);
+  float minimumY = static_cast<float>(height_);
+  float maximumX = 0.0f;
+  float maximumY = 0.0f;
+  for (const SprayStroke& stroke : strokes) {
+    for (const Vec2 point : stroke.points) {
+      minimumX = std::min(minimumX, point.x);
+      minimumY = std::min(minimumY, point.y);
+      maximumX = std::max(maximumX, point.x);
+      maximumY = std::max(maximumY, point.y);
+    }
+  }
+  // Covers the widest possible overspray radius, halo and downward drip.
+  const float margin = scale * 0.30f * 5.0f + 12.0f;
+  const int cacheLeft = std::max(0, static_cast<int>(std::floor(minimumX - margin)));
+  const int cacheTop = std::max(0, static_cast<int>(std::floor(minimumY - margin)));
+  const int cacheRight = std::min(width_, static_cast<int>(std::ceil(maximumX + margin)) + 1);
+  const int cacheBottom = std::min(height_, static_cast<int>(std::ceil(maximumY + margin)) + 1);
+  const int cacheWidth = cacheRight - cacheLeft;
+  const int cacheHeight = cacheBottom - cacheTop;
+  if (cacheWidth <= 0 || cacheHeight <= 0) return false;
+
+  auto canvas = std::make_unique<Bitmap>(cacheWidth, cacheHeight, PixelFormat32bppPARGB);
+  if (canvas->GetLastStatus() != Ok) return false;
+  Graphics cacheGraphics(canvas.get());
+  cacheGraphics.Clear(Color(0, 0, 0, 0));
+  cacheGraphics.SetSmoothingMode(SmoothingModeHighSpeed);
+  cacheGraphics.SetCompositingQuality(CompositingQualityHighSpeed);
+  cacheGraphics.SetInterpolationMode(InterpolationModeLowQuality);
+  cacheGraphics.SetPixelOffsetMode(PixelOffsetModeHighSpeed);
+  cacheGraphics.TranslateTransform(static_cast<float>(-cacheLeft),
+                                   static_cast<float>(-cacheTop));
+  DrawGraffitiUncached(cacheGraphics, state);
+  cacheGraphics.Flush(FlushIntentionSync);
+
+  BitmapData data{};
+  const Rect bounds(0, 0, cacheWidth, cacheHeight);
+  if (canvas->LockBits(&bounds, ImageLockModeRead, PixelFormat32bppPARGB, &data) != Ok) {
+    return false;
+  }
+  const auto* firstRow = static_cast<const BYTE*>(data.Scan0);
+  int left = cacheWidth;
+  int top = cacheHeight;
+  int right = -1;
+  int bottom = -1;
+  for (int y = 0; y < cacheHeight; ++y) {
+    const auto* row = reinterpret_cast<const std::uint32_t*>(
+        firstRow + static_cast<std::ptrdiff_t>(y) * data.Stride);
+    for (int x = 0; x < cacheWidth; ++x) {
+      if ((row[x] >> 24U) == 0U) continue;
+      left = std::min(left, x);
+      top = std::min(top, y);
+      right = std::max(right, x);
+      bottom = std::max(bottom, y);
+    }
+  }
+  if (right < left || bottom < top) {
+    canvas->UnlockBits(&data);
+    return false;
+  }
+
+  auto cached = std::make_unique<CachedSprite>();
+  cached->width = right - left + 1;
+  cached->height = bottom - top + 1;
+  cached->pixels.resize(static_cast<std::size_t>(cached->width) * cached->height);
+  for (int y = 0; y < cached->height; ++y) {
+    const auto* sourceRow = reinterpret_cast<const std::uint32_t*>(
+        firstRow + static_cast<std::ptrdiff_t>(top + y) * data.Stride) + left;
+    std::memcpy(cached->pixels.data() + static_cast<std::size_t>(y) * cached->width,
+                sourceRow, static_cast<std::size_t>(cached->width) * sizeof(std::uint32_t));
+  }
+  canvas->UnlockBits(&data);
+  graffitiCacheX_ = cacheLeft + left;
+  graffitiCacheY_ = cacheTop + top;
+  graffitiCache_ = std::move(cached);
+  return true;
+}
+
+void OverlayWindow::DrawGraffitiUncached(Graphics& graphics, const RenderState& state) const {
   // The tag is sprayed live: strokes are revealed by arc length, paint sags into
   // drips behind the nozzle and overspray keeps accumulating.
   const float progress = std::clamp(state.graffitiProgress, 0.0f, 1.0f);
@@ -1401,24 +1717,36 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
   }
 }
 
-void OverlayWindow::Present() {
-  if (!window_ || !surfaceDc_) return;
+bool OverlayWindow::Present() {
+  if (!window_ || !surfaceDc_) return false;
   if (preview_) {
     InvalidateRect(window_, nullptr, FALSE);
     UpdateWindow(window_);
-    return;
+    return true;
   }
   DismissShellSurface();
   HDC screen = GetDC(nullptr);
-  if (!screen) return;
+  if (!screen) return false;
   POINT destination{screenOriginX_, screenOriginY_};
   POINT source{0, 0};
   SIZE size{width_, height_};
   BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-  UpdateLayeredWindow(window_, screen, &destination, &size, surfaceDc_, &source, 0, &blend, ULW_ALPHA);
+  const BOOL presented = UpdateLayeredWindow(window_, screen, &destination, &size, surfaceDc_,
+                                             &source, 0, &blend, ULW_ALPHA);
+  lastPresentError_ = presented ? ERROR_SUCCESS : GetLastError();
   ReleaseDC(nullptr, screen);
-  SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+  const ULONGLONG now = GetTickCount64();
+  if (now - lastTopmostRefreshAt_ >= 500) {
+    lastTopmostRefreshAt_ = now;
+    if (!SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
+                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)) {
+      ++topmostFailureSample_;
+      lastTopmostError_ = GetLastError();
+    } else {
+      lastTopmostError_ = ERROR_SUCCESS;
+    }
+  }
+  return presented != FALSE;
 }
 
 void OverlayWindow::DismissShellSurface() {
@@ -1469,6 +1797,8 @@ void OverlayWindow::Close() {
     window_ = nullptr;
   }
   images_.clear();
+  spriteCache_.clear();
+  graffitiCache_.reset();
   if (surfaceDc_) {
     if (oldBitmap_) SelectObject(surfaceDc_, oldBitmap_);
     if (surfaceBitmap_) DeleteObject(surfaceBitmap_);

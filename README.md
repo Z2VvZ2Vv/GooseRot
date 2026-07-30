@@ -25,7 +25,7 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
 - fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
 - jusqu’à six vrais utilitaires Windows lancés, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
-- rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, interpolation rapide et scanlines espacées pour rester fluide ;
+- rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau ;
