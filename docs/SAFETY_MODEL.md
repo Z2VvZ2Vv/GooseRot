@@ -12,6 +12,8 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - déplacement borné et restauré des fenêtres ;
 - traction initiale du curseur sur 67 pixels, puis tempête de mouvement bornée à l’écran et restaurée lors du nettoyage ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
+- lancement consenti de six utilitaires Windows au maximum, suivis exclusivement par leur PID de création ;
+- fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, sans hook ni frappe globale ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
 - faux glitch, faux BSOD et faux firmware ;
@@ -23,7 +25,8 @@ Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une 
 
 - il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
 - le nombre total de popups est plafonné à 67 ; une fois ce plafond atteint, les fermetures ordinaires restent refusées et seul le chemin privilégié de nettoyage les détruit ;
-- le faux Bloc-notes refuse trois fermetures, revient une seule fois, puis se ferme pour de bon ;
+- le faux Bloc-notes peut revenir tant que sa phase de frappe est active, puis le nettoyage le détruit directement ;
+- les vrais utilitaires reçoivent seulement une requête `WM_CLOSE` pendant le nettoyage et ne sont jamais terminés de force ;
 - les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
 - le consentement initial annonce explicitement ce comportement.

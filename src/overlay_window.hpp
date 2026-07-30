@@ -101,6 +101,7 @@ class OverlayWindow {
 
   void DrawPreviewDesktop(Gdiplus::Graphics& graphics) const;
   void DrawGoose(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
+  void DrawGooseCompact(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawSpeechBubble(Gdiplus::Graphics& graphics, const std::wstring& text, Vec2 anchor) const;
   void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
@@ -111,6 +112,7 @@ class OverlayWindow {
   void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DismissShellSurface();
   void Present();
 
   HINSTANCE instance_ = nullptr;
@@ -125,6 +127,9 @@ class OverlayWindow {
   int screenOriginY_ = 0;
   bool preview_ = false;
   bool primaryMonitorOnly_ = false;
+  ULONGLONG lastShellDismissAt_ = 0;
+  ULONGLONG fpsSampleStartedAt_ = 0;
+  unsigned fpsSampleFrames_ = 0;
   // Advances once per rendered frame and drives every deterministic wobble.
   unsigned frame_ = 0;
   ULONG_PTR gdiplusToken_ = 0;

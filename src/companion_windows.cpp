@@ -554,4 +554,125 @@ LRESULT PopupSwarm::HandleMessage(Popup& popup, HWND window, UINT message, WPARA
   return DefWindowProcW(window, message, wParam, lParam);
 }
 
+// ---------------------------------------------------------------------------
+// OwnedWindowsApps
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct OwnedWindowQuery {
+  DWORD processId = 0;
+  HWND firstWindow = nullptr;
+  bool closeWindows = false;
+};
+
+BOOL CALLBACK VisitOwnedWindow(HWND window, LPARAM parameter) {
+  auto* query = reinterpret_cast<OwnedWindowQuery*>(parameter);
+  DWORD processId = 0;
+  GetWindowThreadProcessId(window, &processId);
+  if (processId != query->processId || GetWindow(window, GW_OWNER) != nullptr) return TRUE;
+  if (query->closeWindows) {
+    PostMessageW(window, WM_CLOSE, 0, 0);
+    return TRUE;
+  }
+  if (IsWindowVisible(window)) {
+    query->firstWindow = window;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+HWND FindOwnedWindow(DWORD processId) {
+  OwnedWindowQuery query{processId, nullptr, false};
+  EnumWindows(&VisitOwnedWindow, reinterpret_cast<LPARAM>(&query));
+  return query.firstWindow;
+}
+
+void AskOwnedWindowsToClose(DWORD processId) {
+  OwnedWindowQuery query{processId, nullptr, true};
+  EnumWindows(&VisitOwnedWindow, reinterpret_cast<LPARAM>(&query));
+}
+
+}  // namespace
+
+OwnedWindowsApps::~OwnedWindowsApps() { CloseAll(); }
+
+bool OwnedWindowsApps::LaunchRandom(std::mt19937& random, double logicalTime) {
+  if (Count() >= kMaximumApps) return false;
+
+  wchar_t systemDirectory[MAX_PATH]{};
+  wchar_t windowsDirectory[MAX_PATH]{};
+  if (!GetSystemDirectoryW(systemDirectory, static_cast<UINT>(std::size(systemDirectory))) ||
+      !GetWindowsDirectoryW(windowsDirectory, static_cast<UINT>(std::size(windowsDirectory)))) {
+    return false;
+  }
+
+  struct AppSpec {
+    std::wstring executable;
+    std::wstring arguments;
+  };
+  const std::wstring system(systemDirectory);
+  const std::wstring windows(windowsDirectory);
+  const std::array<AppSpec, 4> apps = {{
+      {system + L"\\notepad.exe", L""},
+      {system + L"\\mspaint.exe", L""},
+      {system + L"\\taskmgr.exe", L""},
+      {windows + L"\\explorer.exe", L" /separate,\"" + windows + L"\""},
+  }};
+  std::uniform_int_distribution<std::size_t> pick(0, apps.size() - 1);
+  const AppSpec& app = apps[pick(random)];
+  if (GetFileAttributesW(app.executable.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+  std::wstring command = L"\"" + app.executable + L"\"" + app.arguments;
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION process{};
+  if (!CreateProcessW(app.executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+                      CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &startup, &process)) {
+    return false;
+  }
+  CloseHandle(process.hThread);
+  processes_.push_back({process.hProcess, process.dwProcessId, logicalTime, false});
+  return true;
+}
+
+void OwnedWindowsApps::Tick(std::mt19937& random, double logicalTime) {
+  processes_.erase(std::remove_if(processes_.begin(), processes_.end(), [](ProcessEntry& entry) {
+                     if (!entry.process || WaitForSingleObject(entry.process, 0) != WAIT_OBJECT_0) {
+                       return false;
+                     }
+                     CloseHandle(entry.process);
+                     entry.process = nullptr;
+                     return true;
+                   }),
+                   processes_.end());
+
+  RECT workArea{};
+  if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) return;
+  for (ProcessEntry& entry : processes_) {
+    if (entry.positioned || logicalTime - entry.launchedAt < 0.35) continue;
+    HWND window = FindOwnedWindow(entry.processId);
+    if (!window) continue;
+    RECT rectangle{};
+    if (!GetWindowRect(window, &rectangle)) continue;
+    const int width = std::max(260L, rectangle.right - rectangle.left);
+    const int height = std::max(180L, rectangle.bottom - rectangle.top);
+    const int maximumX = std::max(workArea.left, workArea.right - width);
+    const int maximumY = std::max(workArea.top, workArea.bottom - height);
+    std::uniform_int_distribution<int> x(workArea.left, maximumX);
+    std::uniform_int_distribution<int> y(workArea.top, maximumY);
+    SetWindowPos(window, nullptr, x(random), y(random), 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+    entry.positioned = true;
+  }
+}
+
+void OwnedWindowsApps::CloseAll() {
+  for (ProcessEntry& entry : processes_) {
+    if (entry.processId) AskOwnedWindowsToClose(entry.processId);
+    if (entry.process) CloseHandle(entry.process);
+  }
+  processes_.clear();
+}
+
 }  // namespace gooserot

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <sstream>
 
 #include "resource.h"
@@ -44,6 +45,18 @@ float Noise01(std::uint32_t seed) {
 }
 
 float NoiseSigned(std::uint32_t seed) { return Noise01(seed) * 2.0f - 1.0f; }
+
+bool IsShellSurfaceProcess(const wchar_t* path) {
+  if (!path || !*path) return false;
+  const wchar_t* name = std::wcsrchr(path, L'\\');
+  name = name ? name + 1 : path;
+  constexpr std::array<const wchar_t*, 4> processes = {
+      L"StartMenuExperienceHost.exe", L"SearchHost.exe",
+      L"SearchApp.exe", L"ShellExperienceHost.exe"};
+  return std::any_of(processes.begin(), processes.end(), [name](const wchar_t* candidate) {
+    return _wcsicmp(name, candidate) == 0;
+  });
+}
 
 PointF ToPointF(Vec2 value) { return PointF(value.x, value.y); }
 
@@ -329,7 +342,9 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
   LoadImages();
   ShowWindow(window_, preview_ ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
   UpdateWindow(window_);
-  if (SetTimer(window_, 67, 33, nullptr) == 0) {
+  // Request 60 Hz. Dense scenes switch to compact primitives below, allowing
+  // the renderer to use a full core instead of collapsing to slideshow speed.
+  if (SetTimer(window_, 67, 16, nullptr) == 0) {
     error = L"Unable to start the rendering clock.";
     return false;
   }
@@ -462,12 +477,29 @@ Vec2 OverlayWindow::GraffitiPaintHead(float progress) const {
 void OverlayWindow::Render(const RenderState& state) {
   if (!surfacePixels_ || width_ <= 0 || height_ <= 0) return;
   ++frame_;
+  ++fpsSampleFrames_;
+  const ULONGLONG now = GetTickCount64();
+  if (fpsSampleStartedAt_ == 0) fpsSampleStartedAt_ = now;
+  if (preview_ && now - fpsSampleStartedAt_ >= 1000) {
+    const double fps = static_cast<double>(fpsSampleFrames_) * 1000.0 /
+                       static_cast<double>(now - fpsSampleStartedAt_);
+    wchar_t title[96]{};
+    swprintf(title, std::size(title), L"GooseRot Preview - %.1f FPS", fps);
+    SetWindowTextW(window_, title);
+    fpsSampleStartedAt_ = now;
+    fpsSampleFrames_ = 0;
+  }
   std::memset(surfacePixels_, 0, static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_) * 4U);
   Bitmap surface(width_, height_, width_ * 4, PixelFormat32bppPARGB,
                  static_cast<BYTE*>(surfacePixels_));
   Graphics graphics(&surface);
-  graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-  graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+  const bool heavyScene = (state.geese && state.geese->size() > 12U) || state.popupCount > 24;
+  graphics.SetSmoothingMode(heavyScene ? SmoothingModeHighSpeed : SmoothingModeAntiAlias);
+  graphics.SetInterpolationMode(heavyScene ? InterpolationModeLowQuality
+                                           : InterpolationModeHighQualityBicubic);
+  graphics.SetCompositingQuality(heavyScene ? CompositingQualityHighSpeed
+                                            : CompositingQualityDefault);
+  graphics.SetPixelOffsetMode(heavyScene ? PixelOffsetModeHighSpeed : PixelOffsetModeDefault);
   graphics.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
 
   if (preview_) DrawPreviewDesktop(graphics);
@@ -494,7 +526,11 @@ void OverlayWindow::Render(const RenderState& state) {
     DrawClipboardBadge(graphics, state);
     if (state.geese) {
       for (std::size_t index = 0; index < state.geese->size(); ++index) {
-        DrawGoose(graphics, (*state.geese)[index], static_cast<int>(index));
+        if (heavyScene && index >= 3U) {
+          DrawGooseCompact(graphics, (*state.geese)[index], static_cast<int>(index));
+        } else {
+          DrawGoose(graphics, (*state.geese)[index], static_cast<int>(index));
+        }
       }
     }
     DrawCursorLatch(graphics, state);
@@ -764,6 +800,43 @@ void OverlayWindow::DrawGoose(Graphics& graphics, const GooseEntity& goose, int 
   }
 }
 
+void OverlayWindow::DrawGooseCompact(Graphics& graphics, const GooseEntity& goose, int index) const {
+  const Vec2 position = goose.Position();
+  const GooseRig& rig = goose.Rig();
+  const Vec2 forward{std::cos(goose.DirectionRadians()), std::sin(goose.DirectionRadians())};
+  const Vec2 side{-forward.y, forward.x};
+  const Color bodyColor = index % 3 == 0 ? kGooseWhite
+                          : index % 3 == 1 ? Color(255, 255, 235, 248)
+                                           : Color(255, 232, 255, 226);
+  SolidBrush shadow(Color(46, 0, 0, 0));
+  SolidBrush body(bodyColor);
+  SolidBrush wing(Color(255, 222, 218, 226));
+  SolidBrush beak(kBeakOrange);
+  SolidBrush ink(kInk);
+  Pen outline(kInk, 2.0f);
+  Pen neck(bodyColor, 13.0f);
+  neck.SetStartCap(LineCapRound);
+  neck.SetEndCap(LineCapRound);
+
+  graphics.FillEllipse(&shadow, position.x - 30.0f, position.y + 12.0f, 60.0f, 15.0f);
+  graphics.DrawLine(&neck, position.x + forward.x * 14.0f, position.y + forward.y * 14.0f,
+                    rig.headCenter.x, rig.headCenter.y);
+  graphics.FillEllipse(&body, position.x - 29.0f, position.y - 19.0f, 58.0f, 38.0f);
+  graphics.DrawEllipse(&outline, position.x - 29.0f, position.y - 19.0f, 58.0f, 38.0f);
+  const Vec2 wingCenter = position - forward * 5.0f + side * 4.0f;
+  graphics.FillEllipse(&wing, wingCenter.x - 17.0f, wingCenter.y - 10.0f, 34.0f, 20.0f);
+  graphics.FillEllipse(&body, rig.headCenter.x - 11.0f, rig.headCenter.y - 11.0f, 22.0f, 22.0f);
+  graphics.DrawEllipse(&outline, rig.headCenter.x - 11.0f, rig.headCenter.y - 11.0f, 22.0f, 22.0f);
+  std::array<PointF, 3> bill = {
+      ToPointF(rig.headCenter + forward * 7.0f - side * 6.0f),
+      ToPointF(rig.beakTip),
+      ToPointF(rig.headCenter + forward * 7.0f + side * 6.0f)};
+  graphics.FillPolygon(&beak, bill.data(), static_cast<INT>(bill.size()));
+  graphics.DrawPolygon(&outline, bill.data(), static_cast<INT>(bill.size()));
+  FillCircle(graphics, ink, rig.leftEye, 2.2f);
+  FillCircle(graphics, ink, rig.rightEye, 2.2f);
+}
+
 void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& text, Vec2 anchor) const {
   int lines = 1;
   for (const wchar_t character : text) if (character == L'\n') ++lines;
@@ -825,10 +898,6 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const float alpha = std::min(fadeIn, fadeOut);
     // Stickers slap down with a short overshoot instead of fading in politely.
     const float pop = age < 0.35 ? 1.0f + static_cast<float>(0.35 - age) * 0.75f : 1.0f;
-    ColorMatrix matrix = {{{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
-                           {0, 0, 0, alpha, 0}, {0, 0, 0, 0, 1}}};
-    ImageAttributes attributes;
-    attributes.SetColorMatrix(&matrix);
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(sprite.center.x, sprite.center.y);
     graphics.RotateTransform(sprite.angleDegrees);
@@ -836,7 +905,16 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) co
     const float size = sprite.size * pop * carriedScale;
     const Rect destination(static_cast<INT>(-size * 0.5f), static_cast<INT>(-size * 0.5f),
                            static_cast<INT>(size), static_cast<INT>(size));
-    graphics.DrawImage(image, destination, 0, 0, image->GetWidth(), image->GetHeight(), UnitPixel, &attributes);
+    if (alpha >= 0.995f) {
+      graphics.DrawImage(image, destination);
+    } else {
+      ColorMatrix matrix = {{{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0},
+                             {0, 0, 0, alpha, 0}, {0, 0, 0, 0, 1}}};
+      ImageAttributes attributes;
+      attributes.SetColorMatrix(&matrix);
+      graphics.DrawImage(image, destination, 0, 0, image->GetWidth(), image->GetHeight(),
+                         UnitPixel, &attributes);
+    }
     graphics.Restore(saved);
   }
 }
@@ -1090,7 +1168,8 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
     const SmoothingMode previous = graphics.GetSmoothingMode();
     graphics.SetSmoothingMode(SmoothingModeNone);
     SolidBrush scan(Color(static_cast<BYTE>(16 + 26 * intensity), 0, 0, 0));
-    const int step = 4;
+    const bool heavyScene = state.geese && state.geese->size() > 12U;
+    const int step = heavyScene ? 10 : 4;
     const int offset = static_cast<int>(frame_ % static_cast<unsigned>(step));
     for (int y = offset; y < height_; y += step) {
       graphics.FillRectangle(&scan, 0.0f, static_cast<float>(y), canvasWidth, 1.0f);
@@ -1329,6 +1408,7 @@ void OverlayWindow::Present() {
     UpdateWindow(window_);
     return;
   }
+  DismissShellSurface();
   HDC screen = GetDC(nullptr);
   if (!screen) return;
   POINT destination{screenOriginX_, screenOriginY_};
@@ -1339,6 +1419,39 @@ void OverlayWindow::Present() {
   ReleaseDC(nullptr, screen);
   SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
+void OverlayWindow::DismissShellSurface() {
+  if (preview_) return;
+  const ULONGLONG now = GetTickCount64();
+  if (now - lastShellDismissAt_ < 200) return;
+  lastShellDismissAt_ = now;
+  HWND foreground = GetForegroundWindow();
+  if (!foreground || foreground == window_) return;
+
+  wchar_t className[96]{};
+  GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
+  bool shellSurface = _wcsicmp(className, L"DV2ControlHost") == 0;
+  DWORD processId = 0;
+  GetWindowThreadProcessId(foreground, &processId);
+  HANDLE process = processId ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)
+                             : nullptr;
+  if (process) {
+    wchar_t path[1024]{};
+    DWORD length = static_cast<DWORD>(std::size(path));
+    if (QueryFullProcessImageNameW(process, 0, path, &length)) {
+      shellSurface = shellSurface || IsShellSurfaceProcess(path);
+    }
+    CloseHandle(process);
+  }
+  if (!shellSurface) return;
+
+  // Start and Search use a higher shell z-band than normal TOPMOST windows.
+  // Targeting Escape and hiding that one surface avoids global input and lets
+  // the shell show it normally again the next time the user presses Start.
+  PostMessageW(foreground, WM_KEYDOWN, VK_ESCAPE, 0);
+  PostMessageW(foreground, WM_KEYUP, VK_ESCAPE, 0);
+  ShowWindowAsync(foreground, SW_HIDE);
 }
 
 void OverlayWindow::RequestClose() {

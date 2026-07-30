@@ -18,7 +18,7 @@ Principe essentiel : **l’oie provoque elle-même le chaos**. Les actions de l�
 
 ### 0:00 — Passive Entrance
 
-L’oie apparaît exactement au centre de l’écran avec une bulle :
+Après le consentement, l’oie entre entièrement depuis le bord gauche ou droit, choisi par le seed, puis marche vers le premier tiers de l’écran avec une bulle :
 
 > 🤫🧏‍♂️ *Mewing in progress... DO NOT DISTURB.*
 
@@ -46,9 +46,9 @@ L’oie ouvre un faux Bloc-notes appartenant au processus GooseRot et y compose 
 > ohio sigma mewing streak aura farming level 67...  
 > fanum tax detected. jawline protocol activated...
 
-Le texte est recomposé en permanence depuis une banque de mots, de nombres, d’emojis et de ponctuation. L’oie écrit **en boucle jusqu’au gag suivant à `1:00`**, sans répéter exactement la même phrase. À `1:00`, elle ajoute une dernière ligne — `SESSION SAVED. +67 AURA.` — puis réduit directement le Bloc-notes dans la barre des tâches.
+Le texte est recomposé en permanence depuis une banque de mots, de nombres et de fragments de lettres. À `1:00`, la cadence ralentit mais ne s’arrête plus : GooseRot continue d’écrire environ chaque seconde dans son propre Bloc-notes, puis accélère fortement à partir de `3:30`. Aucune touche n’est injectée dans l’application active de l’utilisateur.
 
-Tenter de fermer cette fenêtre ne marche pas. Le `[X]` est refusé trois fois : le titre change (`NON - Grindset`, `Untitled - Grindset (le bouton est décoratif)`), la fenêtre se décale de 67 pixels et l’oie commente. À la quatrième tentative elle se ferme… et revient aussitôt sous le nom `Untitled - Grindset (2) - récupéré automatiquement`. Après ce retour unique, elle se ferme normalement.
+Tenter de fermer cette fenêtre ne marche pas durablement. Le `[X]` change son titre, la décale de 67 pixels et finit par la détruire, mais le moteur de timeline la recrée tant que la frappe chaotique est active. Le nettoyage final la détruit directement.
 
 ## Phase 2 — 1:00 à 2:15 : Cursor & Window Hijack
 
@@ -63,6 +63,8 @@ Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l�
 > Your aim had negative aura.
 
 En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, sprinte jusqu’à sa barre de titre, s’y accroche et **déplace elle-même cette fenêtre de exactement 67 pixels** dans une direction choisie au hasard.
+
+À partir de `1:15`, GooseRot lance aussi progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches et une instance séparée de l’Explorateur. Seuls les PID créés par GooseRot sont repositionnés aléatoirement et sollicités pour fermeture pendant le nettoyage ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
@@ -127,6 +129,8 @@ Le bouton `[ SIGMA CHAD ]` s’éloigne de 100 pixels dès que le pointeur le su
 Pour compenser l’absence de son dans la VM, l’overlay principal déclenche une secousse rapide de 4 pixels toutes les deux secondes.
 
 Au même instant, le curseur entre dans une tempête : une cible mouvante et un tremblement haute fréquence le tirent continuellement. L’intensité monte jusqu’à rendre la reprise de contrôle pratiquement impossible à la fin, sans empêcher la sortie d’urgence par `Esc`.
+
+Si le menu Démarrer ou la recherche Windows recouvre le tag et les oies, GooseRot adresse `Esc` uniquement à cette surface shell et la masque. Aucun raccourci clavier global n’est synthétisé.
 
 ### Tout du long — Dégradation de l’affichage
 

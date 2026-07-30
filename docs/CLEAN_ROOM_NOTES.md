@@ -25,7 +25,7 @@ Les comportements historiques actifs sont la promenade, les traces de boue, le r
 
 ## Différences intentionnelles
 
-- delta monotone réel et rendu à 30 FPS au lieu d’une simulation fixe à 120 Hz ;
+- delta monotone réel, timer de rendu demandé à 60 FPS et primitives adaptatives au lieu d’une simulation fixe à 120 Hz ;
 - surface du bureau virtuel multi-écran et coordonnées négatives ;
 - alpha par pixel via `UpdateLayeredWindow`, sans couleur clé ;
 - trois états d’oie indépendants ;

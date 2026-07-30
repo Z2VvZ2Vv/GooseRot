@@ -15,15 +15,17 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 ## État de l’implémentation
 
 - moteur C++17 et timeline monotone indépendante du framerate ;
-- overlay Win32/GDI+ transparent, click-through et multi-écran ;
-- oie dessinée procéduralement en vue de dessus : corps, queue en éventail, ailes repliées, cou en S, bec articulé qui cacarde, pattes palmées, sourcils quand elle charge ;
+- overlay Win32/GDI+ transparent, click-through et multi-écran, qui referme Start/Search lorsqu’ils recouvrent la scène ;
+- première oie entrant depuis un bord après consentement, puis dessin procédural complet en vue de dessus ;
 - moteur de glitch piloté par la timeline : déchirures, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas », flashs ;
 - tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
 - jusqu’à 67 entités indépendantes, bulles, images PNG livrées par les oies puis laissées à l’écran et effets des cinq phases ;
 - traction initiale du curseur sur 67 pixels, puis tempête de mouvement de plus en plus violente entre `3:30` et la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
-- fenêtres Aura/Sigma interactives, faux Bloc-notes et faux Task Manager, File Explorer, Windows Security ou Command Prompt ; l’essaim plafonné se duplique et refuse les fermetures au plafond — tout appartient à GooseRot ;
+- fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
+- jusqu’à six vrais utilitaires Windows lancés, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
+- rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, interpolation rapide et scanlines espacées pour rester fluide ;
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau ;

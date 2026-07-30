@@ -82,11 +82,11 @@ Une horloge monotone pilote la timeline. Les animations ne doivent jamais dépen
 
 ### `GooseEngine`
 
-Conserve un état indépendant par oie. Les trois entités partagent le même renderer mais disposent de positions, vélocités, directions et tâches séparées.
+Conserve un état indépendant par oie. Jusqu’à 67 entités partagent le même renderer mais disposent de positions, vélocités, directions et tâches séparées.
 
 ### `OverlayRenderer`
 
-Utilise une fenêtre Win32 transparente, sans bordure et non activable. Le rendu principal repose sur GDI/GDI+ et `UpdateLayeredWindow`, disponible bien avant Windows 7. La version actuelle emploie une surface virtuelle unique, recréée transactionnellement lors d'un changement d'affichage et plafonnée à 30 millions de pixels (environ 120 Mo). `--primary-monitor-only` réduit cette surface à l'écran principal sur les configurations très larges.
+Utilise une fenêtre Win32 transparente, sans bordure et non activable. Le rendu principal repose sur GDI/GDI+ et `UpdateLayeredWindow`, disponible bien avant Windows 7. La version actuelle emploie une surface virtuelle unique, recréée transactionnellement lors d'un changement d'affichage et plafonnée à 30 millions de pixels (environ 120 Mo). `--primary-monitor-only` réduit cette surface à l'écran principal sur les configurations très larges. Start/Search pouvant appartenir à une bande shell supérieure à `HWND_TOPMOST`, le renderer reconnaît uniquement leurs processus connus, leur adresse `Esc`, les masque, puis replace l’overlay en tête du groupe topmost.
 
 ### `DesktopDirector`
 
@@ -101,17 +101,21 @@ Ne jamais cibler :
 
 ### `NotepadGag`
 
-Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. À `1:00`, la fenêtre est réduite puis fermée pendant le nettoyage.
+Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. La cadence continue jusqu’à `4:58` et le nettoyage détruit la fenêtre.
 
-`WM_CLOSE` est intercepté pour le gag : les trois premières tentatives renomment la fenêtre et la décalent de 67 pixels, la quatrième la détruit et la recrée une seule fois, les suivantes la ferment réellement. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement, sans passer par ce gestionnaire.
+`WM_CLOSE` est intercepté pour le gag : les premières tentatives renomment la fenêtre et la décalent de 67 pixels. Si elle finit par être détruite, la timeline la recrée tant que la phase de frappe reste active. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement.
+
+### `OwnedWindowsApps`
+
+Lance au maximum six vrais utilitaires intégrés à Windows : Notepad, Paint, Task Manager ou Explorer avec `/separate`. Chaque entrée conserve uniquement le handle de processus et le PID renvoyés par `CreateProcessW`. L’énumération ne positionne et ne ferme que les fenêtres appartenant à ces PID ; elle ne revendique jamais une instance préexistante et ne force pas la terminaison d’un processus qui refuserait `WM_CLOSE`.
 
 ### `PopupSwarm`
 
 Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que le plafond protecteur de 67 n’est pas atteint. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` reste le chemin privilégié du nettoyage de fin et de l’arrêt d’urgence. Les créations et destructions sont différées hors du gestionnaire de messages. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
 
-### `GlitchLayer`
+### `GlitchLayer` et rendu dense
 
-Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame ; les effets restent vectoriels, sans relecture de la surface, et leur rendu est reproductible. L’intensité provient de la timeline, avec des pics ajoutés par les événements et une décroissance linéaire.
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame. Au-delà de douze oies ou 24 popups, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images opaques évitent la matrice de couleur GDI+ et les scanlines sont espacées.
 
 ### `LiveSprayTag`
 
@@ -131,16 +135,16 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 
 ## Performance VM
 
-- cible normale : 30 images/seconde ;
-- 15 images/seconde lorsque seules des animations lentes sont visibles ;
+- timer demandé : 60 images/seconde ;
+- plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
 - assets décodés une seule fois puis mis en cache ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
 - nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
-- effets de glitch uniquement vectoriels : aucun accès pixel à pixel ni relecture de la surface, pour rester tenable en plein écran virtuel à 30 Hz ;
+- effets de glitch uniquement vectoriels : aucun accès pixel à pixel ni relecture de la surface ;
 - mémoire cible : moins de 150 Mo ;
-- usage CPU cible : moins de 10 % de deux vCPU hors pics de transition ;
+- usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;
 - absence de réseau après le lancement.
 
 ## Compatibilité et tests

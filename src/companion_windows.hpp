@@ -127,5 +127,34 @@ class PopupSwarm {
   int spawnCounter_ = 0;
 };
 
+// A small set of genuine Windows utilities launched by GooseRot. Only process
+// IDs created here are tracked, moved or asked to close; pre-existing user
+// windows are never adopted.
+class OwnedWindowsApps {
+ public:
+  OwnedWindowsApps() = default;
+  ~OwnedWindowsApps();
+
+  OwnedWindowsApps(const OwnedWindowsApps&) = delete;
+  OwnedWindowsApps& operator=(const OwnedWindowsApps&) = delete;
+
+  bool LaunchRandom(std::mt19937& random, double logicalTime);
+  void Tick(std::mt19937& random, double logicalTime);
+  void CloseAll();
+  int Count() const { return static_cast<int>(processes_.size()); }
+
+  static constexpr int kMaximumApps = 6;
+
+ private:
+  struct ProcessEntry {
+    HANDLE process = nullptr;
+    DWORD processId = 0;
+    double launchedAt = 0.0;
+    bool positioned = false;
+  };
+
+  std::vector<ProcessEntry> processes_;
+};
+
 }  // namespace gooserot
 

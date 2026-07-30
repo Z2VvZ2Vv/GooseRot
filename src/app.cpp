@@ -44,7 +44,20 @@ bool GooseRotApp::Initialize(std::wstring& error) {
                                                desktopEffects ? &watchdog_ : nullptr);
 
   const RectF bounds = overlay_.CanvasBounds();
-  geese_.emplace_back(bounds.Center());
+  if (logicalTime_ < 5.0) {
+    std::uniform_int_distribution<int> side(0, 1);
+    std::uniform_real_distribution<float> entranceY(bounds.top + bounds.Height() * 0.28f,
+                                                     bounds.top + bounds.Height() * 0.72f);
+    const bool fromLeft = side(random_) == 0;
+    const Vec2 entrance{fromLeft ? bounds.left - 46.0f : bounds.right + 46.0f,
+                        entranceY(random_)};
+    geese_.emplace_back(entrance);
+    geese_.front().SetTarget({bounds.left + bounds.Width() * (fromLeft ? 0.32f : 0.68f),
+                              bounds.top + bounds.Height() * 0.58f},
+                             SpeedTier::Walk, true);
+  } else {
+    geese_.emplace_back(bounds.Center());
+  }
   auraReferenceCursor_ = desktop_->CursorPosition();
   ApplyBaseline(logicalTime_);
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
@@ -77,7 +90,7 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
   if (logicalTime > 0.0 && logicalTime < 7.0) {
     SetBubble(L"Mewing in progress... DO NOT DISTURB.", 7.0 - logicalTime);
   }
-  if (logicalTime >= 40.0 && logicalTime < 60.0) {
+  if (logicalTime >= 40.0 && logicalTime < 298.0) {
     notepad_.Show(instance_);
     lastTypedAt_ = logicalTime;
   }
@@ -101,6 +114,13 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
         config_.mode == RunMode::Lab ? 48U : 36U,
         1U + static_cast<std::size_t>((logicalTime - 45.0) / 7.0));
     while (sprites_.size() < baselineSprites) SpawnSprite();
+  }
+  if (config_.desktopEffects && !config_.preview && logicalTime >= 75.0 && logicalTime < 298.0) {
+    const int baselineApps = std::clamp(1 + static_cast<int>((logicalTime - 75.0) / 42.0),
+                                        1, OwnedWindowsApps::kMaximumApps);
+    while (ownedWindowsApps_.Count() < baselineApps &&
+           ownedWindowsApps_.LaunchRandom(random_, logicalTime)) {
+    }
   }
   nextWindowAction_ = std::max(60.0, logicalTime + 2.0);
   nextCursorAction_ = std::max(70.0, logicalTime + 4.0);
@@ -145,6 +165,7 @@ void GooseRotApp::Tick() {
     UpdatePrompts();
     UpdateNotepad();
     UpdatePopups();
+    UpdateOwnedWindowsApps();
     UpdateToasts();
     double movementRemaining = logicalDelta;
     while (movementRemaining > 0.0) {
@@ -207,9 +228,8 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       break;
     case TimelineEventId::CursorAndWindows:
       if (notepad_.IsOpen()) {
-        notepadText_ += L"\r\nSESSION SAVED. +67 AURA.";
+        notepadText_ += L"\r\nKEYBOARD CONTROL: REVOKED. HONK INPUT ENABLED.\r\n";
         notepad_.SetText(notepadText_);
-        notepad_.Minimize();
       }
       SetBubble(L"NO CLICK. ONLY 67.\nCursor privileges under review.", 6.0);
       nextWindowAction_ = logicalTime_ + 2.0;
@@ -421,22 +441,50 @@ void GooseRotApp::UpdateNotepad() {
     KickGlitch(0.22f);
   }
   notepad_.Tick(logicalTime_);
-  if (!notepad_.IsOpen() || logicalTime_ < 40.0 || logicalTime_ >= 60.0) return;
-  constexpr std::array<const wchar_t*, 24> words = {
+  if (logicalTime_ < 40.0 || logicalTime_ >= 298.0) return;
+  if (!notepad_.IsOpen()) {
+    notepad_.Show(instance_);
+    lastTypedAt_ = logicalTime_;
+  }
+  if (!notepad_.IsOpen()) return;
+  constexpr std::array<const wchar_t*, 34> words = {
       L"skibidi", L"rizzler", L"alpha", L"grindset", L"no-cap", L"fr-fr",
       L"ohio", L"sigma", L"mewing", L"streak", L"aura", L"farming",
       L"level-67", L"fanum-tax", L"jawline", L"protocol", L"activated",
-      L"brainrot", L"goose", L"honk", L"NPC", L"certified", L"+10000", L"tralalero"};
+      L"brainrot", L"goose", L"honk", L"NPC", L"certified", L"+10000", L"tralalero",
+      L"q", L"x", L"AAAA", L"hjkl", L"goose.exe", L"NO_ESCAPE", L"67-67-67",
+      L"typing...", L"wrong-window", L"HONK_INPUT"};
   std::uniform_int_distribution<std::size_t> word(0, words.size() - 1);
+  const double interval = logicalTime_ >= 210.0 ? 0.20 : logicalTime_ >= 60.0 ? 0.72 : 0.18;
   int additions = 0;
-  while (lastTypedAt_ + 0.18 <= logicalTime_ && additions < 80) {
-    lastTypedAt_ += 0.18;
+  while (lastTypedAt_ + interval <= logicalTime_ && additions < 80) {
+    lastTypedAt_ += interval;
     if (typedWordCount_ > 0) notepadText_ += (typedWordCount_ % 11 == 0) ? L"...\r\n" : L" ";
     notepadText_ += words[word(random_)];
     ++typedWordCount_;
     ++additions;
   }
-  if (additions > 0) notepad_.SetText(notepadText_);
+  if (additions > 0) {
+    if (notepadText_.size() > 7000U) {
+      const std::size_t newline = notepadText_.find(L'\n', 1800U);
+      notepadText_.erase(0, newline == std::wstring::npos ? 1800U : newline + 1U);
+    }
+    notepad_.SetText(notepadText_);
+  }
+}
+
+void GooseRotApp::UpdateOwnedWindowsApps() {
+  ownedWindowsApps_.Tick(random_, logicalTime_);
+  if (!config_.desktopEffects || config_.preview || logicalTime_ < 75.0 ||
+      logicalTime_ >= 298.0 || logicalTime_ < nextOwnedAppAt_ ||
+      ownedWindowsApps_.Count() >= OwnedWindowsApps::kMaximumApps) {
+    return;
+  }
+  if (ownedWindowsApps_.LaunchRandom(random_, logicalTime_)) {
+    SetBubble(L"WINDOWS BROUGHT REINFORCEMENTS.", 3.5);
+  }
+  std::uniform_real_distribution<double> delay(24.0, 39.0);
+  nextOwnedAppAt_ = logicalTime_ + delay(random_);
 }
 
 void GooseRotApp::UpdateDesktopActions() {
@@ -854,6 +902,7 @@ bool GooseRotApp::Cleanup() {
   // Whatever the swarm was refusing, it goes away here: cleanup and the
   // emergency exit always win.
   popups_.CloseAll();
+  ownedWindowsApps_.CloseAll();
   nextPopupAt_ = 1e9;
   cursorLatched_ = false;
   cursorChaos_ = 0.0f;

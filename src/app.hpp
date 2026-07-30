@@ -38,6 +38,7 @@ class GooseRotApp {
   bool UpdateEmergencyExit(double realDeltaSeconds);
   void UpdatePrompts();
   void UpdateNotepad();
+  void UpdateOwnedWindowsApps();
   void UpdateDesktopActions();
   void UpdateGooseTargets(float deltaSeconds);
   void UpdateSprites();
@@ -80,6 +81,7 @@ class GooseRotApp {
   PromptWindow sigmaPrompt_;
   NotepadWindow notepad_;
   PopupSwarm popups_;
+  OwnedWindowsApps ownedWindowsApps_;
   std::mt19937 random_;
 
   LARGE_INTEGER performanceFrequency_{};
@@ -90,6 +92,7 @@ class GooseRotApp {
   double nextCursorAction_ = 75.0;
   double nextSpriteAt_ = 90.0;
   double nextPopupAt_ = 1e9;
+  double nextOwnedAppAt_ = 75.0;
   double bubbleUntil_ = 0.0;
   double emergencyHeldSeconds_ = 0.0;
   double auraPromptArmedAt_ = -1.0;
