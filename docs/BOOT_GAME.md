@@ -100,10 +100,12 @@ Depuis Linux, la même construction fonctionne avec la chaîne croisée mingw-w6
 ./boot/tools/make_boot_isos.sh build-firmware/firmware build-firmware/iso
 ```
 
-| Image | Entrée El Torito | Ce que le firmware exécute |
+| Image | Catalogue El Torito | Ce que le firmware exécute |
 |---|---|---|
-| `gooseboot-uefi.iso` | plateforme EFI, sans émulation, pointe une image ESP FAT | `EFI/BOOT/BOOTX64.EFI` |
-| `gooseboot-bios.iso` | plateforme BIOS, sans émulation, 128 secteurs virtuels à l’adresse par défaut 0x7C00 | `gooseboot-bios-cdstub.bin` suivi du stage 2 |
+| `gooseboot.iso` | entrée BIOS par défaut, puis entrée EFI derrière un en-tête de section de plateforme | l’un ou l’autre, selon le type de firmware de la VM |
+| `gooseboot-bios.iso` | entrée BIOS par défaut uniquement | `gooseboot-bios-cdstub.bin` suivi du stage 2 |
+
+L’en-tête de section est déterminant. Un catalogue peut aussi ne contenir qu’une seule entrée dont l’identifiant de plateforme est porté par l’entrée de validation : OVMF démarre dessus sans broncher, mais un firmware qui ne cherche l’EFI que dans les en-têtes de section de plateforme `0xEF` — VMware compris — ne voit alors aucune entrée EFI. La disposition à deux entrées est celle de toutes les ISO d’installation grand public. L’ESP est en FAT16 plutôt qu’en FAT12 pour la même raison : les deux sont autorisés pour un support amovible, FAT16 est mieux supporté.
 
 Le stage 1 n’est pas utilisable depuis un lecteur optique : son chemin `INT 13h/AH=42h` suppose des secteurs de 512 octets alors qu’un amorçage CD sans émulation en expose de 2048. Le stub `platform/bios/cdrom_stub.S` le remplace par un simple déplacement mémoire — le firmware charge l’image complète, le stub ne fait donc aucun appel disque, et le vérificateur de layout impose l’absence d’opcode `INT 13h` dans ce secteur. Il ne dépend que de l’adresse de chargement par défaut, donc aucun firmware n’a besoin d’honorer un segment El Torito personnalisé.
 

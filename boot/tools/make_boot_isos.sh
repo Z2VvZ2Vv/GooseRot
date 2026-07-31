@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 #
-# Build the two bootable GooseBoot test ISOs from already-built firmware.
+# Build the bootable GooseBoot test ISOs from already-built firmware.
 #
 # The images are meant for a disposable virtual machine. This script only ever
 # writes ordinary files inside the output directory it is given: it never opens
 # a block device, never touches a partition table, and installs nothing.
 #
-#   gooseboot-uefi.iso  El Torito EFI entry pointing at a FAT ESP image that
-#                       holds EFI/BOOT/BOOTX64.EFI.
-#   gooseboot-bios.iso  El Torito no-emulation entry holding the CD stub
-#                       followed by stage 2, loaded whole at the default
-#                       0x7C00 and entered without any disk service.
+#   gooseboot.iso       Boots on both firmware types. Its catalog follows the
+#                       layout every mainstream installer ISO uses: a BIOS
+#                       default entry, then an EFI entry behind a platform
+#                       section header. Firmware that only scans section
+#                       headers for platform 0xEF - VMware among them - does
+#                       not see an EFI entry that was written as the default
+#                       one, so the section header is what makes UEFI work.
+#   gooseboot-bios.iso  BIOS only, for a machine that should never be offered
+#                       an EFI path.
+#
+# The ESP is FAT16 rather than FAT12: both are allowed for removable media, and
+# FAT16 is the better supported of the two across real firmware.
 #
 # Requires: xorriso (xorrisofs), mtools, dosfstools.
 
@@ -50,27 +57,28 @@ fi
 mkdir -p "${output_dir}"
 staging=${output_dir}/staging
 rm -rf "${staging}"
-mkdir -p "${staging}/uefi/EFI/BOOT" "${staging}/bios"
+mkdir -p "${staging}/tree/EFI/BOOT" "${staging}/bios"
 
-# --- UEFI: a small FAT EFI system partition carried inside the ISO -----------
-esp=${staging}/uefi/esp.img
-dd if=/dev/zero of="${esp}" bs=1024 count=2048 status=none
-mkfs.vfat -F 12 -n GOOSEESP "${esp}" >/dev/null
+# --- The EFI side: a small FAT16 system partition carried inside the ISO -----
+esp=${staging}/tree/esp.img
+dd if=/dev/zero of="${esp}" bs=1024 count=4096 status=none
+mkfs.vfat -F 16 -s 1 -n GOOSEESP "${esp}" >/dev/null
 mmd -i "${esp}" ::/EFI ::/EFI/BOOT
 mcopy -i "${esp}" "${efi}" ::/EFI/BOOT/BOOTX64.EFI
 # Also expose the application in the ISO9660 tree for firmware that browses it.
-cp "${efi}" "${staging}/uefi/EFI/BOOT/BOOTX64.EFI"
+cp "${efi}" "${staging}/tree/EFI/BOOT/BOOTX64.EFI"
 
-# xorriso marks an -e entry as the EFI platform on its own.
-${iso_tool} -quiet -r -J -V GOOSEBOOT67 -c boot.catalog \
-    -e esp.img -no-emul-boot \
-    -o "${output_dir}/gooseboot-uefi.iso" "${staging}/uefi"
-
-# --- BIOS: stub plus stage 2, loaded as one 128-sector no-emulation image ----
-cat "${cdstub}" "${stage2}" > "${staging}/bios/gooseboot-cd.bin"
-[ "$(size_of "${staging}/bios/gooseboot-cd.bin")" = "65536" ] ||
+# --- The BIOS side: stub plus stage 2, one 128-sector no-emulation image -----
+cat "${cdstub}" "${stage2}" > "${staging}/tree/gooseboot-cd.bin"
+[ "$(size_of "${staging}/tree/gooseboot-cd.bin")" = "65536" ] ||
     die "the CD boot image must be exactly 128 sectors"
 
+${iso_tool} -quiet -r -J -V GOOSEBOOT67 -c boot.catalog \
+    -b gooseboot-cd.bin -no-emul-boot -boot-load-size 128 \
+    -eltorito-alt-boot -e esp.img -no-emul-boot \
+    -o "${output_dir}/gooseboot.iso" "${staging}/tree"
+
+cp "${staging}/tree/gooseboot-cd.bin" "${staging}/bios/"
 ${iso_tool} -quiet -r -J -V GOOSEBOOT67 -c boot.catalog \
     -b gooseboot-cd.bin -no-emul-boot -boot-load-size 128 \
     -o "${output_dir}/gooseboot-bios.iso" "${staging}/bios"
@@ -78,7 +86,7 @@ ${iso_tool} -quiet -r -J -V GOOSEBOOT67 -c boot.catalog \
 rm -rf "${staging}"
 
 printf '\nWrote:\n'
-for image in "${output_dir}/gooseboot-uefi.iso" "${output_dir}/gooseboot-bios.iso"; do
+for image in "${output_dir}/gooseboot.iso" "${output_dir}/gooseboot-bios.iso"; do
     printf '  %s  %s bytes\n' "${image}" "$(size_of "${image}")"
 done
 if command -v sha256sum >/dev/null; then

@@ -92,10 +92,17 @@ only ever writes ordinary files inside the output directory it is given:
 ./boot/tools/make_boot_isos.sh build-firmware/firmware build-firmware/iso
 ```
 
-| Image | El Torito entry | What the firmware runs |
+| Image | El Torito catalog | What the firmware runs |
 |---|---|---|
-| `gooseboot-uefi.iso` | EFI platform, no emulation, points at a FAT ESP image | `EFI/BOOT/BOOTX64.EFI` |
-| `gooseboot-bios.iso` | BIOS platform, no emulation, 128 virtual sectors at the default 0x7C00 | `gooseboot-bios-cdstub.bin` followed by stage 2 |
+| `gooseboot.iso` | BIOS default entry, then an EFI entry behind a platform section header | either, depending on the VM's firmware type |
+| `gooseboot-bios.iso` | BIOS default entry only | `gooseboot-bios-cdstub.bin` followed by stage 2 |
+
+The section header matters. A catalog may also carry a single entry whose
+platform id lives in the validation entry, and OVMF boots that happily — but
+firmware that only scans section headers for platform `0xEF`, VMware included,
+sees no EFI entry at all and falls through. The dual-entry layout above is what
+every mainstream installer ISO uses. The ESP is FAT16 rather than FAT12 for the
+same reason: both are legal for removable media, FAT16 is better supported.
 
 Stage 1 is not used on optical media: its `INT 13h/AH=42h` path assumes 512-byte
 sectors, while a no-emulation CD boot exposes 2048-byte sectors. The CD stub in
