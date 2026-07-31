@@ -1,6 +1,6 @@
 # GooseBoot — jeu pré-OS BIOS et UEFI
 
-> État actuel : le cœur déterministe, le renderer logiciel, les tests, la Preview Win32 et les adaptateurs UEFI x64/BIOS sont implémentés dans `boot/`. Les images firmware compilent et passent une vérification statique de format et de layout. Elles restent toutefois expérimentales, non signées, non installables et non validées à l’exécution : aucun test QEMU/OVMF ou SeaBIOS n’a pu être exécuté. GooseRot refuse donc toujours `--boot-game` et n’émet aucun handoff.
+> État actuel : le cœur déterministe, le renderer logiciel, les tests, la Preview Win32 et les adaptateurs UEFI x64/BIOS sont implémentés dans `boot/`. Les images firmware compilent, passent la vérification statique de format et de layout, et démarrent désormais en émulation : les deux ISO ont été exécutées sous QEMU 8.2.2 avec OVMF 2024.02 (UEFI x64) et SeaBIOS 1.16.3 (BIOS). Le jeu s’affiche, le clavier relance une partie, `R` provoque un vrai reset plateforme et `Esc` rend la main au firmware avec restauration du mode GOP. Elles restent expérimentales, non signées, non installables, et non validées sur machine physique ni sur les autres hyperviseurs. GooseRot refuse donc toujours `--boot-game` et n’émet aucun handoff.
 
 ## Objectif
 
@@ -12,7 +12,7 @@ GooseBoot vise un véritable mini-jeu pré-OS, indépendant de Windows. Il ne s�
 - un preview Windows utilisant exactement le même moteur de jeu ;
 - un bundle de laboratoire avec manifeste et SHA-256.
 
-Le banc d’exécution QEMU/OVMF/SeaBIOS reste à réaliser sur des supports virtuels vierges et jetables.
+Le banc d’exécution QEMU/OVMF/SeaBIOS est en place et vert ; la validation sur matériel physique et sur les autres hyperviseurs reste à faire, exclusivement sur des supports virtuels vierges et jetables.
 
 GooseBoot ne contient aucun installateur et ne modifie pas le démarrage d’une machine. Le branchement au profil `lab`, la détection BIOS/UEFI et l’installation expérimentale restent derrière une frontière d’intégration externe.
 
@@ -71,6 +71,8 @@ SHA256SUMS.txt
 README.txt
 ```
 
+Le dossier `<build>/boot/firmware/` contient en plus `gooseboot-bios-cdstub.bin`, le secteur d’amorçage utilisé uniquement par l’ISO BIOS.
+
 Il n’existe volontairement aucun `installer.exe`, script d’écriture MBR/ESP, fichier BCD ou modificateur de variables UEFI dans ce périmètre.
 
 Le manifeste contient le schéma, le jeu, la version, les tailles et SHA-256 des quatre artefacts, ainsi que les barrières de confiance `experimental-unsigned`, `installable: false` et `runtimeValidated: false`. Il ne décrit aucune procédure d’installation sur un disque système. Aucune image UEFI IA32 n’est produite.
@@ -87,6 +89,23 @@ cmake --build build-firmware --target gooseboot_firmware_bundle
 ```
 
 La deuxième commande construit `gooseboot_firmware` et exécute automatiquement la vérification de layout. `ctest` la rejoue sous le nom `gooseboot_firmware_layout`. La dernière commande ne signe ni n’installe rien ; elle copie seulement les résultats dans le dossier de staging expérimental.
+
+Depuis Linux, la même construction fonctionne avec la chaîne croisée mingw-w64 et `boot/cmake/toolchain-mingw-w64.cmake`. Une construction croisée produit tous les binaires firmware sauf `gooseboot-bios.img` et n’expose pas `gooseboot_firmware_bundle` : cet artefact est assemblé par un outil qui doit tourner sur la machine de build. Les deux ISO n’en ont pas besoin.
+
+### ISO de test
+
+`boot/tools/make_boot_isos.sh` fabrique deux ISO destinées à une machine virtuelle jetable, à partir d’un firmware déjà construit. Le script requiert `xorriso`, `mtools` et `dosfstools`, et n’écrit que des fichiers ordinaires dans le dossier de sortie demandé :
+
+```bash
+./boot/tools/make_boot_isos.sh build-firmware/firmware build-firmware/iso
+```
+
+| Image | Entrée El Torito | Ce que le firmware exécute |
+|---|---|---|
+| `gooseboot-uefi.iso` | plateforme EFI, sans émulation, pointe une image ESP FAT | `EFI/BOOT/BOOTX64.EFI` |
+| `gooseboot-bios.iso` | plateforme BIOS, sans émulation, 128 secteurs virtuels à l’adresse par défaut 0x7C00 | `gooseboot-bios-cdstub.bin` suivi du stage 2 |
+
+Le stage 1 n’est pas utilisable depuis un lecteur optique : son chemin `INT 13h/AH=42h` suppose des secteurs de 512 octets alors qu’un amorçage CD sans émulation en expose de 2048. Le stub `platform/bios/cdrom_stub.S` le remplace par un simple déplacement mémoire — le firmware charge l’image complète, le stub ne fait donc aucun appel disque, et le vérificateur de layout impose l’absence d’opcode `INT 13h` dans ce secteur. Il ne dépend que de l’adresse de chargement par défaut, donc aucun firmware n’a besoin d’honorer un segment El Torito personnalisé.
 
 ## Arborescence active résumée
 
@@ -111,6 +130,7 @@ boot/
  │   ├─ bios/
  │   │   ├─ stage1.S / stage1.ld
  │   │   ├─ stage2_entry.S / linker.ld
+ │   │   ├─ cdrom_stub.S / cdrom_stub.ld
  │   │   ├─ bios_main.cpp
  │   │   ├─ bios_graphics.cpp
  │   │   ├─ bios_input.cpp
@@ -120,7 +140,9 @@ boot/
  ├─ cmake/
  │   ├─ verify_firmware.cmake
  │   └─ package_firmware.cmake
- ├─ tools/make_bios_image.cpp
+ ├─ tools/
+ │   ├─ make_bios_image.cpp
+ │   └─ make_boot_isos.sh
  └─ tests/game_tests.cpp
 ```
 
@@ -218,18 +240,15 @@ Les tests automatisés couvrent le cœur déterministe et le renderer via `goose
 
 - UEFI : PE32+ x86-64, sous-système EFI Application, entrée non nulle, absence d’import DLL, relocation `DIR64` et BSS framebuffer allouée sans contenu fichier ;
 - BIOS : stage 1 de 512 octets avec signature `55 AA`, stage 2 de 127 secteurs, image combinée de 128 secteurs et contenu exact ;
-- stage 2 : format i386, entrée `0x10000` et symboles utilisés en mode réel confinés à la fenêtre CS-relative de 64 KiB.
+- stage 2 : format i386, entrée `0x10000` et symboles utilisés en mode réel confinés à la fenêtre CS-relative de 64 KiB ;
+- stub CD, quand il est fourni : 512 octets, signature `55 AA` et aucun opcode `INT 13h` dans le secteur.
 
-Ces contrôles ne démarrent pas les images. Le pipeline runtime restant devra valider :
+Ces contrôles ne démarrent pas les images. Le banc runtime exécuté séparément couvre désormais :
 
-- UEFI x64 avec OVMF ;
-- BIOS SeaBIOS ;
-- résolutions 640×480, 800×600, 1024×768 et 1920×1080 ;
-- clavier AZERTY et QWERTY ;
-- absence d’instruction ou d’appel d’écriture disque ;
-- cadence, clavier et reset sur les firmwares testés.
+- UEFI x64 sous OVMF 2024.02 : démarrage depuis l’ISO, rendu 1280×720 letterboxé dans un mode GOP 1280×800, clavier, relance, `R` = reset plateforme réel, `Esc` = retour au menu firmware avec restauration du mode d’origine ;
+- BIOS sous SeaBIOS 1.16.3 : démarrage depuis l’ISO via le stub CD, mode VBE 640×400, clavier PS/2 et relance.
 
-QEMU, OVMF et SeaBIOS ne sont pas disponibles dans l’environnement de validation actuel ; aucun test runtime n’a donc été exécuté. Les futurs tests devront utiliser exclusivement des supports virtuels temporaires, vierges et jetables.
+Reste à valider : matériel physique, VMware, VirtualBox et Hyper-V, les résolutions 640×480, 800×600, 1024×768 et 1920×1080, et le clavier AZERTY. Ces tests doivent utiliser exclusivement des supports virtuels temporaires, vierges et jetables.
 
 ## Critères de fin
 

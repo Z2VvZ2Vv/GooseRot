@@ -4,12 +4,17 @@ This directory contains the deterministic mini-game core, its 640×360 software
 renderer, fixed-memory helpers, core tests, a safe windowed Win32 Preview, and
 experimental freestanding adapters for UEFI x64 and legacy BIOS.
 
-The firmware artifacts compile and pass static layout checks, but they have not
-been run under QEMU/OVMF or SeaBIOS because those tools are unavailable in the
-current validation environment. They are unsigned, non-installable, and not
-runtime-validated. This directory contains no installer, physical-disk writer,
-boot-manager modification, UEFI-variable update, persistence mechanism, or
-physical-machine deployment procedure.
+The firmware artifacts compile, pass the static layout checks, and now boot in
+an emulator: both targets were run under QEMU 8.2.2 (TCG, no KVM) with OVMF
+2024.02 for UEFI x64 and SeaBIOS 1.16.3 for legacy BIOS. Observed there: the
+game reaches its render loop, the HUD and goose draw correctly, the keyboard
+restarts a run, `R` performs a real platform reset, and one `Esc` press returns
+the UEFI application to the firmware menu with the original GOP mode restored.
+
+They remain unsigned and non-installable, and they are still unvalidated on
+physical hardware and on every other hypervisor. This directory contains no
+installer, physical-disk writer, boot-manager modification, UEFI-variable
+update, persistence mechanism, or physical-machine deployment procedure.
 
 The Preview does not overlay or control the desktop. Pressing `R` only produces
 a `ResetRequested` value inside the core; the Preview ignores it. The firmware
@@ -57,8 +62,48 @@ README.txt
 
 The manifest deliberately records `trust: experimental-unsigned`,
 `installable: false`, and `runtimeValidated: false`. The raw BIOS image is a
-build artifact for future disposable-VM testing, not an instruction or tool for
-writing a physical disk.
+build artifact for disposable-VM testing, not an instruction or tool for writing
+a physical disk.
+
+### Cross-building the firmware from Linux
+
+The firmware targets are PE/COFF, so a Linux host needs the mingw-w64 toolchain
+and can then use the same rules:
+
+```bash
+apt-get install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+cmake -S boot -B build-firmware -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_TOOLCHAIN_FILE=boot/cmake/toolchain-mingw-w64.cmake \
+      -DGOOSEBOOT_BUILD_FIRMWARE=ON -DGOOSEBOOT_BUILD_PREVIEW=OFF
+cmake --build build-firmware --parallel
+```
+
+A cross build produces every firmware binary except the raw `gooseboot-bios.img`
+and skips `gooseboot_firmware_bundle`, because that one artifact is assembled by
+a tool that has to run on the build host. The two bootable ISOs do not need it.
+
+### Bootable test images
+
+`boot/tools/make_boot_isos.sh` turns built firmware into two ISOs for a
+throwaway virtual machine. It needs `xorriso`, `mtools` and `dosfstools`, and it
+only ever writes ordinary files inside the output directory it is given:
+
+```bash
+./boot/tools/make_boot_isos.sh build-firmware/firmware build-firmware/iso
+```
+
+| Image | El Torito entry | What the firmware runs |
+|---|---|---|
+| `gooseboot-uefi.iso` | EFI platform, no emulation, points at a FAT ESP image | `EFI/BOOT/BOOTX64.EFI` |
+| `gooseboot-bios.iso` | BIOS platform, no emulation, 128 virtual sectors at the default 0x7C00 | `gooseboot-bios-cdstub.bin` followed by stage 2 |
+
+Stage 1 is not used on optical media: its `INT 13h/AH=42h` path assumes 512-byte
+sectors, while a no-emulation CD boot exposes 2048-byte sectors. The CD stub in
+`platform/bios/cdrom_stub.S` replaces it with a pure in-memory move — the
+firmware is asked to load the whole 128-sector image, so the stub performs no
+disk call at all, and the layout verifier asserts the sector contains no `INT
+13h` opcode. It relies only on the default 0x7C00 load address, so no firmware
+has to honour a custom El Torito load segment.
 
 ## The game
 
@@ -165,9 +210,16 @@ imports, and contains usable `.reloc` and `.bss` sections. It also checks the
 BIOS sizes and `55 AA` signature, exact stage composition, i386 stage-2 entry at
 `0x10000`, and all real-mode VBE/GDT state inside the CS-relative 64 KiB
 window. The UEFI checks also require x86-64, a nonzero entry point, a real
-`DIR64` relocation, and file-free framebuffer BSS. These are structural checks only:
-boot, graphics, keyboard, timer, and reset behavior still require runtime tests
-under OVMF and SeaBIOS on blank disposable virtual media.
+`DIR64` relocation, and file-free framebuffer BSS. When a CD stub is present it
+must be 512 bytes, carry `55 AA`, and contain no `INT 13h` opcode.
+
+These are structural checks. Boot, graphics, keyboard, timer and reset behaviour
+were confirmed separately by running both ISOs under QEMU 8.2.2 with OVMF
+2024.02 and SeaBIOS 1.16.3: UEFI came up letterboxed at 1280×720 inside a
+1280×800 GOP mode, BIOS selected a 640×400 VBE mode, both accepted keystrokes
+and restarted runs, `R` reset the machine, and `Esc` returned the UEFI build to
+the firmware menu with the original mode restored. Physical hardware, VMware,
+VirtualBox and Hyper-V remain untested.
 
 The adapters remain display/input/time-only during gameplay. They do not
 implement disk writes, ESP/MBR edits, BCD changes, UEFI-variable changes,
