@@ -1117,6 +1117,7 @@ RenderState GooseRotApp::BuildRenderState() const {
   state.countdown = logicalTime_ >= 270.0 && logicalTime_ < 300.0;
   state.resetButton = logicalTime_ >= 298.4 && logicalTime_ < 300.0;
   state.fakeShutdown = shutdownStarted_ || logicalTime_ >= 300.0;
+  state.flashesEnabled = config_.flashesEnabled && !config_.reducedMotion;
   if (logicalTime_ <= bubbleUntil_ && !geese_.empty()) {
     state.bubbleText = bubbleText_;
     state.bubbleAnchor = geese_.front().Position();

@@ -1,5 +1,7 @@
 #include "@CMAKE_CURRENT_SOURCE_DIR@/src/resource.h"
 
+// Rebuild this resource object whenever the manifest or an embedded image changes.
+// Resource fingerprint: @GOOSEROT_RESOURCE_FINGERPRINT@
 1 24 "@CMAKE_CURRENT_SOURCE_DIR@/src/gooserot.manifest"
 
 IDR_BRAINROT_TRALALERO RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Brainrot/tralalero-tralala.png"
@@ -9,4 +11,3 @@ IDR_CAT_SHOCKED RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/ca
 IDR_CAT_JUDGMENTAL RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-judgmental-gray.png"
 IDR_CAT_VACANT RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-vacant-white.png"
 IDR_CAT_SUSPICIOUS RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-suspicious-black.png"
-

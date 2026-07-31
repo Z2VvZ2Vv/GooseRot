@@ -1859,7 +1859,7 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
   if (age < 1.15) {
     const float blast = static_cast<float>(std::clamp(age / 1.15, 0.0, 1.0));
     const Vec2 center{width_ * 0.5f, height_ * 0.48f};
-    if (age < 0.16) {
+    if (state.flashesEnabled && age < 0.16) {
       const BYTE alpha = static_cast<BYTE>(255.0 * (1.0 - age / 0.16));
       SolidBrush flash(Color(alpha, 255, 255, 255));
       graphics.FillRectangle(&flash, 0, 0, width_, height_);
@@ -1879,7 +1879,10 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
                         center.x + std::cos(angle) * length,
                         center.y + std::sin(angle) * length);
     }
-    SolidBrush core(WithAlpha(Color(255, 255, 255, 255), 1.0f - blast));
+    const Color coreColor = state.flashesEnabled ? Color(255, 255, 255, 255)
+                                                  : Color(150, 255, 45, 170);
+    const float coreOpacity = (state.flashesEnabled ? 1.0f : 0.55f) * (1.0f - blast);
+    SolidBrush core(WithAlpha(coreColor, coreOpacity));
     const float radius = 36.0f + blast * std::min(width_, height_) * 0.46f;
     FillCircle(graphics, core, center, radius);
     Font detonation(PosterFamily(), 48.0f, FontStyleBold, UnitPixel);

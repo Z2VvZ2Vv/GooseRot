@@ -32,7 +32,28 @@ endif()
 
 set(GOOSEROT_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GOOSEROT_GENERATED_DIR}")
+
+set(GOOSEROT_RESOURCE_INPUTS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/resource.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/gooserot.manifest"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/tralalero-tralala.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/ballerina-cappuccina.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/bombardiro-crocodilo.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-shocked-orange.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-judgmental-gray.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-vacant-white.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-suspicious-black.png"
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GOOSEROT_RESOURCE_INPUTS})
+set(GOOSEROT_RESOURCE_FINGERPRINT_SOURCE "")
+foreach(resource_input IN LISTS GOOSEROT_RESOURCE_INPUTS)
+  file(SHA256 "${resource_input}" resource_hash)
+  string(APPEND GOOSEROT_RESOURCE_FINGERPRINT_SOURCE "${resource_hash}")
+endforeach()
+string(SHA256 GOOSEROT_RESOURCE_FINGERPRINT "${GOOSEROT_RESOURCE_FINGERPRINT_SOURCE}")
 configure_file(src/resources.rc.in "${GOOSEROT_GENERATED_DIR}/resources.rc" @ONLY)
+set_property(SOURCE "${GOOSEROT_GENERATED_DIR}/resources.rc" APPEND PROPERTY
+  OBJECT_DEPENDS ${GOOSEROT_RESOURCE_INPUTS})
 
 add_library(gooserot_core STATIC
   src/core.cpp

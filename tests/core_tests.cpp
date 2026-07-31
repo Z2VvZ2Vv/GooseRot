@@ -39,6 +39,23 @@ void TestArgumentParsing() {
   Expect(gooserot::ParseArguments(8, valid, config, error), "valid CLI parses");
   Expect(config.mode == gooserot::RunMode::Lab && config.vmConfirmed, "lab confirmation retained");
   Expect(config.durationScale == 0.1 && config.startAtSeconds == 135.0, "CLI numeric options retained");
+  Expect(config.desktopEffects && !config.muted && config.flashesEnabled && !config.reducedMotion,
+         "lab full experience enables every effect category by default");
+
+  wchar_t safe[] = L"safe";
+  wchar_t normal[] = L"normal";
+  wchar_t* safeMode[] = {program, mode, safe};
+  wchar_t* normalMode[] = {program, mode, normal};
+  config = {};
+  error.clear();
+  Expect(gooserot::ParseArguments(3, safeMode, config, error) && config.desktopEffects &&
+             !config.muted && config.flashesEnabled && !config.reducedMotion,
+         "safe full experience enables every effect category by default");
+  config = {};
+  error.clear();
+  Expect(gooserot::ParseArguments(3, normalMode, config, error) && config.desktopEffects &&
+             !config.muted && config.flashesEnabled && !config.reducedMotion,
+         "normal full experience enables every effect category by default");
 
   wchar_t seed[] = L"--seed";
   wchar_t negativeSeed[] = L"-1";

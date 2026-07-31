@@ -4,6 +4,7 @@
 #include <shellapi.h>
 
 #include <cerrno>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -13,6 +14,22 @@
 #include "recovery_watchdog.hpp"
 
 namespace {
+
+using TaskDialogIndirectProcedure = HRESULT(WINAPI*)(
+    const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+
+TaskDialogIndirectProcedure ResolveTaskDialogIndirect() {
+  // TaskDialogIndirect only exists in version 6 of the common-controls DLL.
+  // Resolve it at runtime so systems that expose an older compatibility
+  // surface can still start GooseRot and use the MessageBox fallback below.
+  const HMODULE commonControls = GetModuleHandleW(L"comctl32.dll");
+  if (!commonControls) return nullptr;
+  const FARPROC address = GetProcAddress(commonControls, "TaskDialogIndirect");
+  static_assert(sizeof(address) == sizeof(TaskDialogIndirectProcedure));
+  TaskDialogIndirectProcedure procedure = nullptr;
+  std::memcpy(&procedure, &address, sizeof(procedure));
+  return procedure;
+}
 
 bool AskForConsent(gooserot::AppConfig& config) {
   if (config.preview) return true;
@@ -57,7 +74,8 @@ bool AskForConsent(gooserot::AppConfig& config) {
   dialog.nDefaultButton = kReducedExperience;
 
   int pressed = IDCANCEL;
-  if (SUCCEEDED(TaskDialogIndirect(&dialog, &pressed, nullptr, nullptr))) {
+  const TaskDialogIndirectProcedure showTaskDialog = ResolveTaskDialogIndirect();
+  if (showTaskDialog && SUCCEEDED(showTaskDialog(&dialog, &pressed, nullptr, nullptr))) {
     if (pressed == kReducedExperience) {
       config.muted = true;
       config.flashesEnabled = false;

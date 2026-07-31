@@ -69,6 +69,7 @@ struct RenderState {
   bool countdown = false;
   bool resetButton = false;
   bool fakeShutdown = false;
+  bool flashesEnabled = true;
   bool reducedMotion = false;
 };
 
