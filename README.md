@@ -29,7 +29,7 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau ;
-- cœur AURA 67 déterministe et `GooseBootPreview.exe` sûr dans `boot/` ;
+- cœur AURA 67 déterministe — un runner infini pré-OS façon dinosaure Chrome, joué sur une carte mère — et `GooseBootPreview.exe` sûr dans `boot/` ;
 - adaptateurs freestanding UEFI x64 et BIOS, construits sur demande et vérifiés statiquement ;
 - tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le plafond, le refus de fermeture et le nettoyage d’urgence de l’essaim.
 

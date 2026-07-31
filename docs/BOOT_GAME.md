@@ -18,33 +18,39 @@ GooseBoot ne contient aucun installateur et ne modifie pas le démarrage d’une
 
 ## Nom et concept
 
-### AURA 67: Firmware Frenzy
+### AURA 67: POST Runner
 
-Le joueur contrôle une petite oie au milieu d’un faux environnement de firmware. Une partie dure 67 secondes.
+Un runner infini, dans l’esprit du dinosaure hors ligne de Chrome, mais joué sur une carte mère. L’oie court toute seule, la carte défile de plus en plus vite, et la partie ne s’arrête que lorsqu’elle se prend un obstacle. Il n’y a ni chronomètre ni ligne d’arrivée : seul le score compte, et le meilleur reste affiché dans le HUD.
 
-- récupérer les badges `+9999 AURA` ;
-- éviter les blocs rouges `NPC` ;
-- repousser un curseur hostile de exactement 67 pixels ;
-- survivre aux vagues rose néon et vert Matrix ;
-- atteindre `MAXIMUM BRAINROT` avant la fin du compteur.
+- sauter par-dessus les barrettes de RAM, condensateurs, boîtes `SEGFAULT`, tours et écrans bleus ;
+- se baisser sous les curseurs hostiles volants, mais rester au sol quand ils passent haut ;
+- frôler les obstacles pour déclencher un `CLUTCH` et monter la chaîne ;
+- ramasser les badges `+67 AURA` placés sur l’arc du saut ;
+- attraper la puce d’overclock pour armer `ROOT MODE` pendant exactement 67 ticks et pulvériser les obstacles ;
+- pousser le compteur au-delà de `9999` pour allumer `MAX BRAINROT`.
 
-Le score commence à `−10,000 AURA`. Toutes les valeurs importantes utilisent `67`, `9999` ou `10000`. À la fin :
+L’économie garde les valeurs du projet : 1 AURA tous les 5 pixels parcourus, `67` par badge, `67` par frôlement, `67` par obstacle pulvérisé, palette firmware qui bascule tous les `670` AURA. La chaîne (jusqu’à `x9`) se construit uniquement par la prise de risque — jamais en ramassant des badges — et retombe après cinq secondes sans action. La vitesse monte de 345 à 622 pixels/seconde en environ 79 secondes puis se stabilise, la densité d’obstacles restant à son plafond.
+
+Un saut au sol dure exactement 25 ticks et culmine à 86 pixels. Chaque vague produite par le générateur tient dans cet arc : l’écart minimal tiré est de 36 ticks, et les motifs se débloquent progressivement avec la rampe.
+
+À la mort :
 
 ```text
-CRITICAL ERROR: MAXIMUM BRAINROT REACHED
-[R] REBOOT    [ENTER] AGAIN
+KERNEL PANIC
+AURA 004420   BEST 004420
+[SPACE] RUN AGAIN    [R] RESET PLATFORM
 ```
 
-Le jeu n’utilise aucun son. Les retours reposent sur le mouvement, les flashes modérés, les secousses de 2 à 4 pixels et les changements de palette.
+Le panneau affiche aussi les badges, les frôlements, les obstacles franchis et la durée de survie. Un verrou de 20 ticks empêche la touche qui a causé le crash de sauter l’écran. Le jeu n’utilise aucun son. Les retours reposent sur le mouvement, les flashes modérés, les secousses et les changements de palette.
 
 ## Contrôles
 
 | Entrée | Action |
 |---|---|
-| Flèches ou `WASD` | Déplacer l’oie |
-| `Space` | Dash de 67 pixels |
-| `Enter` | Valider ou recommencer |
-| `R` après la partie | Demander un redémarrage de la plateforme |
+| `Space`, `Haut` ou `W` | Sauter, puis un seul coup d’aile en l’air |
+| `Bas` ou `S` | Se baisser au sol, plonger en l’air |
+| `Space` ou `Enter` sur l’écran de panique | Relancer immédiatement |
+| `R` sur l’écran de panique | Demander un redémarrage de la plateforme |
 | `Esc` maintenu deux secondes | Fermer la Preview, retourner au firmware en UEFI ou arrêter le CPU en BIOS |
 
 Ces contrôles décrivent le sous-projet autonome GooseBoot dans son état actuel. Ils ne constituent pas une sortie du profil GooseRot `lab` : au niveau produit, l’appui long sur `Esc` est réservé à GooseRot `safe`. Le raccordement actuel de `lab --fake-reboot` à la Preview est un comportement transitoire non aligné avec ce contrat.
@@ -178,7 +184,7 @@ Le mode VBE doit être un framebuffer linéaire direct-color 32 bits d’au moin
 
 ## Assets pré-OS
 
-Les adaptateurs pré-OS ne décodent aucun PNG/SVG et n’accèdent à aucun système de fichiers. L’oie, les entités, les palettes Matrix Green, Neon Pink et Critical Red, ainsi que la police bitmap, sont rendues par le même renderer logiciel compilé dans chaque binaire.
+Les adaptateurs pré-OS ne décodent aucun PNG/SVG et n’accèdent à aucun système de fichiers. L’oie, les obstacles, le décor de carte mère à trois couches de parallaxe, les palettes Matrix Green, Amber, Cyan et Neon Pink, ainsi que la police bitmap, sont rendus par le même renderer logiciel compilé dans chaque binaire.
 
 ## Futur handoff `--boot-game`
 
@@ -206,7 +212,9 @@ La version actuelle refuse l'option avant la timeline, n'écrit aucun JSON et ne
 
 ## Tests
 
-Les tests automatisés couvrent le cœur déterministe et le renderer via `gooseboot_tests`. `gooseboot_firmware_layout` vérifie statiquement :
+Les tests automatisés couvrent le cœur déterministe et le renderer via `gooseboot_tests` : rejeu à seed égal sur une session entière (crashs et relances comprises), divergence de seed, arc de saut fixe 25 ticks / 86 pixels, coup d’aile unique par phase aérienne, esquive accroupie d’un curseur à hauteur de tête, économie `67` et règles de chaîne, `ROOT MODE` qui pulvérise puis expire à l’heure, 10 000 ticks prouvant qu’aucun compteur ne termine la partie, écarts du générateur toujours au-dessus de la borne de saut sur six seeds, autopilote réactif survivant à la rampe sur cinq seeds, conservation du record entre deux runs, demande de reset accessible uniquement après un crash, sortie `Esc` maintenue, garde-fous du framebuffer, frames identiques et alignement de l’arène fixe.
+
+`gooseboot_firmware_layout` vérifie statiquement :
 
 - UEFI : PE32+ x86-64, sous-système EFI Application, entrée non nulle, absence d’import DLL, relocation `DIR64` et BSS framebuffer allouée sans contenu fichier ;
 - BIOS : stage 1 de 512 octets avec signature `55 AA`, stage 2 de 127 secteurs, image combinée de 128 secteurs et contenu exact ;
@@ -227,9 +235,9 @@ QEMU, OVMF et SeaBIOS ne sont pas disponibles dans l’environnement de validati
 
 Le sous-projet GooseBoot est considéré terminé lorsque :
 
-- le même seed produit la même partie sur Preview, BIOS et UEFI ;
+- le même seed produit la même session sur Preview, BIOS et UEFI ;
 - le jeu démarre sans Windows et sans réseau ;
-- les trois palettes et tous les textes sont lisibles ;
+- les quatre palettes et tous les textes sont lisibles ;
 - `R` redémarre correctement sur les plateformes de test ;
 - aucune écriture disque n’est possible depuis les binaires livrés ;
 - l’installation sur une machine existante reste entièrement extérieure au dépôt.
