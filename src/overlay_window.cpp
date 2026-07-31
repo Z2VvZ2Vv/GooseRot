@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
+#include <new>
 #include <sstream>
 
 #include "resource.h"
@@ -19,6 +21,12 @@ namespace {
 using namespace Gdiplus;
 
 constexpr float kPi = 3.14159265358979323846f;
+std::atomic<HWND> gShellOverlayWindow{nullptr};
+
+struct ForegroundMonitorContext {
+  HANDLE ready = nullptr;
+  HANDLE stop = nullptr;
+};
 
 const Color kNeonPink(255, 255, 45, 170);
 const Color kMatrixGreen(255, 57, 255, 20);
@@ -29,6 +37,33 @@ const Color kGooseWhite(255, 255, 253, 246);
 const Color kGooseShade(255, 220, 216, 226);
 const Color kBeakOrange(255, 255, 171, 36);
 const Color kBeakOrangeDark(255, 178, 98, 8);
+
+void DismissShellWindow(HWND surface);
+
+void CALLBACK ShellForegroundChanged(HWINEVENTHOOK, DWORD event, HWND foreground,
+                                     LONG, LONG, DWORD, DWORD) {
+  if (event != EVENT_SYSTEM_FOREGROUND || !foreground) return;
+  const HWND overlay = gShellOverlayWindow.load(std::memory_order_acquire);
+  if (!overlay || GetForegroundWindow() != foreground || !IsWindow(overlay)) return;
+
+  RECT overlayRect{};
+  RECT foregroundRect{};
+  RECT intersection{};
+  const bool visible = IsWindowVisible(foreground) != FALSE;
+  const bool iconic = IsIconic(foreground) != FALSE;
+  const bool intersects = GetWindowRect(overlay, &overlayRect) &&
+                          GetWindowRect(foreground, &foregroundRect) &&
+                          IntersectRect(&intersection, &overlayRect, &foregroundRect);
+  const bool knownIdentity = IsKnownShellSurfaceWindow(foreground);
+  if (!ShouldDismissShellSurfaceState(true, visible, iconic, intersects,
+                                      knownIdentity, false)) {
+    return;
+  }
+  DismissShellWindow(foreground);
+  SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                   SWP_ASYNCWINDOWPOS);
+}
 
 // Deterministic value noise. Every wobble, drip and glitch block derives from
 // this, so a given seed always redraws the same frame.
@@ -297,6 +332,37 @@ OverlayWindow::ResourceImage::~ResourceImage() {
 
 OverlayWindow::~OverlayWindow() { Close(); }
 
+DWORD WINAPI OverlayWindow::ForegroundThreadProcedure(void* context) {
+  auto* monitor = static_cast<ForegroundMonitorContext*>(context);
+  if (!monitor) return 1;
+  const HANDLE ready = monitor->ready;
+  const HANDLE stop = monitor->stop;
+  delete monitor;
+
+  // Force creation of this thread's message queue before signalling readiness.
+  MSG message{};
+  PeekMessageW(&message, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
+  HWINEVENTHOOK hook = SetWinEventHook(
+      EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
+      &ShellForegroundChanged, 0, 0,
+      WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+  if (ready) SetEvent(ready);
+  if (!hook) return 2;
+
+  while (stop) {
+    const DWORD wait = MsgWaitForMultipleObjectsEx(
+        1, &stop, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    if (wait == WAIT_OBJECT_0) break;
+    if (wait != WAIT_OBJECT_0 + 1U) break;
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+  }
+  UnhookWinEvent(hook);
+  return 0;
+}
+
 bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitorOnly,
                            std::function<void()> tickHandler, std::function<void()> closeHandler,
                            std::wstring& error) {
@@ -373,6 +439,30 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
   LoadImages();
   ShowWindow(window_, preview_ ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
   UpdateWindow(window_);
+  if (!preview_) {
+    // A dedicated message-pump thread owns the WinEvent hook. Start/Search can
+    // therefore be dismissed while the renderer is busy with a dense frame.
+    foregroundReadyEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    foregroundStopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (foregroundReadyEvent_ && foregroundStopEvent_) {
+      gShellOverlayWindow.store(window_, std::memory_order_release);
+      auto* monitor = new (std::nothrow) ForegroundMonitorContext{
+          foregroundReadyEvent_, foregroundStopEvent_};
+      if (monitor) {
+        foregroundThread_ = CreateThread(nullptr, 0,
+                                         &OverlayWindow::ForegroundThreadProcedure,
+                                         monitor, 0, &foregroundThreadId_);
+        if (!foregroundThread_) delete monitor;
+      }
+      if (foregroundThread_) {
+        // Failure to install the optional hook is non-fatal; the 200 ms sweep
+        // below remains the compatibility fallback.
+        WaitForSingleObject(foregroundReadyEvent_, 1000);
+      } else {
+        gShellOverlayWindow.store(nullptr, std::memory_order_release);
+      }
+    }
+  }
   // Request 60 Hz. Dense scenes switch to compact primitives below, allowing
   // the renderer to use a full core instead of collapsing to slideshow speed.
   if (SetTimer(window_, 67, 16, nullptr) == 0) {
@@ -666,14 +756,14 @@ void OverlayWindow::Render(const RenderState& state) {
     const GraphicsState saved = graphics.Save();
     // Shake: a steady beat from 3:30, plus an extra kick the more the display
     // is falling apart.
-    if (state.logicalTime >= 210.0) {
+    if (!state.reducedMotion && state.logicalTime >= 210.0) {
       const int pulse = static_cast<int>((state.logicalTime - 210.0) / 2.0);
       if (std::fmod(state.logicalTime - 210.0, 2.0) < 0.18) {
         graphics.TranslateTransform((pulse % 2 == 0) ? 4.0f : -4.0f,
                                     (pulse % 3 == 0) ? -3.0f : 3.0f);
       }
     }
-    if (state.glitch > 0.35f) {
+    if (!state.reducedMotion && state.glitch > 0.35f) {
       const float kick = (state.glitch - 0.35f) * 11.0f;
       graphics.TranslateTransform(NoiseSigned(frame_ * 13U) * kick,
                                   NoiseSigned(frame_ * 13U + 5U) * kick * 0.6f);
@@ -699,6 +789,9 @@ void OverlayWindow::Render(const RenderState& state) {
     DrawToasts(graphics, state);
     DrawGlitch(graphics, state);
     graphics.Restore(saved);
+    DrawChaosFlash(graphics, state);
+    graphics.Flush(FlushIntentionSync);
+    ApplyFaultRibbons(state);
     effectsSampleMs_ += markProfile();
   }
   if (!Present()) ++presentFailureSample_;
@@ -1566,10 +1659,71 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
                         Gdiplus::RectF(x + drift + 10.0f, y, w - 20.0f, 30.0f), &left, &ink);
   }
 
-  // Full-frame white/blue kicks, only ever painted inside our own overlay.
-  if (intensity > 0.6f && Noise01(frame_ * 613U) > 0.955f) {
-    SolidBrush flash(Noise01(frame_ * 977U) > 0.5f ? Color(46, 255, 255, 255) : Color(56, 18, 92, 171));
-    graphics.FillRectangle(&flash, 0, 0, width_, height_);
+}
+
+void OverlayWindow::DrawChaosFlash(Graphics& graphics, const RenderState& state) const {
+  const float intensity = std::clamp(state.screenFlash, 0.0f, 1.0f);
+  if (intensity <= 0.001f) return;
+
+  // A bounded neon sync pulse, not a desktop inversion. Alpha is capped below
+  // 40% and its cadence is governed in real time by EvaluateChaosVisualCue.
+  const BYTE alpha = static_cast<BYTE>(24.0f + intensity * 76.0f);
+  const std::uint32_t palette = state.effectPattern % 3U;
+  const Color color = palette == 0U ? Color(alpha, 255, 255, 255)
+                      : palette == 1U ? Color(alpha, 255, 45, 170)
+                                      : Color(alpha, 40, 230, 255);
+  SolidBrush wash(color);
+  graphics.FillRectangle(&wash, 0, 0, width_, height_);
+
+  const BYTE beamAlpha = static_cast<BYTE>(12.0f + intensity * 42.0f);
+  SolidBrush beam(palette == 2U ? Color(beamAlpha, 255, 45, 170)
+                                : Color(beamAlpha, 57, 255, 20));
+  const float beamWidth = std::max(72.0f, width_ * 0.12f);
+  const float travel = Noise01(state.effectPattern ^ 0x67A11U) *
+                       (width_ + height_ * 0.35f + beamWidth) - beamWidth;
+  std::array<PointF, 4> slash = {
+      PointF(travel, 0.0f), PointF(travel + beamWidth, 0.0f),
+      PointF(travel - height_ * 0.35f + beamWidth, static_cast<float>(height_)),
+      PointF(travel - height_ * 0.35f, static_cast<float>(height_))};
+  graphics.FillPolygon(&beam, slash.data(), static_cast<INT>(slash.size()));
+}
+
+void OverlayWindow::ApplyFaultRibbons(const RenderState& state) {
+  const float intensity = std::clamp(state.faultRibbon, 0.0f, 1.0f);
+  if (!surfacePixels_ || width_ <= 1 || height_ <= 1 || intensity < 0.08f) return;
+
+  // Displace rows in GooseRot's own ARGB surface. Unlike a desktop BitBlt this
+  // never reads or changes another application's pixels, yet the scene itself
+  // visibly fractures instead of receiving only colored rectangles.
+  auto* pixels = static_cast<std::uint32_t*>(surfacePixels_);
+  const int ribbonCount = 1 + static_cast<int>(intensity * 6.0f);
+  const int maximumShift = std::min(width_ - 1,
+                                    18 + static_cast<int>(intensity * 180.0f));
+  for (int ribbon = 0; ribbon < ribbonCount; ++ribbon) {
+    const std::uint32_t seed = Hash32(state.effectPattern ^
+                                      static_cast<std::uint32_t>(ribbon) * 0x9E3779B9U);
+    const int top = std::clamp(
+        static_cast<int>(Noise01(seed) * static_cast<float>(height_)), 0, height_ - 1);
+    const int ribbonHeight = std::clamp(
+        3 + static_cast<int>(Noise01(seed + 1U) * (8.0f + intensity * 34.0f)),
+        1, height_ - top);
+    int shift = 6 + static_cast<int>(Noise01(seed + 2U) * maximumShift);
+    if (Noise01(seed + 3U) < 0.5f) shift = -shift;
+    const int magnitude = std::min(std::abs(shift), width_ - 1);
+    const std::uint32_t edge = (ribbon & 1) == 0 ? 0xC0C02080U : 0xC020B8C0U;
+
+    for (int y = top; y < top + ribbonHeight; ++y) {
+      std::uint32_t* row = pixels + static_cast<std::size_t>(y) * width_;
+      if (shift > 0) {
+        std::memmove(row + magnitude, row,
+                     static_cast<std::size_t>(width_ - magnitude) * sizeof(*row));
+        std::fill_n(row, magnitude, edge);
+      } else {
+        std::memmove(row, row + magnitude,
+                     static_cast<std::size_t>(width_ - magnitude) * sizeof(*row));
+        std::fill_n(row + width_ - magnitude, magnitude, edge);
+      }
+    }
   }
 }
 
@@ -1777,6 +1931,11 @@ void OverlayWindow::DismissShellSurface() {
   if (now - lastShellDismissAt_ < 200) return;
   lastShellDismissAt_ = now;
 
+  // Fallback for systems where the WinEvent hook could not be installed. A
+  // foreground Start/Search surface is trusted only after the same strict
+  // class + executable-path validation as the z-order sweep.
+  DismissForegroundShellSurface(GetForegroundWindow());
+
   const RECT overlayRect{screenOriginX_, screenOriginY_, screenOriginX_ + width_,
                          screenOriginY_ + height_};
   ShellSurfaceSweep sweep = FindCoveringShellSurfaces(window_, overlayRect);
@@ -1786,17 +1945,47 @@ void OverlayWindow::DismissShellSurface() {
   for (HWND candidate : sweep.candidates) {
     RECT candidateRect{};
     RECT intersection{};
-    if (!IsWindow(candidate) || !IsWindowVisible(candidate) || IsIconic(candidate) ||
-        !IsWindowAboveInZOrder(candidate, window_) ||
-        !GetWindowRect(candidate, &candidateRect) ||
-        !IntersectRect(&intersection, &candidateRect, &sweep.overlayRect) ||
-        !IsKnownShellSurfaceWindow(candidate)) {
+    const bool validWindow = IsWindow(candidate) != FALSE;
+    const bool visible = validWindow && IsWindowVisible(candidate) != FALSE;
+    const bool iconic = validWindow && IsIconic(candidate) != FALSE;
+    const bool intersects = validWindow && GetWindowRect(candidate, &candidateRect) &&
+                            IntersectRect(&intersection, &candidateRect,
+                                          &sweep.overlayRect);
+    const bool knownIdentity = validWindow && IsKnownShellSurfaceWindow(candidate);
+    const bool aboveOverlay = validWindow && IsWindowAboveInZOrder(candidate, window_);
+    if (!ShouldDismissShellSurfaceState(false, visible, iconic, intersects,
+                                        knownIdentity, aboveOverlay)) {
       continue;
     }
     DismissShellWindow(candidate);
     dismissedAny = true;
   }
   if (dismissedAny) EnsureTopmost();
+}
+
+bool OverlayWindow::DismissForegroundShellSurface(HWND candidate) {
+  if (preview_ || !window_ || !candidate) return false;
+  const HWND foreground = GetForegroundWindow();
+  if (!foreground || candidate != foreground) return false;
+
+  const RECT overlayRect{screenOriginX_, screenOriginY_, screenOriginX_ + width_,
+                         screenOriginY_ + height_};
+  RECT candidateRect{};
+  RECT intersection{};
+  const bool validWindow = IsWindow(candidate) != FALSE;
+  const bool visible = validWindow && IsWindowVisible(candidate) != FALSE;
+  const bool iconic = validWindow && IsIconic(candidate) != FALSE;
+  const bool intersects = validWindow && GetWindowRect(candidate, &candidateRect) &&
+                          IntersectRect(&intersection, &candidateRect, &overlayRect);
+  const bool knownIdentity = validWindow && IsKnownShellSurfaceWindow(candidate);
+  if (!ShouldDismissShellSurfaceState(true, visible, iconic, intersects,
+                                      knownIdentity, false)) {
+    return false;
+  }
+
+  DismissShellWindow(candidate);
+  EnsureTopmost();
+  return true;
 }
 
 void OverlayWindow::EnsureTopmost() {
@@ -1820,6 +2009,21 @@ void OverlayWindow::StopRenderTimer() {
 }
 
 void OverlayWindow::Close() {
+  gShellOverlayWindow.store(nullptr, std::memory_order_release);
+  if (foregroundStopEvent_) SetEvent(foregroundStopEvent_);
+  bool monitorStopped = true;
+  if (foregroundThread_) {
+    monitorStopped = WaitForSingleObject(foregroundThread_, 1500) == WAIT_OBJECT_0;
+    CloseHandle(foregroundThread_);
+    foregroundThread_ = nullptr;
+  }
+  if (monitorStopped) {
+    if (foregroundReadyEvent_) CloseHandle(foregroundReadyEvent_);
+    if (foregroundStopEvent_) CloseHandle(foregroundStopEvent_);
+  }
+  foregroundReadyEvent_ = nullptr;
+  foregroundStopEvent_ = nullptr;
+  foregroundThreadId_ = 0;
   if (window_) {
     KillTimer(window_, 67);
     DestroyWindow(window_);
@@ -1910,6 +2114,7 @@ LRESULT OverlayWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
       DestroyWindow(window_);
       return 0;
     case WM_DESTROY:
+      gShellOverlayWindow.store(nullptr, std::memory_order_release);
       window_ = nullptr;
       PostQuitMessage(0);
       return 0;

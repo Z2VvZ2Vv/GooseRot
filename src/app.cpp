@@ -1,5 +1,6 @@
 #include "app.hpp"
 
+#include <mmsystem.h>
 #include <timeapi.h>
 
 #include <algorithm>
@@ -23,7 +24,11 @@ double CounterSeconds(const LARGE_INTEGER& value, const LARGE_INTEGER& frequency
 }  // namespace
 
 GooseRotApp::GooseRotApp(HINSTANCE instance, AppConfig config)
-    : instance_(instance), config_(config), random_(config.seed) {}
+    : instance_(instance),
+      config_(config),
+      random_(config.seed),
+      audioRandom_(config.seed ^ 0xA71067U),
+      keyboardRandom_(config.seed ^ 0xBADC067U) {}
 
 GooseRotApp::~GooseRotApp() { Cleanup(); }
 
@@ -205,6 +210,7 @@ void GooseRotApp::Tick() {
   lastCounter_ = counter;
   const double realDelta = std::clamp(current - previous, 0.0, 0.25);
   const double logicalDelta = realDelta / config_.durationScale;
+  realTime_ += realDelta;
   logicalTime_ += logicalDelta;
 
   if (desktop_) desktop_->PollPendingMutations();
@@ -227,6 +233,7 @@ void GooseRotApp::Tick() {
     EnsureGooseCount();
     UpdatePrompts();
     UpdateNotepad();
+    UpdateErrorSounds();
     UpdatePopups();
     UpdateOwnedWindowsApps();
     UpdateToasts();
@@ -523,9 +530,32 @@ void GooseRotApp::UpdateNotepad() {
   while (lastTypedAt_ + interval <= logicalTime_ && additions < 80) {
     lastTypedAt_ += interval;
     if (typedWordCount_ > 0) notepadText_ += (typedWordCount_ % 11 == 0) ? L"...\r\n" : L" ";
-    notepadText_ += words[word(random_)];
+    notepadText_ += words[word(keyboardRandom_)];
     ++typedWordCount_;
     ++additions;
+  }
+
+  // MEMZ's global SendInput is deliberately not reproduced. These raw-looking
+  // key bursts are appended directly to GooseRot's own read-only EDIT control,
+  // so the foreground app and every real user document remain untouched.
+  if (nextKeyBurstAt_ < 0.0) nextKeyBurstAt_ = logicalTime_ + 0.8;
+  constexpr wchar_t kKeyAlphabet[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789[];=+-_";
+  int keyBursts = 0;
+  while (logicalTime_ >= nextKeyBurstAt_ && keyBursts < 24) {
+    const bool late = logicalTime_ >= 210.0;
+    std::uniform_int_distribution<int> length(late ? 2 : 1, late ? 8 : 4);
+    std::uniform_int_distribution<std::size_t> key(0, std::size(kKeyAlphabet) - 2U);
+    if (!notepadText_.empty()) notepadText_ += (typedWordCount_ % 13 == 0) ? L"\r\n" : L" ";
+    const int burstLength = length(keyboardRandom_);
+    for (int index = 0; index < burstLength; ++index) {
+      notepadText_ += kKeyAlphabet[key(keyboardRandom_)];
+    }
+    ++typedWordCount_;
+    ++additions;
+    ++keyBursts;
+    std::uniform_real_distribution<double> delay(late ? 0.22 : 0.65,
+                                                  late ? 0.62 : 1.35);
+    nextKeyBurstAt_ += delay(keyboardRandom_);
   }
   if (additions > 0) {
     if (notepadText_.size() > 7000U) {
@@ -534,6 +564,34 @@ void GooseRotApp::UpdateNotepad() {
     }
     notepad_.SetText(notepadText_);
   }
+}
+
+void GooseRotApp::UpdateErrorSounds() {
+  const bool enabled = !config_.muted && !config_.preview && !shutdownStarted_ &&
+                       logicalTime_ >= 105.0 && logicalTime_ < 298.0;
+  if (!enabled) {
+    if (errorSoundActive_) PlaySoundW(nullptr, nullptr, 0);
+    errorSoundActive_ = false;
+    nextErrorSoundAt_ = -1.0;
+    return;
+  }
+
+  if (nextErrorSoundAt_ < 0.0) nextErrorSoundAt_ = realTime_ + 0.35;
+  if (realTime_ < nextErrorSoundAt_) return;
+
+  constexpr std::array<const wchar_t*, 4> aliases = {
+      L"SystemHand", L"SystemQuestion", L"SystemExclamation", L"SystemAsterisk"};
+  std::uniform_int_distribution<std::size_t> pick(0, aliases.size() - 1U);
+  if (PlaySoundW(aliases[pick(audioRandom_)], nullptr,
+                 SND_ALIAS | SND_ASYNC | SND_NODEFAULT) != FALSE) {
+    errorSoundActive_ = true;
+  }
+
+  const double escalation = std::clamp((logicalTime_ - 105.0) / 193.0, 0.0, 1.0);
+  const double minimum = 1.75 - escalation * 1.32;
+  const double maximum = 3.70 - escalation * 2.75;
+  std::uniform_real_distribution<double> delay(minimum, maximum);
+  nextErrorSoundAt_ = realTime_ + delay(audioRandom_);
 }
 
 void GooseRotApp::UpdateOwnedWindowsApps() {
@@ -546,7 +604,9 @@ void GooseRotApp::UpdateOwnedWindowsApps() {
   if (ownedWindowsApps_.LaunchRandom(random_, logicalTime_)) {
     SetBubble(L"WINDOWS BROUGHT REINFORCEMENTS.", 3.5);
   }
-  std::uniform_real_distribution<double> delay(24.0, 39.0);
+  const bool late = logicalTime_ >= 210.0;
+  std::uniform_real_distribution<double> delay(late ? 6.0 : 11.0,
+                                                late ? 11.0 : 20.0);
   nextOwnedAppAt_ = logicalTime_ + delay(random_);
 }
 
@@ -688,7 +748,8 @@ void GooseRotApp::UpdateCursorGrab(double logicalDelta) {
 }
 
 void GooseRotApp::UpdateCursorChaos() {
-  if (!desktop_ || shutdownStarted_ || logicalTime_ < 210.0 || cursorLatched_) {
+  if (!desktop_ || config_.reducedMotion || shutdownStarted_ ||
+      logicalTime_ < 210.0 || cursorLatched_) {
     cursorChaos_ = 0.0f;
     return;
   }
@@ -973,6 +1034,10 @@ void GooseRotApp::BeginShutdown() {
 
 bool GooseRotApp::Cleanup() {
   if (cleanupDone_) return true;
+  if (errorSoundActive_) {
+    PlaySoundW(nullptr, nullptr, 0);
+    errorSoundActive_ = false;
+  }
   auraPrompt_.Close();
   sigmaPrompt_.Close();
   notepad_.Close();
@@ -1034,6 +1099,14 @@ RenderState GooseRotApp::BuildRenderState() const {
   state.emergencyProgress = static_cast<float>(emergencyHeldSeconds_ / 2.0);
   state.glitch = glitch_;
   state.cursorChaos = cursorChaos_;
+  ChaosVisualCue cue = EvaluateChaosVisualCue(
+      logicalTime_, realTime_, config_.seed,
+      config_.flashesEnabled && !config_.reducedMotion);
+  if (config_.reducedMotion) cue.faultRibbonIntensity *= 0.24f;
+  state.screenFlash = cue.flashIntensity;
+  state.faultRibbon = cue.faultRibbonIntensity;
+  state.effectPattern = cue.pattern;
+  state.reducedMotion = config_.reducedMotion;
   state.graffitiProgress = GraffitiProgress();
   state.popupCount = popups_.Count();
   state.cursorLatched = cursorLatched_;

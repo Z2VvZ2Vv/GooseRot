@@ -30,11 +30,17 @@ Les comportements historiques actifs sont la promenade, les traces de boue, le r
 - alpha par pixel via `UpdateLayeredWindow`, sans couleur clé ;
 - trois états d’oie indépendants ;
 - aucune DLL de mod chargée ;
-- aucun son, réseau ou asset officiel ;
+- aucun réseau, son ou asset officiel redistribué ; les alertes optionnelles utilisent uniquement les alias fournis par Windows ;
 - aucune capture de saisie ou modification du presse-papiers ;
 - déplacement direct, ponctuel et restauré du curseur au lieu de le verrouiller avec `Cursor.Clip` ;
 - faux Bloc-notes interne afin que le texte ne puisse jamais atteindre une application utilisateur ;
 - dans l’implémentation actuelle, sortie d’urgence de deux secondes et restauration centralisée dans tous les profils ; le contrat cible réserve cette sortie à `safe`.
+
+## Référence comportementale MEMZ Clean
+
+Le fichier local `MEMZ-Clean.exe` a lui aussi été observé uniquement par analyse statique et reste hors de Git et des releases. L'échantillon analysé est un PE32 x86 non signé de 12 800 octets, SHA-256 `4BBF7589615EBDB6C769D6D2E7BDCB26072BAC0CDA6E225A4133BA8819E688D5`. Ses imports confirment des familles d'effets — alias sonores Windows, déplacement du curseur, lancement de programmes, saisie synthétique et copies GDI du bureau — sans constituer une source de code pour GooseRot.
+
+Les réinterprétations GooseRot sont indépendantes et volontairement plus étroites : aucun site ni `ShellExecute`, aucune saisie globale, aucune lecture ou écriture des pixels du bureau et aucun texte ou timing copié. Les caractères vont directement dans le faux Notepad GooseRot ; les « fault ribbons » déplacent seulement des lignes de la surface ARGB locale ; les flashs ont une cadence gouvernée par l'horloge réelle ; les programmes proviennent d'une liste fixe de chemins Windows.
 
 ## Frontière de redistribution
 

@@ -71,6 +71,9 @@ struct AppConfig {
   bool vmConfirmed = false;
   bool preview = false;
   bool desktopEffects = true;
+  bool muted = false;
+  bool flashesEnabled = true;
+  bool reducedMotion = false;
   bool showHelp = false;
 };
 
@@ -78,6 +81,18 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
 bool ParseTimestamp(const std::wstring& value, double& seconds);
 const wchar_t* ModeName(RunMode mode);
 std::wstring UsageText();
+
+// Time-based cues for the non-destructive display corruption. Real time is
+// deliberately separate from timeline time so --duration-scale can never
+// compress a run of flashes into a photosensitive burst.
+struct ChaosVisualCue {
+  float flashIntensity = 0.0f;
+  float faultRibbonIntensity = 0.0f;
+  std::uint32_t pattern = 0;
+};
+
+ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
+                                      std::uint32_t seed, bool flashesEnabled);
 
 enum class TimelineEventId {
   PassiveEntrance,

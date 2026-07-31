@@ -38,6 +38,7 @@ class GooseRotApp {
   bool UpdateEmergencyExit(double realDeltaSeconds);
   void UpdatePrompts();
   void UpdateNotepad();
+  void UpdateErrorSounds();
   void UpdateOwnedWindowsApps();
   void UpdateDesktopActions();
   void UpdateGooseTargets(float deltaSeconds);
@@ -83,11 +84,16 @@ class GooseRotApp {
   PopupSwarm popups_;
   OwnedWindowsApps ownedWindowsApps_;
   std::mt19937 random_;
+  std::mt19937 audioRandom_;
+  std::mt19937 keyboardRandom_;
 
   LARGE_INTEGER performanceFrequency_{};
   LARGE_INTEGER lastCounter_{};
   double logicalTime_ = 0.0;
+  double realTime_ = 0.0;
   double lastTypedAt_ = 0.0;
+  double nextKeyBurstAt_ = -1.0;
+  double nextErrorSoundAt_ = -1.0;
   double nextWindowAction_ = 60.0;
   double nextCursorAction_ = 75.0;
   double nextSpriteAt_ = 90.0;
@@ -116,6 +122,7 @@ class GooseRotApp {
   bool conclusionHandled_ = false;
   bool bootPreviewLaunchFailed_ = false;
   bool recoveryFailure_ = false;
+  bool errorSoundActive_ = false;
   int aura_ = 0;
   int exitCode_ = 0;
   int typedWordCount_ = 0;

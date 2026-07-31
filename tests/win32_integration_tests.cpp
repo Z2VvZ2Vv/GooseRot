@@ -285,6 +285,19 @@ void TestShellSurfaceAllowList() {
              nullptr, L"X:\\Windows\\explorer.exe", kWindowsDirectory),
          "missing shell identity is rejected");
 
+  Expect(gooserot::ShouldDismissShellSurfaceState(
+             true, true, false, true, true, false),
+         "foreground shell bypasses cross-band z-order comparison");
+  Expect(gooserot::ShouldDismissShellSurfaceState(
+             false, true, false, true, true, true),
+         "background shell still requires proof that it is above the overlay");
+  Expect(!gooserot::ShouldDismissShellSurfaceState(
+             true, true, false, false, true, false),
+         "foreground shell outside the overlay is preserved");
+  Expect(!gooserot::ShouldDismissShellSurfaceState(
+             true, true, false, true, false, false),
+         "ordinary foreground window is preserved");
+
   HINSTANCE instance = GetModuleHandleW(nullptr);
   WNDCLASSEXW windowClass{};
   windowClass.cbSize = sizeof(windowClass);

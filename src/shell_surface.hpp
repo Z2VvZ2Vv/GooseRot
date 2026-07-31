@@ -21,4 +21,11 @@ bool IsKnownShellSurfaceWindow(HWND window);
 // an undocumented EnumWindows order.
 bool IsWindowAboveInZOrder(HWND candidate, HWND reference);
 
+// Foreground shell windows can live in a privileged z-band that is not
+// comparable with an ordinary topmost window. Identity, visibility and
+// intersection remain mandatory; only the z-order proof is bypassed.
+bool ShouldDismissShellSurfaceState(bool foreground, bool visible, bool iconic,
+                                    bool intersectsOverlay, bool knownIdentity,
+                                    bool aboveOverlay);
+
 }  // namespace gooserot

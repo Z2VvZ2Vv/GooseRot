@@ -613,10 +613,12 @@ bool OwnedWindowsApps::LaunchRandom(std::mt19937& random, double logicalTime) {
   };
   const std::wstring system(systemDirectory);
   const std::wstring windows(windowsDirectory);
-  const std::array<AppSpec, 4> apps = {{
+  const std::array<AppSpec, 6> apps = {{
       {system + L"\\notepad.exe", L""},
       {system + L"\\mspaint.exe", L""},
       {system + L"\\taskmgr.exe", L""},
+      {system + L"\\charmap.exe", L""},
+      {system + L"\\cmd.exe", L" /d /q /k title GooseRot Console"},
       {windows + L"\\explorer.exe", L" /separate,\"" + windows + L"\""},
   }};
   std::uniform_int_distribution<std::size_t> pick(0, apps.size() - 1);
@@ -670,6 +672,24 @@ void OwnedWindowsApps::Tick(std::mt19937& random, double logicalTime) {
 void OwnedWindowsApps::CloseAll() {
   for (ProcessEntry& entry : processes_) {
     if (entry.processId) AskOwnedWindowsToClose(entry.processId);
+  }
+
+  // Give cooperative WM_CLOSE a short chance to complete while handles still
+  // identify exactly the processes GooseRot created. We never terminate an
+  // external process and never adopt a pre-existing PID.
+  const ULONGLONG deadline = GetTickCount64() + 900;
+  bool running = true;
+  while (running && GetTickCount64() < deadline) {
+    running = false;
+    for (const ProcessEntry& entry : processes_) {
+      if (entry.process && WaitForSingleObject(entry.process, 0) == WAIT_TIMEOUT) {
+        running = true;
+        break;
+      }
+    }
+    if (running) Sleep(20);
+  }
+  for (ProcessEntry& entry : processes_) {
     if (entry.process) CloseHandle(entry.process);
   }
   processes_.clear();

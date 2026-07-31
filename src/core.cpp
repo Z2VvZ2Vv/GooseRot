@@ -15,6 +15,20 @@ bool Equals(const std::wstring& left, const wchar_t* right) {
   return _wcsicmp(left.c_str(), right) == 0;
 }
 
+std::uint32_t Hash32(std::uint32_t value) {
+  value ^= value >> 16U;
+  value *= 0x7feb352dU;
+  value ^= value >> 15U;
+  value *= 0x846ca68bU;
+  value ^= value >> 16U;
+  return value;
+}
+
+float HashUnit(std::uint32_t value) {
+  return static_cast<float>(Hash32(value) & 0xFFFFFFU) /
+         static_cast<float>(0x1000000U);
+}
+
 bool ParseDouble(const std::wstring& value, double& result) {
   if (value.empty()) return false;
   errno = 0;
@@ -134,6 +148,13 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
       config.desktopEffects = false;
     } else if (Equals(argument, L"--no-desktop-effects")) {
       config.desktopEffects = false;
+    } else if (Equals(argument, L"--mute")) {
+      config.muted = true;
+    } else if (Equals(argument, L"--no-flashes")) {
+      config.flashesEnabled = false;
+    } else if (Equals(argument, L"--reduced-motion")) {
+      config.reducedMotion = true;
+      config.flashesEnabled = false;
     } else {
       error = std::wstring(L"Unknown option: ") + argument;
       return false;
@@ -156,6 +177,13 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
   if (config.startAtSeconds > 300.0) {
     error = L"--start-at cannot exceed 05:00.";
     return false;
+  }
+  if (config.preview) {
+    // Preview is safe to launch from a build/test command without surprising
+    // the operator with sound or a full-frame flash.
+    config.muted = true;
+    config.flashesEnabled = false;
+    config.reducedMotion = true;
   }
   return true;
 }
@@ -186,10 +214,56 @@ Options:
   --vm-confirmed             Required confirmation for lab mode
   --preview                  960x540 window with no desktop effects
   --no-desktop-effects       Disable cursor and external-window movement
+  --mute                     Disable system-style alert sounds
+  --no-flashes               Disable full-frame flash pulses
+  --reduced-motion           Disable flashes, shake and continuous cursor storm
   --help                     Show this help
 
 Every profile keeps the 2-second Esc emergency exit.
 BSOD, reboot, clipboard hooks and boot effects are simulated.)";
+}
+
+ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
+                                      std::uint32_t seed, bool flashesEnabled) {
+  ChaosVisualCue cue;
+  if (!std::isfinite(logicalTime) || !std::isfinite(realTime) || logicalTime < 90.0) {
+    return cue;
+  }
+
+  const double safeRealTime = std::max(0.0, realTime);
+  const float escalation = static_cast<float>(
+      std::clamp((logicalTime - 90.0) / 210.0, 0.0, 1.0));
+  const std::uint32_t visualStep = static_cast<std::uint32_t>(
+      std::fmod(std::floor(safeRealTime * 12.0), 4294967295.0));
+  cue.pattern = Hash32(seed ^ 0xA67F29C3U ^ visualStep * 0x9E3779B9U);
+  cue.faultRibbonIntensity = std::clamp(
+      (0.12f + 0.88f * std::pow(escalation, 0.72f)) *
+          (0.72f + HashUnit(cue.pattern ^ 0xD15EA5EU) * 0.28f),
+      0.0f, 1.0f);
+
+  if (!flashesEnabled || logicalTime < 150.0) return cue;
+
+  // At most one pulse per 720 ms slot (1.39 Hz), with a short, bounded duty
+  // cycle. The activation probability rises toward the finale, but the real
+  // time ceiling remains unchanged even when the timeline is accelerated.
+  constexpr double kFlashSlotSeconds = 0.72;
+  constexpr double kFlashDurationSeconds = 0.11;
+  const std::uint32_t slot = static_cast<std::uint32_t>(
+      std::fmod(std::floor(safeRealTime / kFlashSlotSeconds), 4294967295.0));
+  const std::uint32_t slotPattern = Hash32(seed ^ 0xF1A567U ^ slot * 0x85EBCA6BU);
+  const double withinSlot = std::fmod(safeRealTime, kFlashSlotSeconds);
+  const double pulseStart = 0.08 + static_cast<double>(HashUnit(slotPattern)) * 0.20;
+  const float activationThreshold = 0.72f - escalation * 0.62f;
+  if (HashUnit(slotPattern ^ 0xBADC0DEU) >= activationThreshold &&
+      withinSlot >= pulseStart && withinSlot < pulseStart + kFlashDurationSeconds) {
+    const double phase = (withinSlot - pulseStart) / kFlashDurationSeconds;
+    const float envelope = static_cast<float>(
+        std::sin(phase * 3.14159265358979323846));
+    cue.flashIntensity = std::clamp((0.28f + escalation * 0.72f) * envelope,
+                                    0.0f, 1.0f);
+    cue.pattern = slotPattern;
+  }
+  return cue;
 }
 
 TimelineEngine::TimelineEngine()

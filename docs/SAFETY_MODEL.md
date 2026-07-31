@@ -9,11 +9,12 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 ## Effets autorisés en `safe`
 
 - overlays transparents, y compris déchirures, scanlines, blocs corrompus, faux curseurs, faux cadres « Ne répond pas » et fausses notifications, tous peints à l’intérieur de l’overlay ;
+- flashs plein écran bornés par l'horloge réelle et sons d'alerte Windows asynchrones, explicitement annoncés et désactivables ;
 - déplacement borné et restauré des fenêtres ;
 - traction initiale du curseur sur 67 pixels, puis tempête de mouvement bornée à l’écran et restaurée lors du nettoyage ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
 - lancement consenti de six utilitaires Windows au maximum, suivis exclusivement par leur PID de création ;
-- fermeture ciblée de Start/Search et des flyouts shell associés lorsqu’ils recouvrent l’overlay, sans hook ni frappe globale ;
+- fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, via notification foreground sans hook clavier ni frappe globale ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
 - faux glitch, faux BSOD et faux firmware ;
@@ -30,6 +31,7 @@ Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une 
 - les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
 - le consentement initial annonce explicitement ce comportement.
+- le consentement propose un démarrage réduit et muet ; `--mute`, `--no-flashes` et `--reduced-motion` restent disponibles en ligne de commande.
 
 ## Effets interdits en `safe`
 

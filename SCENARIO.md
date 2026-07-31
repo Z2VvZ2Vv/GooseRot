@@ -4,7 +4,7 @@
 > Version : 0.3  
 > Durée totale : 5 minutes  
 > Plateforme cible : Windows, idéalement dans une VM de démonstration  
-> Ambiance : desktop goose, brainrot TikTok, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, aucun son requis
+> Ambiance : desktop goose, brainrot TikTok, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, alertes système optionnelles et désactivables
 
 > Profils : `safe`, `normal` et `lab` — voir `docs/PRODUCT_SPEC.md` et `docs/SAFETY_MODEL.md`
 
@@ -64,7 +64,7 @@ Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l�
 
 En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, sprinte jusqu’à sa barre de titre, s’y accroche et **déplace elle-même cette fenêtre de exactement 67 pixels** dans une direction choisie au hasard.
 
-À partir de `1:15`, GooseRot lance aussi progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches et une instance séparée de l’Explorateur. Seuls les PID créés par GooseRot sont repositionnés aléatoirement et sollicités pour fermeture pendant le nettoyage ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
+À partir de `1:15`, GooseRot lance aussi progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, Invite de commandes et une instance séparée de l’Explorateur. Seuls les PID créés par GooseRot sont repositionnés aléatoirement et sollicités pour fermeture pendant le nettoyage ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
@@ -122,11 +122,13 @@ Le bouton `[ SIGMA CHAD ]` s’éloigne de 100 pixels dès que le pointeur le su
 
 > AFK detected. NPC confirmed.
 
-## Phase 4 — 3:30 à 4:30 : Visual Chaos — No-Sound VM Mode
+## Phase 4 — 3:30 à 4:30 : Visual Chaos & Error Chorus
 
 ### 3:30 — Screen Shake
 
 Pour compenser l’absence de son dans la VM, l’overlay principal déclenche une secousse rapide de 4 pixels toutes les deux secondes.
+
+En mode complet, de courtes alertes Windows (`SystemHand`, `SystemQuestion`, `SystemExclamation` ou `SystemAsterisk`) ponctuent aussi le chaos. Elles sont asynchrones, espacées par l'horloge réelle et ne modifient jamais le volume système. `--mute` les désactive.
 
 Au même instant, le curseur entre dans une tempête : une cible mouvante et un tremblement haute fréquence le tirent continuellement. L’intensité monte jusqu’à rendre la reprise de contrôle pratiquement impossible à la fin, sans empêcher la sortie d’urgence par `Esc`.
 
@@ -235,7 +237,7 @@ Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` s
 - ne jamais lire ou modifier le presse-papiers système ;
 - fermer uniquement le Bloc-notes lancé par GooseRot ;
 - ne jamais enregistrer les frappes ni lire le contenu du presse-papiers ;
-- permettre de désactiver les secousses et les flashes ;
+- permettre de désactiver les sons, les secousses et les flashes avec `--mute`, `--reduced-motion` et `--no-flashes` ;
 - utiliser uniquement un faux écran de redémarrage en `safe` et `normal`.
 
 ## Découpage technique envisagé

@@ -54,6 +54,10 @@ struct RenderState {
   float glitch = 0.0f;
   // 0 = normal pointer, 1 = the flock is violently steering it.
   float cursorChaos = 0.0f;
+  // Bounded, real-time-governed pulse and displacement strength.
+  float screenFlash = 0.0f;
+  float faultRibbon = 0.0f;
+  std::uint32_t effectPattern = 0;
   // 0 = bare wall, 1 = the 67 tag is finished.
   float graffitiProgress = 0.0f;
   int popupCount = 0;
@@ -65,6 +69,7 @@ struct RenderState {
   bool countdown = false;
   bool resetButton = false;
   bool fakeShutdown = false;
+  bool reducedMotion = false;
 };
 
 class OverlayWindow {
@@ -105,6 +110,7 @@ class OverlayWindow {
   };
 
   static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+  static DWORD WINAPI ForegroundThreadProcedure(void* context);
   LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
   bool RecreateSurface(int width, int height);
   bool LoadImages();
@@ -125,10 +131,13 @@ class OverlayWindow {
   void DrawGraffitiUncached(Gdiplus::Graphics& graphics, const RenderState& state) const;
   bool BuildGraffitiCache(const RenderState& state);
   void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawChaosFlash(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void ApplyFaultRibbons(const RenderState& state);
   void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DismissShellSurface();
+  bool DismissForegroundShellSurface(HWND candidate);
   void EnsureTopmost();
   bool Present();
 
@@ -144,6 +153,10 @@ class OverlayWindow {
   int screenOriginY_ = 0;
   bool preview_ = false;
   bool primaryMonitorOnly_ = false;
+  HANDLE foregroundThread_ = nullptr;
+  HANDLE foregroundReadyEvent_ = nullptr;
+  HANDLE foregroundStopEvent_ = nullptr;
+  DWORD foregroundThreadId_ = 0;
   ULONGLONG lastShellDismissAt_ = 0;
   ULONGLONG lastTopmostRefreshAt_ = 0;
   ULONGLONG fpsSampleStartedAt_ = 0;

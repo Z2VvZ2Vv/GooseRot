@@ -159,4 +159,11 @@ bool IsWindowAboveInZOrder(HWND candidate, HWND reference) {
   return false;
 }
 
+bool ShouldDismissShellSurfaceState(bool foreground, bool visible, bool iconic,
+                                    bool intersectsOverlay, bool knownIdentity,
+                                    bool aboveOverlay) {
+  return visible && !iconic && intersectsOverlay && knownIdentity &&
+         (foreground || aboveOverlay);
+}
+
 }  // namespace gooserot

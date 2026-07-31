@@ -59,6 +59,7 @@ GooseRotApp
  │   ├─ ClipboardVisualGag
  │   ├─ NotepadGag
  │   └─ PopupSwarm
+ ├─ AudioEffects
  ├─ BootGameHandoff
  └─ ShutdownDirector
 ```
@@ -86,7 +87,7 @@ Conserve un état indépendant par oie. Jusqu’à 67 entités partagent le mêm
 
 ### `OverlayRenderer`
 
-Utilise une fenêtre Win32 transparente, sans bordure et non activable. Le rendu principal repose sur GDI/GDI+ et `UpdateLayeredWindow`, disponible bien avant Windows 7. La version actuelle emploie une surface virtuelle unique, recréée transactionnellement lors d'un changement d'affichage et plafonnée à 30 millions de pixels (environ 120 Mo). `--primary-monitor-only` réduit cette surface à l'écran principal sur les configurations très larges. Start, Search et les flyouts shell associés pouvant appartenir à une bande supérieure à `HWND_TOPMOST`, le renderer parcourt toutes les 200 ms la chaîne z-order documentée et bornée, jusqu'à l'overlay, puis ne retient que les surfaces visibles qui recouvrent réellement sa zone. Seules les classes `Windows.UI.Core.CoreWindow` et `DV2ControlHost` sont admises, après vérification d'un exécutable Start/Search sous le vrai dossier `Windows\SystemApps`; l'hôte Start historique doit en plus être l'instance `explorer.exe` propriétaire de `GetShellWindow()`. Une surface validée reçoit `Esc`, `WM_CANCELMODE` puis `SW_HIDE`. Une application ordinaire, une surface située derrière la scène ou ouverte sur un autre écran n'est jamais ciblée. Après un congédiement, l'overlay reprend immédiatement la tête du groupe topmost ; le battement de maintien reste limité à 500 ms.
+Utilise une fenêtre Win32 transparente, sans bordure et non activable. Le rendu principal repose sur GDI/GDI+ et `UpdateLayeredWindow`, disponible bien avant Windows 7. La version actuelle emploie une surface virtuelle unique, recréée transactionnellement lors d'un changement d'affichage et plafonnée à 30 millions de pixels (environ 120 Mo). `--primary-monitor-only` réduit cette surface à l'écran principal sur les configurations très larges. Start et Search pouvant appartenir à une bande supérieure à `HWND_TOPMOST`, un thread de message léger possède un hook d'accessibilité `EVENT_SYSTEM_FOREGROUND` et traite immédiatement toute nouvelle fenêtre foreground, indépendamment de la cadence de rendu. Le callback revalide visibilité, intersection, classe et chemin du processus avant toute action ; seule cette surface shell foreground strictement identifiée peut ignorer la comparaison de z-order entre bandes. Un parcours de secours inspecte toutes les 200 ms la chaîne z-order documentée et bornée jusqu'à l'overlay. Seules les classes `Windows.UI.Core.CoreWindow` et `DV2ControlHost` sont admises, après vérification d'un exécutable Start/Search sous le vrai dossier `Windows\SystemApps`; l'hôte Start historique doit en plus être l'instance `explorer.exe` propriétaire de `GetShellWindow()`. Une surface validée reçoit `Esc`, `WM_CANCELMODE` puis `SW_HIDE`. Une application ordinaire, une surface située derrière la scène ou ouverte sur un autre écran n'est jamais ciblée. Après un congédiement, l'overlay reprend immédiatement la tête du groupe topmost ; le battement de maintien reste limité à 500 ms.
 
 ### `DesktopDirector`
 
@@ -107,7 +108,7 @@ Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son con
 
 ### `OwnedWindowsApps`
 
-Lance au maximum six vrais utilitaires intégrés à Windows : Notepad, Paint, Task Manager ou Explorer avec `/separate`. Chaque entrée conserve uniquement le handle de processus et le PID renvoyés par `CreateProcessW`. L’énumération ne positionne et ne ferme que les fenêtres appartenant à ces PID ; elle ne revendique jamais une instance préexistante et ne force pas la terminaison d’un processus qui refuserait `WM_CLOSE`.
+Lance au maximum six vrais utilitaires intégrés à Windows : Notepad, Paint, Task Manager, Character Map, Command Prompt ou Explorer avec `/separate`. Chaque cible est un chemin Windows construit par le programme, sans URL ni argument utilisateur. Chaque entrée conserve uniquement le handle de processus et le PID renvoyés par `CreateProcessW`. L’énumération ne positionne et ne ferme que les fenêtres appartenant à ces PID ; elle ne revendique jamais une instance préexistante et ne force pas la terminaison d’un processus qui refuserait `WM_CLOSE`.
 
 ### `PopupSwarm`
 
@@ -115,7 +116,11 @@ Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows
 
 ### `GlitchLayer` et rendu dense
 
-Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas » et flashs. Tout le bruit vient d’un hachage déterministe indexé par le numéro de frame. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas », rubans de lignes déplacées et flashs. Le planificateur des rubans et flashs dépend du seed et de l'horloge réelle : un accélérateur de timeline ne peut donc jamais compresser leur cadence. Les flashs sont plafonnés à un pulse par tranche de 720 ms, durent au plus 110 ms et gardent un alpha borné. Les rubans utilisent `memmove` uniquement dans le DIB ARGB local ; aucune capture du bureau n'a lieu. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
+
+### `AudioEffects`
+
+Sélectionne aléatoirement un alias sonore Windows et le joue de manière asynchrone avec `PlaySound`. La cadence utilise l'horloge réelle, accélère progressivement sans boucle audio ni modification du volume et s'arrête pendant `Cleanup()`. `--mute` et la Preview désactivent entièrement ce module.
 
 ### `LiveSprayTag`
 
@@ -145,7 +150,7 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
 - nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
-- effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni et le composite ARGB des caches locaux, sans aucune relecture du bureau ;
+- effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
 - mémoire cible : moins de 150 Mo ;
 - usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;
 - absence de réseau après le lancement.

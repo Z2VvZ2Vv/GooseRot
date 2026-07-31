@@ -17,18 +17,19 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - moteur C++17 et timeline monotone indépendante du framerate ;
 - overlay Win32/GDI+ transparent, click-through et multi-écran, qui referme Start/Search lorsqu’ils recouvrent la scène ;
 - première oie entrant depuis un bord après consentement, puis dessin procédural complet en vue de dessus ;
-- moteur de glitch piloté par la timeline : déchirures, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas », flashs ;
+- moteur de glitch piloté par la timeline et l'horloge réelle : déchirures, rubans de pixels déplacés dans l'overlay, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas » et flashs bornés ;
 - tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
 - jusqu’à 67 entités indépendantes, bulles, images PNG livrées par les oies puis laissées à l’écran et effets des cinq phases ;
 - traction initiale du curseur sur 67 pixels, puis tempête de mouvement de plus en plus violente entre `3:30` et la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
 - fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
-- jusqu’à six vrais utilitaires Windows lancés, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
+- jusqu’à six vrais utilitaires Windows (Notepad, Paint, Task Manager, Character Map, Command Prompt ou Explorer) lancés depuis une liste fixe, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
+- sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;
 - rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
-- mode `--preview` fenêtré qui ne touche pas au bureau ;
+- mode `--preview` fenêtré qui ne touche pas au bureau, muet, sans flash et à mouvement réduit par défaut ;
 - cœur AURA 67 déterministe et `GooseBootPreview.exe` sûr dans `boot/` ;
 - adaptateurs freestanding UEFI x64 et BIOS, construits sur demande et vérifiés statiquement ;
 - tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le plafond, le refus de fermeture et le nettoyage d’urgence de l’essaim.
@@ -95,6 +96,9 @@ Options utiles :
 --duration-scale 0.1
 --primary-monitor-only
 --no-desktop-effects
+--mute
+--no-flashes
+--reduced-motion
 --fake-reboot
 --boot-game
 --seed 67

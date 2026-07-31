@@ -1,5 +1,6 @@
 #include "core.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -67,6 +68,19 @@ void TestArgumentParsing() {
   error.clear();
   Expect(gooserot::ParseArguments(4, previewLab, config, error), "safe preview permits lab visuals");
   Expect(!config.desktopEffects, "preview disables desktop effects");
+  Expect(config.muted && !config.flashesEnabled && config.reducedMotion,
+         "preview defaults to muted reduced effects");
+
+  wchar_t mute[] = L"--mute";
+  wchar_t noFlashes[] = L"--no-flashes";
+  wchar_t reducedMotion[] = L"--reduced-motion";
+  wchar_t* accessible[] = {program, mute, noFlashes, reducedMotion};
+  config = {};
+  error.clear();
+  Expect(gooserot::ParseArguments(4, accessible, config, error),
+         "accessibility switches parse");
+  Expect(config.muted && !config.flashesEnabled && config.reducedMotion,
+         "accessibility switches are retained");
 
   wchar_t fakeReboot[] = L"--fake-reboot";
   wchar_t* invalidPreviewChain[] = {program, fakeReboot};
@@ -86,6 +100,45 @@ void TestArgumentParsing() {
   error.clear();
   Expect(!gooserot::ParseArguments(5, unavailableHandoff, config, error),
          "lab cannot claim an unverified boot handoff");
+}
+
+void TestChaosVisualCues() {
+  using gooserot::EvaluateChaosVisualCue;
+  const auto before = EvaluateChaosVisualCue(89.9, 12.0, 67U, true);
+  Expect(before.flashIntensity == 0.0f && before.faultRibbonIntensity == 0.0f,
+         "visual corruption is inactive before its phase");
+
+  const auto mutedFlash = EvaluateChaosVisualCue(299.0, 12.0, 67U, false);
+  Expect(mutedFlash.flashIntensity == 0.0f && mutedFlash.faultRibbonIntensity > 0.0f,
+         "no-flashes preserves non-flashing glitch ribbons");
+
+  const auto deterministicA = EvaluateChaosVisualCue(299.0, 17.25, 67U, true);
+  const auto deterministicB = EvaluateChaosVisualCue(299.0, 17.25, 67U, true);
+  Expect(deterministicA.flashIntensity == deterministicB.flashIntensity &&
+             deterministicA.faultRibbonIntensity == deterministicB.faultRibbonIntensity &&
+             deterministicA.pattern == deterministicB.pattern,
+         "visual cues are deterministic for a seed and clock");
+
+  int pulseStarts = 0;
+  int currentPulseSamples = 0;
+  int longestPulseSamples = 0;
+  bool previousFlash = false;
+  for (int sample = 0; sample <= 10000; ++sample) {
+    const double realTime = static_cast<double>(sample) / 1000.0;
+    const auto cue = EvaluateChaosVisualCue(299.0, realTime, 67U, true);
+    Expect(cue.flashIntensity >= 0.0f && cue.flashIntensity <= 1.0f,
+           "flash intensity remains bounded");
+    Expect(cue.faultRibbonIntensity >= 0.0f && cue.faultRibbonIntensity <= 1.0f,
+           "fault-ribbon intensity remains bounded");
+    const bool flashing = cue.flashIntensity > 0.0f;
+    if (flashing && !previousFlash) ++pulseStarts;
+    currentPulseSamples = flashing ? currentPulseSamples + 1 : 0;
+    longestPulseSamples = std::max(longestPulseSamples, currentPulseSamples);
+    previousFlash = flashing;
+  }
+  Expect(pulseStarts > 0, "the finale produces visible flash pulses");
+  Expect(pulseStarts <= 14, "flash cadence stays below two pulses per real second");
+  Expect(longestPulseSamples <= 110, "each flash pulse lasts at most 110 milliseconds");
 }
 
 void TestCarrierAssignment() {
@@ -209,6 +262,7 @@ void TestWindowClamp() {
 int main() {
   TestTimestampParsing();
   TestArgumentParsing();
+  TestChaosVisualCues();
   TestCarrierAssignment();
   TestPremultipliedAlphaBlend();
   TestTimeline();
