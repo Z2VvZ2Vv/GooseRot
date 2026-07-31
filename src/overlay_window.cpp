@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "resource.h"
+#include "shell_surface.hpp"
 
 namespace gooserot {
 namespace {
@@ -46,16 +47,46 @@ float Noise01(std::uint32_t seed) {
 
 float NoiseSigned(std::uint32_t seed) { return Noise01(seed) * 2.0f - 1.0f; }
 
-bool IsShellSurfaceProcess(const wchar_t* path) {
-  if (!path || !*path) return false;
-  const wchar_t* name = std::wcsrchr(path, L'\\');
-  name = name ? name + 1 : path;
-  constexpr std::array<const wchar_t*, 4> processes = {
-      L"StartMenuExperienceHost.exe", L"SearchHost.exe",
-      L"SearchApp.exe", L"ShellExperienceHost.exe"};
-  return std::any_of(processes.begin(), processes.end(), [name](const wchar_t* candidate) {
-    return _wcsicmp(name, candidate) == 0;
-  });
+void DismissShellWindow(HWND surface) {
+  PostMessageW(surface, WM_KEYDOWN, VK_ESCAPE, 0);
+  PostMessageW(surface, WM_KEYUP, VK_ESCAPE, 0);
+  PostMessageW(surface, WM_CANCELMODE, 0, 0);
+  ShowWindowAsync(surface, SW_HIDE);
+}
+
+struct ShellSurfaceSweep {
+  RECT overlayRect{};
+  std::vector<HWND> candidates;
+  bool reachedOverlay = false;
+};
+
+ShellSurfaceSweep FindCoveringShellSurfaces(HWND overlay, const RECT& overlayRect) {
+  ShellSurfaceSweep sweep;
+  sweep.overlayRect = overlayRect;
+
+  // GetTopWindow + GW_HWNDNEXT is the documented z-order chain. Keep a hard
+  // bound because windows may disappear concurrently while the chain is read.
+  constexpr unsigned kMaximumWindows = 4096;
+  HWND candidate = GetTopWindow(nullptr);
+  for (unsigned visited = 0; candidate && visited < kMaximumWindows; ++visited) {
+    if (candidate == overlay) {
+      sweep.reachedOverlay = true;
+      break;
+    }
+    HWND next = GetWindow(candidate, GW_HWNDNEXT);
+    if (IsWindowVisible(candidate) && !IsIconic(candidate)) {
+      RECT candidateRect{};
+      RECT intersection{};
+      if (GetWindowRect(candidate, &candidateRect) &&
+          IntersectRect(&intersection, &candidateRect, &overlayRect) &&
+          IsKnownShellSurfaceWindow(candidate)) {
+        sweep.candidates.push_back(candidate);
+      }
+    }
+    if (next == candidate) break;
+    candidate = next;
+  }
+  return sweep;
 }
 
 PointF ToPointF(Vec2 value) { return PointF(value.x, value.y); }
@@ -1736,50 +1767,48 @@ bool OverlayWindow::Present() {
   lastPresentError_ = presented ? ERROR_SUCCESS : GetLastError();
   ReleaseDC(nullptr, screen);
   const ULONGLONG now = GetTickCount64();
-  if (now - lastTopmostRefreshAt_ >= 500) {
-    lastTopmostRefreshAt_ = now;
-    if (!SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
-                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)) {
-      ++topmostFailureSample_;
-      lastTopmostError_ = GetLastError();
-    } else {
-      lastTopmostError_ = ERROR_SUCCESS;
-    }
-  }
+  if (now - lastTopmostRefreshAt_ >= 500) EnsureTopmost();
   return presented != FALSE;
 }
 
 void OverlayWindow::DismissShellSurface() {
-  if (preview_) return;
+  if (preview_ || !window_) return;
   const ULONGLONG now = GetTickCount64();
   if (now - lastShellDismissAt_ < 200) return;
   lastShellDismissAt_ = now;
-  HWND foreground = GetForegroundWindow();
-  if (!foreground || foreground == window_) return;
 
-  wchar_t className[96]{};
-  GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
-  bool shellSurface = _wcsicmp(className, L"DV2ControlHost") == 0;
-  DWORD processId = 0;
-  GetWindowThreadProcessId(foreground, &processId);
-  HANDLE process = processId ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)
-                             : nullptr;
-  if (process) {
-    wchar_t path[1024]{};
-    DWORD length = static_cast<DWORD>(std::size(path));
-    if (QueryFullProcessImageNameW(process, 0, path, &length)) {
-      shellSurface = shellSurface || IsShellSurfaceProcess(path);
+  const RECT overlayRect{screenOriginX_, screenOriginY_, screenOriginX_ + width_,
+                         screenOriginY_ + height_};
+  ShellSurfaceSweep sweep = FindCoveringShellSurfaces(window_, overlayRect);
+  if (!sweep.reachedOverlay) return;
+
+  bool dismissedAny = false;
+  for (HWND candidate : sweep.candidates) {
+    RECT candidateRect{};
+    RECT intersection{};
+    if (!IsWindow(candidate) || !IsWindowVisible(candidate) || IsIconic(candidate) ||
+        !IsWindowAboveInZOrder(candidate, window_) ||
+        !GetWindowRect(candidate, &candidateRect) ||
+        !IntersectRect(&intersection, &candidateRect, &sweep.overlayRect) ||
+        !IsKnownShellSurfaceWindow(candidate)) {
+      continue;
     }
-    CloseHandle(process);
+    DismissShellWindow(candidate);
+    dismissedAny = true;
   }
-  if (!shellSurface) return;
+  if (dismissedAny) EnsureTopmost();
+}
 
-  // Start and Search use a higher shell z-band than normal TOPMOST windows.
-  // Targeting Escape and hiding that one surface avoids global input and lets
-  // the shell show it normally again the next time the user presses Start.
-  PostMessageW(foreground, WM_KEYDOWN, VK_ESCAPE, 0);
-  PostMessageW(foreground, WM_KEYUP, VK_ESCAPE, 0);
-  ShowWindowAsync(foreground, SW_HIDE);
+void OverlayWindow::EnsureTopmost() {
+  if (!window_) return;
+  if (SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)) {
+    lastTopmostError_ = ERROR_SUCCESS;
+  } else {
+    ++topmostFailureSample_;
+    lastTopmostError_ = GetLastError();
+  }
+  lastTopmostRefreshAt_ = GetTickCount64();
 }
 
 void OverlayWindow::RequestClose() {

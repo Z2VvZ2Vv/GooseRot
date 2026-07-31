@@ -12,10 +12,12 @@
 #include "companion_windows.hpp"
 #include "desktop_director.hpp"
 #include "recovery_watchdog.hpp"
+#include "shell_surface.hpp"
 
 namespace {
 
 constexpr wchar_t kVictimClass[] = L"GooseRotWin32TestVictim";
+constexpr wchar_t kFakeShellClass[] = L"DV2ControlHost";
 bool gSlowPositionChanges = false;
 int gFailures = 0;
 
@@ -42,6 +44,10 @@ LRESULT CALLBACK VictimProcedure(HWND window, UINT message, WPARAM wParam, LPARA
     default:
       return DefWindowProcW(window, message, wParam, lParam);
   }
+}
+
+LRESULT CALLBACK FakeShellProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+  return DefWindowProcW(window, message, wParam, lParam);
 }
 
 int RunWindowHelper(const wchar_t* readyEventName, const wchar_t* title, bool slow) {
@@ -229,6 +235,97 @@ void TestSlowWindowFallback() {
   CloseVictim(victim);
 }
 
+void TestShellSurfaceAllowList() {
+  using gooserot::IsKnownShellSurfaceIdentityForWindowsDirectory;
+  constexpr wchar_t kWindowsDirectory[] = L"X:\\Windows";
+  Expect(IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"Windows.UI.Core.CoreWindow",
+             L"X:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_67\\"
+             L"StartMenuExperienceHost.exe",
+             kWindowsDirectory),
+         "modern Start CoreWindow is accepted");
+  Expect(IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"windows.ui.core.corewindow",
+             L"x:/windows/systemapps/search_package/SEARCHHOST.EXE",
+             kWindowsDirectory),
+         "modern Search identity is case and separator insensitive");
+  Expect(IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"DV2ControlHost", L"X:\\Windows\\explorer.exe", kWindowsDirectory),
+         "legacy Explorer Start host is accepted");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"Windows.UI.Core.CoreWindow",
+             L"C:\\Temp\\StartMenuExperienceHost.exe", kWindowsDirectory),
+         "spoofed Start basename outside Windows is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"DV2ControlHost", L"C:\\Temp\\explorer.exe", kWindowsDirectory),
+         "spoofed Explorer basename is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"Windows.UI.Core.CoreWindow",
+             L"X:\\Windows\\SystemAppsEvil\\StartMenuExperienceHost.exe",
+             kWindowsDirectory),
+         "lookalike SystemApps directory is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"Windows.UI.Core.CoreWindow",
+             L"X:\\Windows\\SystemApps\\..\\Temp\\StartMenuExperienceHost.exe",
+             kWindowsDirectory),
+         "non-canonical shell path is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"Windows.UI.Core.CoreWindow", L"C:\\Program Files\\OrdinaryApp.exe",
+             kWindowsDirectory),
+         "ordinary CoreWindow process is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"DV2ControlHost", L"C:\\Program Files\\OrdinaryApp.exe",
+             kWindowsDirectory),
+         "ordinary DV2ControlHost process is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             L"ApplicationFrameWindow", L"X:\\Windows\\explorer.exe",
+             kWindowsDirectory),
+         "unlisted shell class is rejected");
+  Expect(!IsKnownShellSurfaceIdentityForWindowsDirectory(
+             nullptr, L"X:\\Windows\\explorer.exe", kWindowsDirectory),
+         "missing shell identity is rejected");
+
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  WNDCLASSEXW windowClass{};
+  windowClass.cbSize = sizeof(windowClass);
+  windowClass.lpfnWndProc = &FakeShellProcedure;
+  windowClass.hInstance = instance;
+  windowClass.lpszClassName = kFakeShellClass;
+  const ATOM atom = RegisterClassExW(&windowClass);
+  Expect(atom != 0, "fake DV2ControlHost class registers");
+  if (!atom) return;
+
+  constexpr DWORD kTestWindowStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+  HWND fakeAbove = CreateWindowExW(kTestWindowStyle, kFakeShellClass,
+                                   L"GooseRot fake shell surface",
+                                   WS_POPUP, -32000, -32000, 1, 1,
+                                   nullptr, nullptr, instance, nullptr);
+  HWND reference = CreateWindowExW(kTestWindowStyle, kFakeShellClass,
+                                   L"GooseRot z-order reference",
+                                   WS_POPUP, -32000, -32000, 1, 1,
+                                   nullptr, nullptr, instance, nullptr);
+  Expect(fakeAbove != nullptr && reference != nullptr, "fake shell test windows start");
+  if (fakeAbove && reference) {
+    Expect(!gooserot::IsKnownShellSurfaceWindow(fakeAbove),
+           "a third-party DV2ControlHost remains outside the shell allow-list");
+    ShowWindow(reference, SW_SHOWNOACTIVATE);
+    ShowWindow(fakeAbove, SW_SHOWNOACTIVATE);
+    Expect(SetWindowPos(reference, HWND_TOP, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE,
+           "z-order reference moves to the top");
+    Expect(SetWindowPos(fakeAbove, HWND_TOP, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE,
+           "z-order candidate moves above the reference");
+    Expect(gooserot::IsWindowAboveInZOrder(fakeAbove, reference),
+           "GW_HWNDNEXT recognizes a window above the reference");
+    Expect(!gooserot::IsWindowAboveInZOrder(reference, fakeAbove),
+           "GW_HWNDNEXT rejects a window below the reference");
+  }
+  if (fakeAbove) DestroyWindow(fakeAbove);
+  if (reference) DestroyWindow(reference);
+  UnregisterClassW(kFakeShellClass, instance);
+}
+
 int RunMutationParent(HWND victimWindow, const wchar_t* movedEventName) {
   std::wstring error;
   gooserot::RecoveryWatchdog watchdog;
@@ -347,6 +444,7 @@ int wmain(int argc, wchar_t** argv) {
 
   TestResponsiveWindow();
   TestSlowWindowFallback();
+  TestShellSurfaceAllowList();
   TestCrashRecovery();
   TestPopupSwarmCapRefusalAndEmergencyCleanup();
   if (gFailures == 0) {

@@ -26,7 +26,8 @@ bool AskForConsent(const gooserot::AppConfig& config) {
              L"It may also launch up to 6 genuine built-in Windows utilities (Notepad, Paint, "
              L"Task Manager or a separate File Explorer), move only those new windows, and ask "
              L"them to close during cleanup. Random typing stays inside GooseRot's own Notepad.\r\n"
-             L"The Start or Search surface is dismissed if it covers the experience.\r\n"
+             L"Start, Search, or a related Windows shell surface is dismissed if it covers "
+             L"the experience.\r\n"
              L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
              L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.\r\n\r\n"
              L"Start the experience?";

@@ -56,6 +56,8 @@ add_executable(GooseRot WIN32
   src/desktop_director.hpp
   src/overlay_window.cpp
   src/overlay_window.hpp
+  src/shell_surface.cpp
+  src/shell_surface.hpp
   src/recovery_watchdog.cpp
   src/recovery_watchdog.hpp
   src/companion_windows.cpp
@@ -111,6 +113,8 @@ if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
     src/desktop_director.hpp
     src/recovery_watchdog.cpp
     src/recovery_watchdog.hpp
+    src/shell_surface.cpp
+    src/shell_surface.hpp
   )
   target_link_libraries(gooserot_win32_tests PRIVATE gooserot_core user32 gdi32)
   if(MSVC)

@@ -129,6 +129,7 @@ class OverlayWindow {
   void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DismissShellSurface();
+  void EnsureTopmost();
   bool Present();
 
   HINSTANCE instance_ = nullptr;

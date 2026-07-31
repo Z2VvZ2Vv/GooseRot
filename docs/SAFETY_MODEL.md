@@ -13,7 +13,7 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - traction initiale du curseur sur 67 pixels, puis tempête de mouvement bornée à l’écran et restaurée lors du nettoyage ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
 - lancement consenti de six utilitaires Windows au maximum, suivis exclusivement par leur PID de création ;
-- fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, sans hook ni frappe globale ;
+- fermeture ciblée de Start/Search et des flyouts shell associés lorsqu’ils recouvrent l’overlay, sans hook ni frappe globale ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
 - faux glitch, faux BSOD et faux firmware ;
