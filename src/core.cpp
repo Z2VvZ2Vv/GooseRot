@@ -174,8 +174,8 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
             L"artifacts. Use --mode lab --fake-reboot for the safe Preview.";
     return false;
   }
-  if (config.startAtSeconds > 300.0) {
-    error = L"--start-at cannot exceed 05:00.";
+  if (config.startAtSeconds > phase::kEnd) {
+    error = L"--start-at cannot exceed 06:00.";
     return false;
   }
   if (config.preview) {
@@ -226,13 +226,16 @@ BSOD, reboot, clipboard hooks and boot effects are simulated.)";
 ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
                                       std::uint32_t seed, bool flashesEnabled) {
   ChaosVisualCue cue;
-  if (!std::isfinite(logicalTime) || !std::isfinite(realTime) || logicalTime < 90.0) {
+  if (!std::isfinite(logicalTime) || !std::isfinite(realTime) ||
+      logicalTime < phase::kOwnedApps) {
     return cue;
   }
 
   const double safeRealTime = std::max(0.0, realTime);
   const float escalation = static_cast<float>(
-      std::clamp((logicalTime - 90.0) / 210.0, 0.0, 1.0));
+      std::clamp((logicalTime - phase::kOwnedApps) /
+                     (phase::kEnd - phase::kOwnedApps),
+                 0.0, 1.0));
   const std::uint32_t visualStep = static_cast<std::uint32_t>(
       std::fmod(std::floor(safeRealTime * 12.0), 4294967295.0));
   cue.pattern = Hash32(seed ^ 0xA67F29C3U ^ visualStep * 0x9E3779B9U);
@@ -241,7 +244,7 @@ ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
           (0.72f + HashUnit(cue.pattern ^ 0xD15EA5EU) * 0.28f),
       0.0f, 1.0f);
 
-  if (!flashesEnabled || logicalTime < 150.0) return cue;
+  if (!flashesEnabled || logicalTime < phase::kDuplicate) return cue;
 
   // At most one pulse per 720 ms slot (1.39 Hz), with a short, bounded duty
   // cycle. The activation probability rises toward the finale, but the real
@@ -268,22 +271,24 @@ ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
 
 TimelineEngine::TimelineEngine()
     : events_({
-          {TimelineEventId::PassiveEntrance, 0.0, L"Passive Entrance"},
-          {TimelineEventId::AuraPrompt, 15.0, L"Aura Deduction"},
-          {TimelineEventId::NotepadStart, 40.0, L"Auto-Typing"},
-          {TimelineEventId::CursorAndWindows, 60.0, L"Cursor & Window Hijack"},
-          {TimelineEventId::MemeSubtitles, 90.0, L"Brainrot Subtitles"},
-          {TimelineEventId::ClipboardBadge, 120.0, L"Clipboard Certified"},
-          {TimelineEventId::Duplicate, 135.0, L"Duplication"},
-          {TimelineEventId::Graffiti, 165.0, L"Graffiti & Vibe"},
-          {TimelineEventId::SigmaPrompt, 195.0, L"Sigma Trap"},
-          {TimelineEventId::ScreenShake, 210.0, L"Screen Shake"},
-          {TimelineEventId::ColorFilter, 240.0, L"Color Filter"},
-          {TimelineEventId::FinalMonologue, 255.0, L"Final Monologue"},
-          {TimelineEventId::Countdown, 270.0, L"Final Countdown"},
-          {TimelineEventId::CircleDance, 285.0, L"Circle Dance"},
-          {TimelineEventId::ResetAura, 299.0, L"Final Trigger"},
-          {TimelineEventId::Shutdown, 300.0, L"Aura Core Explosion"},
+          {TimelineEventId::PassiveEntrance, phase::kEntrance, L"Passive Entrance"},
+          {TimelineEventId::AuraPrompt, phase::kAuraPrompt, L"Aura Deduction"},
+          {TimelineEventId::GooseExit, phase::kGooseExit, L"The Goose Walks Out"},
+          {TimelineEventId::NotepadStart, phase::kNotepad, L"Auto-Typing"},
+          {TimelineEventId::GooseReturn, phase::kGooseReturn, L"The Goose Comes Back"},
+          {TimelineEventId::CursorAndWindows, phase::kCursorAndWindows, L"Cursor & Window Hijack"},
+          {TimelineEventId::MemeSubtitles, phase::kSubtitles, L"Brainrot Subtitles"},
+          {TimelineEventId::ClipboardBadge, phase::kClipboard, L"Clipboard Certified"},
+          {TimelineEventId::Duplicate, phase::kDuplicate, L"Duplication"},
+          {TimelineEventId::Graffiti, phase::kGraffiti, L"Graffiti & Vibe"},
+          {TimelineEventId::SigmaPrompt, phase::kSigma, L"Sigma Trap"},
+          {TimelineEventId::ScreenShake, phase::kScreenShake, L"Screen Shake"},
+          {TimelineEventId::ColorFilter, phase::kColorFilter, L"Color Filter"},
+          {TimelineEventId::FinalMonologue, phase::kFinalMonologue, L"Final Monologue"},
+          {TimelineEventId::Countdown, phase::kCountdown, L"Final Countdown"},
+          {TimelineEventId::CircleDance, phase::kCircleDance, L"Circle Dance"},
+          {TimelineEventId::ResetAura, phase::kResetAura, L"Final Trigger"},
+          {TimelineEventId::Shutdown, phase::kEnd, L"Aura Core Explosion"},
       }) {
   Reset();
 }
@@ -356,7 +361,9 @@ void GooseEntity::Update(float deltaSeconds, RectF bounds) {
     position_ += velocity_ * dt;
   }
 
-  constexpr float margin = kBoundsMargin;
+  // An offstage goose is allowed well past the edge so it can leave the frame
+  // entirely; a negative margin turns the clamp into an outer safety rail.
+  const float margin = offstage_ ? -kOffstageMargin : kBoundsMargin;
   if (bounds.Width() <= margin * 2.0f) position_.x = bounds.Center().x;
   else position_.x = std::clamp(position_.x, bounds.left + margin, bounds.right - margin);
   if (bounds.Height() <= margin * 2.0f) position_.y = bounds.Center().y;
@@ -414,6 +421,75 @@ std::size_t PickFreeCarrier(const std::vector<unsigned char>& carrierBusy, bool 
   }
   if (carrierBusy.size() == 1 && !carrierBusy[0] && !leadBusy) return 0;
   return kNoCarrier;
+}
+
+float CursorStormEnvelope(double logicalTime) {
+  if (logicalTime < phase::kScreenShake) return 0.0f;
+  const double since = logicalTime - phase::kScreenShake;
+  const float ramp = static_cast<float>(
+      std::clamp(since / (phase::kCountdown - phase::kScreenShake), 0.0, 1.0));
+
+  // One cycle of "the flock has it" followed by "you have it back". The seized
+  // share grows from about a third to about two thirds of the cycle, so the
+  // pointer becomes hard to fight without ever becoming permanently dead.
+  constexpr double kCycleSeconds = 7.5;
+  const double position = std::fmod(since, kCycleSeconds) / kCycleSeconds;
+  const double seizedShare = 0.34 + 0.30 * static_cast<double>(ramp);
+  if (position >= seizedShare) return 0.0f;
+
+  const float progress = static_cast<float>(position / seizedShare);
+  const float shape = 0.5f - 0.5f * std::cos(progress * 2.0f * kPi);
+  return std::clamp(shape * (0.40f + 0.60f * ramp), 0.0f, 1.0f);
+}
+
+int DesiredPopupCount(double logicalTime, int maximum) {
+  if (maximum <= 0 || logicalTime < phase::kDuplicate) return 0;
+  if (logicalTime <= phase::kFinalMonologue) {
+    const double growth = (logicalTime - phase::kDuplicate) /
+                          (phase::kFinalMonologue - phase::kDuplicate);
+    return std::clamp(1 + static_cast<int>(growth * maximum), 1, maximum);
+  }
+  // Past the monologue the display itself is the effect: the swarm is consumed
+  // so the finale is glitch instead of a wall of dialogs.
+  const double decay = (logicalTime - phase::kFinalMonologue) /
+                       (phase::kCircleDance - phase::kFinalMonologue);
+  return std::clamp(static_cast<int>(std::ceil((1.0 - decay) * maximum)), 0, maximum);
+}
+
+float TagScale(RectF canvas) {
+  return std::max(70.0f, std::min(canvas.Height() * 0.30f, canvas.Width() * 0.20f));
+}
+
+Vec2 TagCenter(RectF canvas) {
+  return {canvas.left + canvas.Width() * 0.5f, canvas.top + canvas.Height() * 0.47f};
+}
+
+RectF TagZone(RectF canvas) {
+  const float scale = TagScale(canvas);
+  const Vec2 center = TagCenter(canvas);
+  // Covers the widest stroke extents plus the paint band, so nothing lands on
+  // the glyph itself.
+  const float padding = scale * 0.36f;
+  return {center.x - scale * 1.08f - padding, center.y - scale * 0.98f - padding,
+          center.x + scale * 1.14f + padding, center.y + scale * 0.98f + padding};
+}
+
+RectF PropCloseBox(Vec2 center, float size) {
+  const float half = size * 0.5f;
+  const float box = std::clamp(size * 0.23f, 24.0f, 36.0f);
+  // Tucked just inside the top-right corner, so the badge never floats off the
+  // photo it belongs to.
+  const Vec2 anchor{center.x + half - box * 0.55f, center.y - half + box * 0.55f};
+  return {anchor.x - box * 0.5f, anchor.y - box * 0.5f, anchor.x + box * 0.5f,
+          anchor.y + box * 0.5f};
+}
+
+bool PropCloseBoxHit(Vec2 center, float size, Vec2 point) {
+  const RectF box = PropCloseBox(center, size);
+  // A couple of pixels of slack: the pointer is being shoved around by geese.
+  constexpr float kSlack = 4.0f;
+  return point.x >= box.left - kSlack && point.x <= box.right + kSlack &&
+         point.y >= box.top - kSlack && point.y <= box.bottom + kSlack;
 }
 
 RectF ClampWindowRect(RectF window, RectF workArea) {

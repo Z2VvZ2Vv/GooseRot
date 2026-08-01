@@ -204,11 +204,20 @@ bool NotepadWindow::Show(HINSTANCE instance) {
   instance_ = instance;
   refusals_ = 0;
   pendingRefusalReports_ = 0;
+  pendingMinimiseReports_ = 0;
   respawnQueued_ = false;
+  // WS_OVERLAPPEDWINDOW minus WS_MINIMIZEBOX and WS_MAXIMIZEBOX: the brainrot
+  // stream is the show, so it does not get to hide as a taskbar button.
   window_ = CreateWindowExW(WS_EX_APPWINDOW, L"GooseRotNotepad", L"Untitled - Grindset",
-                            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 650, 420,
+                            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME,
+                            CW_USEDEFAULT, CW_USEDEFAULT, 650, 420,
                             nullptr, nullptr, instance, this);
   if (!window_) return false;
+  if (HMENU systemMenu = GetSystemMenu(window_, FALSE)) {
+    // The system menu keeps a Minimize entry even without the box; grey it out
+    // so the refusal is announced before the click rather than after it.
+    EnableMenuItem(systemMenu, SC_MINIMIZE, MF_BYCOMMAND | MF_GRAYED);
+  }
   edit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                           WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE |
                               ES_AUTOVSCROLL | ES_READONLY,
@@ -230,10 +239,6 @@ void NotepadWindow::SetText(const std::wstring& text) {
   SendMessageW(edit_, EM_SCROLLCARET, 0, 0);
 }
 
-void NotepadWindow::Minimize() {
-  if (window_) ShowWindow(window_, SW_MINIMIZE);
-}
-
 void NotepadWindow::Close() {
   if (window_) DestroyWindow(window_);
   if (font_) {
@@ -249,6 +254,21 @@ bool NotepadWindow::ConsumeRefusal() {
   if (pendingRefusalReports_ <= 0) return false;
   --pendingRefusalReports_;
   return true;
+}
+
+bool NotepadWindow::ConsumeMinimiseRefusal() {
+  if (pendingMinimiseReports_ <= 0) return false;
+  --pendingMinimiseReports_;
+  return true;
+}
+
+// Anything that managed to iconify the window from outside — the taskbar
+// button, Show Desktop, Win+D — is undone, and the title says so.
+void NotepadWindow::RefuseMinimise() {
+  ++pendingMinimiseReports_;
+  if (!window_) return;
+  ShowWindow(window_, SW_RESTORE);
+  SetWindowTextW(window_, L"Untitled - Grindset (it does not go in the taskbar)");
 }
 
 // The [X] is answered with a new title and a shove instead of a destroyed
@@ -304,6 +324,9 @@ void NotepadWindow::Tick(double logicalTime) {
     }
     return;
   }
+  // Last line of defence: WM_SIZE covers the usual routes, but a shell command
+  // can still leave the window iconified between two messages.
+  if (window_ && IsIconic(window_)) RefuseMinimise();
 }
 
 LRESULT CALLBACK NotepadWindow::WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -324,7 +347,19 @@ LRESULT CALLBACK NotepadWindow::WindowProcedure(HWND window, UINT message, WPARA
 
 LRESULT NotepadWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
+    case WM_SYSCOMMAND:
+      // SC_MINIMIZE carries flag bits in its low nibble; mask them off.
+      if ((wParam & 0xFFF0) == SC_MINIMIZE) {
+        ++pendingMinimiseReports_;
+        SetWindowTextW(window_, L"Untitled - Grindset (it does not go in the taskbar)");
+        return 0;
+      }
+      break;
     case WM_SIZE:
+      if (wParam == SIZE_MINIMIZED) {
+        RefuseMinimise();
+        return 0;
+      }
       if (edit_) MoveWindow(edit_, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
       return 0;
     case WM_CLOSE:
@@ -445,6 +480,23 @@ void PopupSwarm::Spawn(HINSTANCE instance, std::mt19937& random, int count) {
   for (int index = 0; index < count && !AtCap(); ++index) CreatePopup(instance, random);
 }
 
+void PopupSwarm::SetCeiling(int ceiling) {
+  ceiling_ = std::clamp(ceiling, 0, kMaximumPopups);
+  if (AtCap()) pendingSpawns_ = 0;
+}
+
+int PopupSwarm::Dissolve(int count) {
+  int destroyed = 0;
+  for (auto popup = popups_.rbegin(); popup != popups_.rend() && destroyed < count; ++popup) {
+    if ((*popup)->dead) continue;
+    (*popup)->dead = true;
+    if ((*popup)->window) DestroyWindow((*popup)->window);
+    ++destroyed;
+  }
+  if (destroyed > 0) pendingSpawns_ = 0;
+  return destroyed;
+}
+
 void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTime) {
   lastTickTime_ = logicalTime;
   popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
@@ -471,9 +523,9 @@ void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTi
   }
 }
 
-// Closing a popup is never free. Before the protective cap, one close produces
-// two replacements. At the cap, close controls are permanently refused; only
-// the emergency cleanup path calls CloseAll().
+// Closing a popup is never free. Below the current ceiling, one close produces
+// two replacements. At the ceiling, close controls are refused; only the
+// finale's Dissolve() and the emergency cleanup path destroy windows outright.
 void PopupSwarm::RequestClose(Popup& popup) {
   ++closeAttempts_;
   ++popup.refusals;
@@ -486,7 +538,7 @@ void PopupSwarm::RequestClose(Popup& popup) {
   popup.jiggleUntil = lastTickTime_ + 1.2;
   if (popup.label) {
     SetWindowTextW(popup.label,
-                   L"ACCESS DENIED.\r\n67 windows own this desktop now.");
+                   L"ACCESS DENIED.\r\nThese windows own this desktop now.");
   }
   if (popup.button) SetWindowTextW(popup.button, L"CLOSE DENIED");
 }
@@ -693,6 +745,181 @@ void OwnedWindowsApps::CloseAll() {
     if (entry.process) CloseHandle(entry.process);
   }
   processes_.clear();
+}
+
+// ---------------------------------------------------------------------------
+// TaskbarGuard
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr int kGuardMinimumSide = 34;
+
+}  // namespace
+
+TaskbarGuard::~TaskbarGuard() { Close(); }
+
+ATOM TaskbarGuard::Register(HINSTANCE instance) {
+  WNDCLASSEXW windowClass{};
+  windowClass.cbSize = sizeof(windowClass);
+  if (GetClassInfoExW(instance, L"GooseRotStartGuard", &windowClass)) return 1;
+  windowClass.lpfnWndProc = &TaskbarGuard::WindowProcedure;
+  windowClass.hInstance = instance;
+  windowClass.hCursor = LoadCursorW(nullptr, IDC_NO);
+  windowClass.hbrBackground = nullptr;
+  windowClass.lpszClassName = L"GooseRotStartGuard";
+  return RegisterClassExW(&windowClass);
+}
+
+// Windows 10 exposes the Start button as a child of the tray with class "Start".
+// Windows 11 builds the taskbar in XAML and offers no such child, so the button
+// is derived from the tray geometry instead: a square of taskbar height, either
+// hard left or centred depending on where the shell put the icons.
+bool TaskbarGuard::FindStartButtonRect(RECT& rectangle) {
+  HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
+  if (!tray || !IsWindowVisible(tray)) return false;
+
+  if (HWND start = FindWindowExW(tray, nullptr, L"Start", nullptr)) {
+    RECT found{};
+    if (GetWindowRect(start, &found) && found.right > found.left && found.bottom > found.top) {
+      rectangle = found;
+      return true;
+    }
+  }
+
+  RECT trayRectangle{};
+  if (!GetWindowRect(tray, &trayRectangle)) return false;
+  const int trayWidth = trayRectangle.right - trayRectangle.left;
+  const int trayHeight = trayRectangle.bottom - trayRectangle.top;
+  if (trayWidth <= 0 || trayHeight <= 0) return false;
+  // A vertical taskbar puts the button at the top; a horizontal one at the far
+  // left, unless the icon band is centred, in which case the first icon of that
+  // band is the button.
+  const int side = std::max(kGuardMinimumSide, std::min(trayWidth, trayHeight));
+  if (trayHeight > trayWidth) {
+    rectangle = {trayRectangle.left, trayRectangle.top, trayRectangle.left + side,
+                 trayRectangle.top + side};
+    return true;
+  }
+
+  int left = trayRectangle.left;
+  if (HWND band = FindWindowExW(tray, nullptr, L"ReBarWindow32", nullptr)) {
+    RECT bandRectangle{};
+    if (GetWindowRect(band, &bandRectangle) && bandRectangle.left - trayRectangle.left > side) {
+      left = bandRectangle.left - side;
+    }
+  } else if (HWND notify = FindWindowExW(tray, nullptr, L"TrayNotifyWnd", nullptr)) {
+    RECT notifyRectangle{};
+    // Centred Windows 11 band: the icons start roughly as far from the middle
+    // as the notification area is from the right edge.
+    if (GetWindowRect(notify, &notifyRectangle)) {
+      const int centre = (trayRectangle.left + trayRectangle.right) / 2;
+      const int icons = std::max(1, static_cast<int>(notifyRectangle.left - trayRectangle.left));
+      if (icons > trayWidth / 2) left = centre - side * 3;
+    }
+  }
+  left = std::clamp(left, static_cast<int>(trayRectangle.left),
+                    std::max(static_cast<int>(trayRectangle.left),
+                             static_cast<int>(trayRectangle.right) - side));
+  rectangle = {left, trayRectangle.top, left + side, trayRectangle.top + trayHeight};
+  return true;
+}
+
+bool TaskbarGuard::Show(HINSTANCE instance) {
+  if (window_) return true;
+  RECT rectangle{};
+  if (!FindStartButtonRect(rectangle) || !Register(instance)) return false;
+
+  window_ = CreateWindowExW(
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED, L"GooseRotStartGuard",
+      L"GooseRot - Start button occupied", WS_POPUP, rectangle.left, rectangle.top,
+      rectangle.right - rectangle.left, rectangle.bottom - rectangle.top, nullptr, nullptr,
+      instance, this);
+  if (!window_) return false;
+  placement_ = rectangle;
+  // Faint neon pink so the reason the button is dead is visible, without hiding
+  // the button underneath it.
+  SetLayeredWindowAttributes(window_, 0, 90, LWA_ALPHA);
+  ShowWindow(window_, SW_SHOWNOACTIVATE);
+  return true;
+}
+
+void TaskbarGuard::Tick() {
+  if (!window_) return;
+  RECT rectangle{};
+  if (!FindStartButtonRect(rectangle)) return;
+  if (!EqualRect(&rectangle, &placement_)) {
+    placement_ = rectangle;
+    SetWindowPos(window_, HWND_TOPMOST, rectangle.left, rectangle.top,
+                 rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
+                 SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    return;
+  }
+  SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+}
+
+void TaskbarGuard::Close() {
+  if (window_) DestroyWindow(window_);
+  window_ = nullptr;
+  pendingAttempts_ = 0;
+}
+
+bool TaskbarGuard::ConsumePressAttempt() {
+  if (pendingAttempts_ <= 0) return false;
+  --pendingAttempts_;
+  return true;
+}
+
+LRESULT CALLBACK TaskbarGuard::WindowProcedure(HWND window, UINT message, WPARAM wParam,
+                                               LPARAM lParam) {
+  TaskbarGuard* self = reinterpret_cast<TaskbarGuard*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+  if (message == WM_NCCREATE) {
+    const auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+    self = static_cast<TaskbarGuard*>(create->lpCreateParams);
+    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    self->window_ = window;
+  }
+  if (message == WM_NCDESTROY) {
+    SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+    return DefWindowProcW(window, message, wParam, lParam);
+  }
+  return self ? self->HandleMessage(message, wParam, lParam)
+              : DefWindowProcW(window, message, wParam, lParam);
+}
+
+LRESULT TaskbarGuard::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
+  switch (message) {
+    case WM_MOUSEACTIVATE:
+      // Take the click without ever taking focus from the user's window.
+      // MA_NOACTIVATEANDEAT would discard the button message too, and then the
+      // guard could never report the attempt.
+      return MA_NOACTIVATE;
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+      ++pendingAttempts_;
+      ++totalAttempts_;
+      return 0;
+    case WM_PAINT: {
+      PAINTSTRUCT paint{};
+      HDC device = BeginPaint(window_, &paint);
+      RECT client{};
+      GetClientRect(window_, &client);
+      if (HBRUSH brush = CreateSolidBrush(RGB(255, 45, 170))) {
+        FillRect(device, &client, brush);
+        DeleteObject(brush);
+      }
+      EndPaint(window_, &paint);
+      return 0;
+    }
+    case WM_DESTROY:
+      window_ = nullptr;
+      return 0;
+    default:
+      break;
+  }
+  return DefWindowProcW(window_, message, wParam, lParam);
 }
 
 }  // namespace gooserot

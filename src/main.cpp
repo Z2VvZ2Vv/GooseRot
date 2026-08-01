@@ -33,24 +33,32 @@ TaskDialogIndirectProcedure ResolveTaskDialogIndirect() {
 
 bool AskForConsent(gooserot::AppConfig& config) {
   if (config.preview) return true;
-  std::wstring message = L"GooseRot will take over the desktop visually for five minutes.\r\n\r\n";
+  std::wstring message = L"GooseRot will take over the desktop visually for six minutes.\r\n\r\n";
   if (config.desktopEffects) {
-    message += L"With your consent, the geese will move and violently shake the pointer, and may "
-               L"temporarily move selected windows before restoring their positions.\r\n";
+    message += L"With your consent, the geese will drag the pointer in waves — each wave hands it "
+               L"back before the next one — and may temporarily move selected windows before "
+               L"restoring their positions.\r\n"
+               L"A small GooseRot window is parked over the Start button and swallows clicks that "
+               L"land on it, so the Start menu cannot cover the scene. It is destroyed during "
+               L"cleanup and the button then works normally again. Ctrl+Shift+Esc, Alt+Tab and the "
+               L"Esc exit below are never affected.\r\n";
   }
   message += L"The experience includes brief rate-limited full-screen flashes, rapid glitch "
              L"motion and asynchronous Windows-style alert sounds. Choose Reduced / Muted if "
              L"you are photosensitive, motion-sensitive or do not want sound.\r\n";
   message += L"GooseRot may create up to 67 fake Task Manager, File Explorer, Notepad and system "
-              L"windows. They may multiply and refuse normal close requests. Every one belongs to "
-              L"GooseRot and is destroyed during cleanup.\r\n"
-              L"It may also launch up to 6 genuine built-in Windows utilities (Notepad, Paint, "
-              L"Task Manager, Character Map, Command Prompt or a separate File Explorer), move only those new windows, and ask "
-              L"them to close during cleanup. Random typing stays inside GooseRot's own Notepad.\r\n"
-              L"Start or Search is dismissed if it covers "
-              L"the experience.\r\n"
-              L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
-              L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.";
+             L"windows. They may multiply and refuse normal close requests. Every one belongs to "
+             L"GooseRot and is destroyed during cleanup.\r\n"
+             L"Its own Notepad refuses to minimise into the taskbar for as long as it is typing.\r\n"
+             L"It may also launch up to 6 genuine built-in Windows utilities (Notepad, Paint, "
+             L"Task Manager, Character Map, Command Prompt or a separate File Explorer), move "
+             L"only those new windows, and ask them to close during cleanup. Random typing stays "
+             L"inside GooseRot's own Notepad.\r\n"
+             L"Geese carry brainrot photos onto the desktop. Each one can be closed with its [x], "
+             L"which costs aura and makes the flock fetch two more.\r\n"
+             L"The Start or Search surface is dismissed if it covers the experience.\r\n"
+             L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
+             L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.";
 
   constexpr int kFullExperience = 100;
   constexpr int kReducedExperience = 101;
@@ -64,7 +72,7 @@ bool AskForConsent(gooserot::AppConfig& config) {
   dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
   dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
   dialog.pszWindowTitle = L"GooseRot - explicit consent";
-  dialog.pszMainInstruction = L"Choose how intense the five-minute takeover may be.";
+  dialog.pszMainInstruction = L"Choose how intense the six-minute takeover may be.";
   dialog.pszContent = message.c_str();
   dialog.pszMainIcon = config.mode == gooserot::RunMode::Safe
                            ? TD_INFORMATION_ICON

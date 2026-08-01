@@ -36,13 +36,16 @@ class GooseRotApp {
   void HandleEvent(const TimelineEvent& event);
   void ApplyBaseline(double logicalTime);
   bool UpdateEmergencyExit(double realDeltaSeconds);
+  void PollMouseButton();
   void UpdatePrompts();
   void UpdateNotepad();
   void UpdateErrorSounds();
   void UpdateOwnedWindowsApps();
+  void UpdateTaskbarGuard();
   void UpdateDesktopActions();
   void UpdateGooseTargets(float deltaSeconds);
   void UpdateSprites();
+  void UpdatePropInteractions();
   void UpdateCursorGrab(double logicalDelta);
   void UpdateCursorChaos();
   void UpdatePopups();
@@ -54,8 +57,15 @@ class GooseRotApp {
   void ExecutePendingAction();
   void BeginCursorGrab();
   void EndCursorGrab(bool succeeded);
-  void SpawnSprite();
+  void SendFlockOffstage();
+  void BringFlockBack();
+  bool SpawnSprite(std::size_t forcedCarrier = kNoCarrier);
+  void ClosePropAt(std::size_t index);
+  void ClearPropsFromTagZone();
   Vec2 FindSpriteLandingPoint(float size);
+  Vec2 OffstagePointNear(Vec2 origin) const;
+  Vec2 NextPatrolPoint(std::size_t index);
+  bool IsGooseBusy(std::size_t index) const;
   void PushToast(std::wstring title, std::wstring body, double lifetime = 6.5);
   void AddAura(int delta);
   void KickGlitch(float amount);
@@ -83,6 +93,7 @@ class GooseRotApp {
   NotepadWindow notepad_;
   PopupSwarm popups_;
   OwnedWindowsApps ownedWindowsApps_;
+  TaskbarGuard taskbarGuard_;
   std::mt19937 random_;
   std::mt19937 audioRandom_;
   std::mt19937 keyboardRandom_;
@@ -94,17 +105,19 @@ class GooseRotApp {
   double lastTypedAt_ = 0.0;
   double nextKeyBurstAt_ = -1.0;
   double nextErrorSoundAt_ = -1.0;
-  double nextWindowAction_ = 60.0;
-  double nextCursorAction_ = 75.0;
-  double nextSpriteAt_ = 90.0;
+  double nextWindowAction_ = phase::kCursorAndWindows;
+  double nextCursorAction_ = phase::kCursorAndWindows + 15.0;
+  double nextSpriteAt_ = phase::kGooseReturn;
   double nextPopupAt_ = 1e9;
-  double nextOwnedAppAt_ = 75.0;
+  double nextPopupDissolveAt_ = 0.0;
+  double nextOwnedAppAt_ = phase::kOwnedApps;
   double bubbleUntil_ = 0.0;
   double emergencyHeldSeconds_ = 0.0;
   double auraPromptArmedAt_ = -1.0;
   double auraDeltaAt_ = -1000.0;
   double grabStartedAt_ = -1.0;
   double grabDeadline_ = -1.0;
+  double lastTaskbarGuardPokeAt_ = -1000.0;
   int auraDelta_ = 0;
   int grabRemainingPixels_ = 0;
   int grabDirection_ = 1;
@@ -115,6 +128,10 @@ class GooseRotApp {
   float cursorChaos_ = 0.0f;
   bool auraPromptPending_ = false;
   bool leftMouseWasDown_ = false;
+  // Set once per fresh press by PollMouseButton and consumed by whichever gag
+  // gets to it first, so a single click never triggers two reactions.
+  bool leftMousePressed_ = false;
+  bool flockOffstage_ = false;
   bool shutdownStarted_ = false;
   bool cleanupDone_ = false;
   bool completedTimeline_ = false;
@@ -123,9 +140,17 @@ class GooseRotApp {
   bool bootPreviewLaunchFailed_ = false;
   bool recoveryFailure_ = false;
   bool errorSoundActive_ = false;
+  bool tagZoneCleared_ = false;
   int aura_ = 0;
   int exitCode_ = 0;
   int typedWordCount_ = 0;
+  // Photos the user tore off the desktop, and the replacements still owed.
+  int propsClosed_ = 0;
+  int pendingPropOrders_ = 0;
+  // Extra geese earned by closing photos, on top of the timeline's own count.
+  int extraGeese_ = 0;
+  unsigned patrolStep_ = 0;
+  Vec2 patrolFocus_;
   POINT auraReferenceCursor_{};
   PendingAction pendingAction_;
   std::wstring bubbleText_;

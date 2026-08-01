@@ -430,6 +430,70 @@ void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
   }
 }
 
+void TestPopupSwarmCeilingAndDissolve() {
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  std::mt19937 random(67);
+  gooserot::PopupSwarm swarm;
+
+  swarm.SetCeiling(4);
+  swarm.Spawn(instance, random, 20);
+  Expect(swarm.Count() == 4, "the live ceiling bounds spawning below the maximum");
+  Expect(swarm.AtCap(), "the swarm reports being at its live ceiling");
+
+  HWND popup = FindPopupWindow();
+  Expect(popup != nullptr, "a capped swarm still has live windows");
+  if (popup) {
+    SendMessageW(popup, WM_CLOSE, 0, 0);
+    swarm.Tick(instance, random, 1.0);
+    Expect(IsWindow(popup) != FALSE, "closes are refused at the live ceiling");
+    Expect(swarm.Count() == 4, "a refused close leaves the count untouched");
+  }
+
+  // The finale's path: windows are destroyed outright, refusal does not apply.
+  Expect(swarm.Dissolve(3) == 3, "dissolving reports what it destroyed");
+  swarm.Tick(instance, random, 2.0);
+  Expect(swarm.Count() == 1, "dissolved windows are reaped");
+  Expect(swarm.Dissolve(9) == 1, "dissolving never claims more than it had");
+  swarm.Tick(instance, random, 3.0);
+  Expect(swarm.Count() == 0, "the finale can empty the swarm completely");
+
+  swarm.SetCeiling(gooserot::PopupSwarm::kMaximumPopups);
+  swarm.Spawn(instance, random, 1);
+  Expect(swarm.Count() == 1, "raising the ceiling lets the swarm grow again");
+  swarm.CloseAll();
+}
+
+void TestNotepadRefusesTheTaskbar() {
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  gooserot::NotepadWindow notepad;
+  Expect(notepad.Show(instance), "the fake Notepad opens");
+  HWND window = FindWindowW(L"GooseRotNotepad", nullptr);
+  Expect(window != nullptr, "the fake Notepad is discoverable");
+  if (!window) {
+    notepad.Close();
+    return;
+  }
+
+  Expect((GetWindowLongPtrW(window, GWL_STYLE) & WS_MINIMIZEBOX) == 0,
+         "the fake Notepad has no minimise box");
+  SendMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+  Expect(IsIconic(window) == FALSE, "SC_MINIMIZE is refused outright");
+  Expect(notepad.ConsumeMinimiseRefusal(), "the refused minimise is reported once");
+  Expect(!notepad.ConsumeMinimiseRefusal(), "the report is consumed exactly once");
+
+  // Show Desktop and the taskbar button iconify from outside; the next tick
+  // has to undo that too.
+  ShowWindow(window, SW_MINIMIZE);
+  notepad.Tick(1.0);
+  MSG message{};
+  while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+  Expect(IsIconic(window) == FALSE, "an external minimise is undone");
+  Expect(notepad.ConsumeMinimiseRefusal(), "the external minimise is reported too");
+
+  notepad.Close();
+  Expect(IsWindow(window) == FALSE, "cleanup still destroys the fake Notepad outright");
+}
+
 bool ParseUnsigned(const wchar_t* text, unsigned long long& value) {
   if (!text || !*text || *text == L'+' || *text == L'-') return false;
   wchar_t* end = nullptr;
@@ -460,6 +524,8 @@ int wmain(int argc, wchar_t** argv) {
   TestShellSurfaceAllowList();
   TestCrashRecovery();
   TestPopupSwarmCapRefusalAndEmergencyCleanup();
+  TestPopupSwarmCeilingAndDissolve();
+  TestNotepadRefusesTheTaskbar();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";
     return 0;

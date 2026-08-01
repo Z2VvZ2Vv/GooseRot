@@ -58,6 +58,8 @@ GooseRotApp
  ├─ InteractionDirector
  │   ├─ ClipboardVisualGag
  │   ├─ NotepadGag
+ │   ├─ PropDelivery
+ │   ├─ TaskbarGuard
  │   └─ PopupSwarm
  ├─ AudioEffects
  ├─ BootGameHandoff
@@ -102,17 +104,27 @@ Ne jamais cibler :
 
 ### `NotepadGag`
 
-Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. La cadence continue jusqu’à `4:58` et le nettoyage détruit la fenêtre.
+Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. La cadence continue jusqu’à `5:58` et le nettoyage détruit la fenêtre.
 
 `WM_CLOSE` est intercepté pour le gag : les premières tentatives renomment la fenêtre et la décalent de 67 pixels. Si elle finit par être détruite, la timeline la recrée tant que la phase de frappe reste active. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement.
+
+La réduction est refusée par trois chemins complémentaires, pour que le flux de texte ne puisse pas être rangé dans la barre des tâches : le style ne comporte ni `WS_MINIMIZEBOX` ni `WS_MAXIMIZEBOX`, `SC_MINIMIZE` est avalé dans `WM_SYSCOMMAND` et grisé dans le menu système, et toute réduction obtenue depuis l’extérieur est annulée par `WM_SIZE`/`SIZE_MINIMIZED` puis, en dernier recours, par un contrôle `IsIconic` à chaque tick. Chaque refus est signalé une fois au moteur, qui répond par une bulle.
 
 ### `OwnedWindowsApps`
 
 Lance au maximum six vrais utilitaires intégrés à Windows : Notepad, Paint, Task Manager, Character Map, Command Prompt ou Explorer avec `/separate`. Chaque cible est un chemin Windows construit par le programme, sans URL ni argument utilisateur. Chaque entrée conserve uniquement le handle de processus et le PID renvoyés par `CreateProcessW`. L’énumération ne positionne et ne ferme que les fenêtres appartenant à ces PID ; elle ne revendique jamais une instance préexistante et ne force pas la terminaison d’un processus qui refuserait `WM_CLOSE`.
 
+### `TaskbarGuard`
+
+Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED` est posée exactement sur le bouton Démarrer et absorbe les clics qui l’atteignent, parce qu’un menu Démarrer ouvert recouvre toute la scène. Le rectangle vient du bouton réel quand il est identifiable — sous Windows 10, l’enfant de classe `Start` de `Shell_TrayWnd` — et d’une heuristique sur la géométrie de la barre sinon, la barre XAML de Windows 11 n’exposant pas ce bouton ; la position est réévaluée à chaque tick pour suivre une barre déplacée ou masquée automatiquement.
+
+`WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est reçu et compté sans jamais voler le focus. `MA_NOACTIVATEANDEAT` conviendrait au blocage mais supprimerait aussi le message de bouton, donc le garde ne pourrait plus signaler la tentative. Aucun hook n’est installé, aucune touche n’est synthétisée, aucune fenêtre du shell n’est sous-classée, déplacée ou détruite : détruire le garde rend le bouton à Windows. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie `Échap` ne sont jamais concernés.
+
 ### `PopupSwarm`
 
-Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que le plafond protecteur de 67 n’est pas atteint. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` reste le chemin privilégié du nettoyage de fin et de l’arrêt d’urgence. Les créations et destructions sont différées hors du gestionnaire de messages. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
+Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que le plafond courant n’est pas atteint. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` reste le chemin privilégié du nettoyage de fin et de l’arrêt d’urgence.
+
+Le plafond est réglable en cours de partie via `SetCeiling()`. Il vaut le maximum protecteur de 67 jusqu’au monologue final, pour que le gag de duplication garde de la marge, puis suit le budget décroissant de `DesiredPopupCount()`. `Dissolve()` détruit directement N fenêtres, sans passer par le chemin de refus : c’est le glitch qui mange l’essaim dans le dernier tiers, pas l’utilisateur qui obtient enfin le droit de fermer. Les créations et destructions sont différées hors du gestionnaire de messages. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
 
 ### `GlitchLayer` et rendu dense
 
@@ -125,6 +137,20 @@ Sélectionne aléatoirement un alias sonore Windows et le joue de manière async
 ### `LiveSprayTag`
 
 Le `67` est décrit comme trois tracés de points, pas comme un glyphe de police. Le rendu révèle les tracés par longueur d’arc, ce qui donne la peinture en direct, puis ajoute l’overspray et les coulures derrière la buse. `GraffitiPaintHead()` expose la position de la buse pour que l’oie puisse suivre son propre tag.
+
+Trois règles garantissent que le tag est réellement visible, quel que soit l’écran :
+
+- `TagScale()`, `TagCenter()` et `TagZone()` vivent dans le cœur partagé, donc le renderer et le placement des images calculent la même boîte ;
+- aucune image brainrot ne peut se poser dans `TagZone()`, à aucun moment de la timeline, et celles déjà posées y sont reprises par une oie quand la phase graffiti commence ;
+- le tag est dessiné **après** les images, et une passe d’encre presque opaque est posée sous la couleur, pour qu’un fond clair, le filtre de couleur ou une pile de photos ne puisse pas l’effacer.
+
+C’est la correction du cas observé sur Windows 10 : sur un écran de petite définition, le tag était calculé au centre, tandis que les images placées avant la phase graffiti pouvaient occuper ce même centre et étaient dessinées par-dessus.
+
+### `PropDelivery`
+
+Une image brainrot n’apparaît jamais seule. Chaque `VisualSprite` traverse quatre états — `Fetching`, `Carried`, `Placed`, `Tearing` — pilotés par `UpdateSprites()`. Une oie libre est choisie par `PickFreeCarrier()`, marquée hors champ, envoyée en charge vers le bord le plus proche, puis l’image devient visible dans son bec dès qu’elle a quitté le canvas et revient au pas. Sans oie libre, la livraison est simplement reportée. Chaque étape possède une échéance calculée sur la distance réelle, bornée entre 5 et 18 secondes, pour qu’un écran très large ne coupe jamais un trajet et qu’aucun état ne puisse rester bloqué.
+
+`PropCloseBox()` définit la croix `[x]` d’une image posée ; le moteur teste le clic sur cette même boîte, sans hook, en lisant la position du pointeur. La fermeture est réelle et payante : aura, pic de glitch, deux livraisons commandées, et une escalade sur l’essaim puis sur la troupe.
 
 ### `ShutdownDirector`
 
@@ -149,6 +175,7 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - images brainrot pré-réduites à 256 px, rotations finales pré-rastérisées et compositées directement en ARGB prémultiplié ;
 - graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
+- croix `[x]` des images tracée à main levée en scène légère et en rectangle simple en scène dense ;
 - nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
 - effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
 - mémoire cible : moins de 150 Mo ;

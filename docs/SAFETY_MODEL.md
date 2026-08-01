@@ -11,8 +11,9 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - overlays transparents, y compris déchirures, scanlines, blocs corrompus, faux curseurs, faux cadres « Ne répond pas » et fausses notifications, tous peints à l’intérieur de l’overlay ;
 - flashs plein écran bornés par l'horloge réelle et sons d'alerte Windows asynchrones, explicitement annoncés et désactivables ;
 - déplacement borné et restauré des fenêtres ;
-- traction initiale du curseur sur 67 pixels, puis tempête de mouvement bornée à l’écran et restaurée lors du nettoyage ;
-- texte écrit directement dans le faux Bloc-notes interne à GooseRot ;
+- traction initiale du curseur sur 67 pixels, puis tempête par vagues, bornée à l’écran, restaurée lors du nettoyage, et qui rend intégralement le pointeur pendant une partie de chaque cycle ;
+- texte écrit directement dans le faux Bloc-notes interne à GooseRot, fenêtre qui refuse d’être réduite dans la barre des tâches tant que sa phase de frappe est active ;
+- fenêtre GooseRot posée sur le bouton Démarrer, qui absorbe les clics l’atteignant ;
 - lancement consenti de six utilitaires Windows au maximum, suivis exclusivement par leur PID de création ;
 - fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, via notification foreground sans hook clavier ni frappe globale ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
@@ -20,12 +21,35 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - faux glitch, faux BSOD et faux firmware ;
 - explosion, coupure noire et conclusion rendues dans l’overlay, sans appel système.
 
+## Bouton Démarrer recouvert
+
+Le blocage du bouton Démarrer est un recouvrement, pas une interception :
+
+- il s’agit d’une fenêtre appartenant au processus GooseRot, positionnée sur le rectangle du bouton et détruite par le nettoyage, l’arrêt d’urgence et la fin du processus ;
+- aucun hook clavier ou souris global n’est installé, aucune touche n’est synthétisée, et aucune fenêtre du shell n’est sous-classée, déplacée, désactivée ou détruite ;
+- `WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est absorbé sans jamais prendre le focus à l’application de l’utilisateur ;
+- `Ctrl+Shift+Échap`, `Alt+Tab`, `Win+Tab`, la zone de notification et le reste de la barre des tâches restent utilisables ;
+- la sortie d’urgence `Échap` maintenue deux secondes n’est jamais affectée ;
+- une fois le garde détruit, Windows retrouve immédiatement son comportement normal : aucun réglage du shell n’a été modifié ;
+- le consentement initial annonce explicitement ce recouvrement.
+
+## Images fermables
+
+Les images brainrot posées sur le bureau portent une croix `[x]` réellement cliquable :
+
+- le clic est détecté en lisant la position du pointeur au moment d’un appui, sans hook clavier ni souris, puisque l’overlay laisse déjà passer les clics ;
+- aucune saisie n’est enregistrée : seul l’état du bouton gauche et la position du pointeur sont consultés, jamais le contenu d’une frappe ;
+- la fermeture ne touche qu’un dessin interne à l’overlay et n’affecte aucune fenêtre du système ;
+- les conséquences — aura, glitch, deux images commandées, escalade sur l’essaim et la troupe — restent entièrement dans les limites décrites ici.
+
 ## Fenêtres récalcitrantes
 
 Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une fenêtre fermée en fait apparaître deux » est borné par construction :
 
 - il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
 - le nombre total de popups est plafonné à 67 ; une fois ce plafond atteint, les fermetures ordinaires restent refusées et seul le chemin privilégié de nettoyage les détruit ;
+- après le monologue final, le plafond décroît et l’essaim est détruit par ce même chemin privilégié jusqu’à disparaître : la fin réduit le nombre de fenêtres au lieu de l’augmenter ;
+- le faux Bloc-notes refuse d’être réduit, jamais d’être détruit : le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement ;
 - le faux Bloc-notes peut revenir tant que sa phase de frappe est active, puis le nettoyage le détruit directement ;
 - les vrais utilitaires reçoivent seulement une requête `WM_CLOSE` pendant le nettoyage et ne sont jamais terminés de force ;
 - les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
@@ -92,7 +116,7 @@ Un processus de secours du même exécutable surveille le moteur via une mémoir
 - la position initiale du curseur et le focus sont restaurés ;
 - aucun BSOD réel ni processus de représailles n’existe ; après terminaison, le seul effet permis au processus de secours est la restauration.
 
-Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, ainsi que le plafond, le refus de fermeture et le nettoyage privilégié complet de l’essaim de popups.
+Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, le plafond, le refus de fermeture et le nettoyage privilégié complet de l’essaim de popups, le plafond réglable et la destruction directe utilisée par la fin, ainsi que le refus de réduction du faux Bloc-notes par les trois chemins prévus.
 
 ## Consentement et environnement
 
@@ -100,5 +124,5 @@ Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres p
 - maintenir `Esc` pendant deux secondes restaure et ferme l’application uniquement en `safe` ;
 - `normal` et `lab` ignorent ce geste comme commande de sortie ;
 - `lab` affiche un avertissement bloquant indiquant que la VM sera saccagée et pourra ne plus redémarrer ;
-- le HUD affiche en permanence le profil actif ;
+- le HUD affiche en permanence le profil actif, ainsi que l’état courant du pointeur pendant la tempête (`CURSOR: SEIZED` ou `CURSOR: YOURS`) ;
 - les tests `lab` se font sur une VM isolée, jetable, avec snapshot hors ligne et sans données importantes.

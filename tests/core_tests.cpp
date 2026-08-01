@@ -120,17 +120,18 @@ void TestArgumentParsing() {
 }
 
 void TestChaosVisualCues() {
+  namespace phase = gooserot::phase;
   using gooserot::EvaluateChaosVisualCue;
-  const auto before = EvaluateChaosVisualCue(89.9, 12.0, 67U, true);
+  const auto before = EvaluateChaosVisualCue(phase::kOwnedApps - 0.1, 12.0, 67U, true);
   Expect(before.flashIntensity == 0.0f && before.faultRibbonIntensity == 0.0f,
          "visual corruption is inactive before its phase");
 
-  const auto mutedFlash = EvaluateChaosVisualCue(299.0, 12.0, 67U, false);
+  const auto mutedFlash = EvaluateChaosVisualCue(phase::kEnd - 1.0, 12.0, 67U, false);
   Expect(mutedFlash.flashIntensity == 0.0f && mutedFlash.faultRibbonIntensity > 0.0f,
          "no-flashes preserves non-flashing glitch ribbons");
 
-  const auto deterministicA = EvaluateChaosVisualCue(299.0, 17.25, 67U, true);
-  const auto deterministicB = EvaluateChaosVisualCue(299.0, 17.25, 67U, true);
+  const auto deterministicA = EvaluateChaosVisualCue(phase::kEnd - 1.0, 17.25, 67U, true);
+  const auto deterministicB = EvaluateChaosVisualCue(phase::kEnd - 1.0, 17.25, 67U, true);
   Expect(deterministicA.flashIntensity == deterministicB.flashIntensity &&
              deterministicA.faultRibbonIntensity == deterministicB.faultRibbonIntensity &&
              deterministicA.pattern == deterministicB.pattern,
@@ -142,7 +143,7 @@ void TestChaosVisualCues() {
   bool previousFlash = false;
   for (int sample = 0; sample <= 10000; ++sample) {
     const double realTime = static_cast<double>(sample) / 1000.0;
-    const auto cue = EvaluateChaosVisualCue(299.0, realTime, 67U, true);
+    const auto cue = EvaluateChaosVisualCue(phase::kEnd - 1.0, realTime, 67U, true);
     Expect(cue.flashIntensity >= 0.0f && cue.flashIntensity <= 1.0f,
            "flash intensity remains bounded");
     Expect(cue.faultRibbonIntensity >= 0.0f && cue.faultRibbonIntensity <= 1.0f,
@@ -183,19 +184,139 @@ void TestPremultipliedAlphaBlend() {
 }
 
 void TestTimeline() {
+  namespace phase = gooserot::phase;
   gooserot::TimelineEngine timeline;
   auto events = timeline.Advance(0.0);
   Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::PassiveEntrance,
          "entrance fires at zero");
-  events = timeline.Advance(135.0);
-  Expect(events.size() == 6, "all crossed events fire exactly once");
-  Expect(events.back().id == gooserot::TimelineEventId::Duplicate, "duplication at 2:15");
-  Expect(timeline.Advance(135.0).empty(), "event does not fire twice");
+  events = timeline.Advance(phase::kDuplicate);
+  Expect(events.size() == 8, "all crossed events fire exactly once");
+  Expect(events.back().id == gooserot::TimelineEventId::Duplicate, "duplication ends the crossing");
+  Expect(timeline.Advance(phase::kDuplicate).empty(), "event does not fire twice");
 
-  timeline.Reset(270.0);
-  events = timeline.Advance(270.0);
+  timeline.Reset(phase::kCountdown);
+  events = timeline.Advance(phase::kCountdown);
   Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::Countdown,
          "start-at primes earlier events");
+
+  // The walk-out beat only works if the flock is away long enough for the
+  // Notepad to open on an empty desktop and still be alone for a while.
+  Expect(phase::kGooseExit < phase::kNotepad && phase::kNotepad < phase::kGooseReturn,
+         "the fake Notepad opens while the flock is off screen");
+  Expect(phase::kGooseReturn - phase::kGooseExit >= 20.0, "the absence is long enough to register");
+
+  double previous = -1.0;
+  for (const gooserot::TimelineEvent& event : timeline.Events()) {
+    Expect(event.atSeconds > previous, "timeline anchors are strictly increasing");
+    Expect(event.atSeconds <= phase::kEnd, "no anchor lands past the finale");
+    previous = event.atSeconds;
+  }
+}
+
+void TestCursorStormWaves() {
+  namespace phase = gooserot::phase;
+  using gooserot::CursorStormEnvelope;
+  Expect(CursorStormEnvelope(phase::kScreenShake - 1.0) == 0.0f,
+         "the pointer is untouched before the storm");
+
+  // Sample a stretch late in the storm, where it is at its most aggressive: the
+  // pointer still has to come back regularly, or it is simply unusable.
+  int released = 0;
+  int seized = 0;
+  float peak = 0.0f;
+  for (int step = 0; step < 600; ++step) {
+    const double at = phase::kCountdown - 30.0 + step * 0.05;
+    const float value = CursorStormEnvelope(at);
+    Expect(value >= 0.0f && value <= 1.0f, "the storm envelope stays normalised");
+    peak = std::max(peak, value);
+    if (value <= 0.0f) ++released;
+    else ++seized;
+  }
+  Expect(released > 0 && seized > 0, "the late storm both seizes and releases the pointer");
+  Expect(released * 4 >= seized, "released windows stay a meaningful share of every cycle");
+  Expect(peak > 0.7f, "the late storm still gets genuinely violent");
+
+  // The seized share has to grow, otherwise the phase never escalates.
+  auto seizedShare = [](double from) {
+    int count = 0;
+    for (int step = 0; step < 150; ++step) {
+      if (CursorStormEnvelope(from + step * 0.05) > 0.0f) ++count;
+    }
+    return count;
+  };
+  Expect(seizedShare(phase::kCountdown - 20.0) > seizedShare(phase::kScreenShake + 0.0),
+         "the storm seizes the pointer for longer as the run goes on");
+}
+
+void TestPopupBudget() {
+  namespace phase = gooserot::phase;
+  using gooserot::DesiredPopupCount;
+  constexpr int kMaximum = 67;
+  Expect(DesiredPopupCount(phase::kDuplicate - 1.0, kMaximum) == 0, "no swarm before duplication");
+  Expect(DesiredPopupCount(phase::kDuplicate, kMaximum) == 1, "the swarm starts at one window");
+  Expect(DesiredPopupCount(phase::kFinalMonologue, kMaximum) == kMaximum,
+         "the swarm peaks at the protective ceiling");
+  Expect(DesiredPopupCount((phase::kFinalMonologue + phase::kCircleDance) * 0.5, kMaximum) <
+             kMaximum,
+         "the finale starts eating the swarm");
+  Expect(DesiredPopupCount(phase::kCircleDance, kMaximum) == 0, "the swarm is gone by the dance");
+  Expect(DesiredPopupCount(phase::kEnd, kMaximum) == 0, "nothing survives to the explosion");
+
+  int previous = -1;
+  for (double at = phase::kDuplicate; at <= phase::kFinalMonologue; at += 1.0) {
+    const int count = DesiredPopupCount(at, kMaximum);
+    Expect(count >= previous, "the swarm only grows before the monologue");
+    previous = count;
+  }
+}
+
+void TestTagZoneAndCloseBox() {
+  const gooserot::RectF canvas{0.0f, 0.0f, 1024.0f, 768.0f};
+  const gooserot::RectF zone = gooserot::TagZone(canvas);
+  const gooserot::Vec2 center = gooserot::TagCenter(canvas);
+  Expect(zone.left < center.x && zone.right > center.x, "the tag zone brackets the tag centre");
+  Expect(zone.top < center.y && zone.bottom > center.y, "the tag zone covers the tag vertically");
+  Expect(zone.Width() > gooserot::TagScale(canvas) * 2.0f, "the zone covers both digits");
+
+  // The badge has to sit on the photo it belongs to, and the hit test has to
+  // agree with it, or the [x] becomes decorative.
+  const gooserot::Vec2 propCenter{400.0f, 300.0f};
+  constexpr float propSize = 150.0f;
+  const gooserot::RectF box = gooserot::PropCloseBox(propCenter, propSize);
+  Expect(box.left > propCenter.x && box.bottom < propCenter.y + propSize * 0.5f,
+         "the badge sits in the photo's top-right corner");
+  Expect(box.right <= propCenter.x + propSize * 0.5f + 1.0f, "the badge stays on the photo");
+  Expect(gooserot::PropCloseBoxHit(propCenter, propSize, box.Center()),
+         "the centre of the badge is a hit");
+  Expect(!gooserot::PropCloseBoxHit(propCenter, propSize, propCenter),
+         "the middle of the photo is not a close target");
+  Expect(!gooserot::PropCloseBoxHit(propCenter, propSize, {box.left - 40.0f, box.Center().y}),
+         "a click well left of the badge misses");
+}
+
+void TestOffstageGoose() {
+  const gooserot::RectF bounds{0.0f, 0.0f, 800.0f, 600.0f};
+  gooserot::GooseEntity goose({400.0f, 300.0f});
+  goose.SetTarget({1200.0f, 300.0f}, gooserot::SpeedTier::Run);
+  for (int i = 0; i < 120; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.Position().x <= 800.0f - gooserot::GooseEntity::kBoundsMargin + 0.01f,
+         "a normal goose is held inside the canvas");
+
+  goose.SetOffstage(true);
+  for (int i = 0; i < 200; ++i) goose.Update(1.0f / 30.0f, bounds);
+  Expect(goose.IsOffstage(), "the offstage flag persists until cleared");
+  Expect(goose.Position().x > 800.0f, "an offstage goose walks right out of the frame");
+  Expect(goose.Position().x <= 800.0f + gooserot::GooseEntity::kOffstageMargin + 0.01f,
+         "the outer rail still bounds an offstage goose");
+
+  // Walking back in and clearing the flag must not teleport the goose.
+  goose.SetTarget({400.0f, 300.0f}, gooserot::SpeedTier::Run);
+  for (int i = 0; i < 200; ++i) goose.Update(1.0f / 30.0f, bounds);
+  const gooserot::Vec2 before = goose.Position();
+  goose.SetOffstage(false);
+  goose.Update(1.0f / 30.0f, bounds);
+  Expect(gooserot::Distance(before, goose.Position()) < 20.0f,
+         "clearing the flag once back inside does not snap the goose");
 }
 
 void TestGooseLocomotion() {
@@ -283,8 +404,12 @@ int main() {
   TestCarrierAssignment();
   TestPremultipliedAlphaBlend();
   TestTimeline();
+  TestCursorStormWaves();
+  TestPopupBudget();
+  TestTagZoneAndCloseBox();
   TestGooseLocomotion();
   TestGooseAnimationState();
+  TestOffstageGoose();
   TestWindowClamp();
   if (failures == 0) {
     std::cout << "All GooseRot core tests passed.\n";
