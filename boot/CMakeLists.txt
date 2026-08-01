@@ -96,8 +96,10 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
     set(GOOSEBOOT_BIOS_STAGE1 "${GOOSEBOOT_FIRMWARE_DIR}/gooseboot-bios-stage1.bin")
     set(GOOSEBOOT_BIOS_STAGE2 "${GOOSEBOOT_FIRMWARE_DIR}/gooseboot-bios-stage2.bin")
     set(GOOSEBOOT_BIOS_IMAGE "${GOOSEBOOT_FIRMWARE_DIR}/gooseboot-bios.img")
+    set(GOOSEBOOT_BIOS_CDSTUB "${GOOSEBOOT_FIRMWARE_DIR}/gooseboot-bios-cdstub.bin")
     set(GOOSEBOOT_BIOS_STAGE1_PE "${GOOSEBOOT_INTERMEDIATE_DIR}/stage1.pe")
     set(GOOSEBOOT_BIOS_STAGE2_PE "${GOOSEBOOT_INTERMEDIATE_DIR}/stage2.pe")
+    set(GOOSEBOOT_BIOS_CDSTUB_PE "${GOOSEBOOT_INTERMEDIATE_DIR}/cdrom_stub.pe")
 
     add_library(gooseboot_uefi_objects OBJECT
         game/game.cpp
@@ -141,6 +143,10 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
 
     add_library(gooseboot_bios_entry_object OBJECT platform/bios/stage2_entry.S)
     target_compile_options(gooseboot_bios_entry_object PRIVATE
+        -m32 -ffreestanding -fno-pic -fno-pie)
+
+    add_library(gooseboot_bios_cdstub_object OBJECT platform/bios/cdrom_stub.S)
+    target_compile_options(gooseboot_bios_cdstub_object PRIVATE
         -m32 -ffreestanding -fno-pic -fno-pie)
 
     add_library(gooseboot_bios_objects OBJECT
@@ -203,22 +209,58 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
         VERBATIM
     )
 
-    add_executable(gooseboot_image_builder tools/make_bios_image.cpp)
-    target_compile_features(gooseboot_image_builder PRIVATE cxx_std_17)
-    set_target_properties(gooseboot_image_builder PROPERTIES CXX_EXTENSIONS OFF)
-    target_compile_options(gooseboot_image_builder PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
-
     add_custom_command(
-        OUTPUT "${GOOSEBOOT_BIOS_IMAGE}"
-        COMMAND "$<TARGET_FILE:gooseboot_image_builder>"
-            "${GOOSEBOOT_BIOS_STAGE1}" "${GOOSEBOOT_BIOS_STAGE2}"
-            "${GOOSEBOOT_BIOS_IMAGE}"
-        DEPENDS gooseboot_image_builder
-                "${GOOSEBOOT_BIOS_STAGE1}" "${GOOSEBOOT_BIOS_STAGE2}"
-        COMMENT "Assembling a build-directory-only GooseBoot BIOS image"
+        OUTPUT "${GOOSEBOOT_BIOS_CDSTUB}"
+        BYPRODUCTS "${GOOSEBOOT_BIOS_CDSTUB_PE}"
+        COMMAND "${GOOSEBOOT_LINKER}"
+            -mi386pe --image-base 0 --entry _cdstub_start
+            --no-insert-timestamp --disable-runtime-pseudo-reloc --no-undefined
+            -T "${CMAKE_CURRENT_SOURCE_DIR}/platform/bios/cdrom_stub.ld"
+            -o "${GOOSEBOOT_BIOS_CDSTUB_PE}"
+            $<TARGET_OBJECTS:gooseboot_bios_cdstub_object>
+        COMMAND "${GOOSEBOOT_OBJCOPY}" -O binary -j .boot
+            "${GOOSEBOOT_BIOS_CDSTUB_PE}" "${GOOSEBOOT_BIOS_CDSTUB}"
+        DEPENDS gooseboot_bios_cdstub_object
+                $<TARGET_OBJECTS:gooseboot_bios_cdstub_object>
+                platform/bios/cdrom_stub.ld
+        COMMENT "Building the read-only 512-byte GooseBoot El Torito CD stub"
+        COMMAND_EXPAND_LISTS
         VERBATIM
     )
+
+    # The raw combined image is produced by a tool that has to run on the build
+    # host. A cross build (for example the Linux mingw-w64 toolchain file) can
+    # only emit a target-architecture executable, so that one artifact is left
+    # out there; the two bootable ISOs never needed it.
+    set(GOOSEBOOT_BUILD_RAW_IMAGE ON)
+    set(GOOSEBOOT_RAW_IMAGE_DEPEND "${GOOSEBOOT_BIOS_IMAGE}")
+    if(CMAKE_CROSSCOMPILING)
+        set(GOOSEBOOT_BUILD_RAW_IMAGE OFF)
+        set(GOOSEBOOT_BIOS_IMAGE "")
+        set(GOOSEBOOT_RAW_IMAGE_DEPEND "")
+        message(STATUS
+            "Cross build: skipping the raw gooseboot-bios.img host tool step "
+            "and the gooseboot_firmware_bundle target that stages it")
+    endif()
+
+    if(GOOSEBOOT_BUILD_RAW_IMAGE)
+        add_executable(gooseboot_image_builder tools/make_bios_image.cpp)
+        target_compile_features(gooseboot_image_builder PRIVATE cxx_std_17)
+        set_target_properties(gooseboot_image_builder PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(gooseboot_image_builder PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+
+        add_custom_command(
+            OUTPUT "${GOOSEBOOT_BIOS_IMAGE}"
+            COMMAND "$<TARGET_FILE:gooseboot_image_builder>"
+                "${GOOSEBOOT_BIOS_STAGE1}" "${GOOSEBOOT_BIOS_STAGE2}"
+                "${GOOSEBOOT_BIOS_IMAGE}"
+            DEPENDS gooseboot_image_builder
+                    "${GOOSEBOOT_BIOS_STAGE1}" "${GOOSEBOOT_BIOS_STAGE2}"
+            COMMENT "Assembling a build-directory-only GooseBoot BIOS image"
+            VERBATIM
+        )
+    endif()
 
     set(GOOSEBOOT_VERIFY_STAMP "${GOOSEBOOT_FIRMWARE_DIR}/verified.stamp")
     add_custom_command(
@@ -230,11 +272,15 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
             "-DBIOS_STAGE2=${GOOSEBOOT_BIOS_STAGE2}"
             "-DBIOS_IMAGE=${GOOSEBOOT_BIOS_IMAGE}"
             "-DBIOS_STAGE2_PE=${GOOSEBOOT_BIOS_STAGE2_PE}"
+            "-DBIOS_CDSTUB=${GOOSEBOOT_BIOS_CDSTUB}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_firmware.cmake"
         COMMAND "${CMAKE_COMMAND}" -E touch "${GOOSEBOOT_VERIFY_STAMP}"
+        # stage2.pe is a byproduct of the stage 2 command, so depending on the
+        # stripped stage 2 already orders this correctly. Naming the byproduct
+        # here instead makes Makefile generators look for a rule that owns it.
         DEPENDS "${GOOSEBOOT_UEFI_IMAGE}" "${GOOSEBOOT_BIOS_STAGE1}"
-                "${GOOSEBOOT_BIOS_STAGE2}" "${GOOSEBOOT_BIOS_IMAGE}"
-                "${GOOSEBOOT_BIOS_STAGE2_PE}"
+                "${GOOSEBOOT_BIOS_STAGE2}" "${GOOSEBOOT_BIOS_CDSTUB}"
+                ${GOOSEBOOT_RAW_IMAGE_DEPEND}
                 "${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_firmware.cmake"
         COMMENT "Verifying GooseBoot firmware layout and import boundaries"
         VERBATIM
@@ -242,6 +288,7 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
 
     add_custom_target(gooseboot_firmware ALL DEPENDS "${GOOSEBOOT_VERIFY_STAMP}")
 
+    if(GOOSEBOOT_BUILD_RAW_IMAGE)
     add_custom_target(gooseboot_firmware_bundle
         COMMAND "${CMAKE_COMMAND}"
             "-DUEFI_IMAGE=${GOOSEBOOT_UEFI_IMAGE}"
@@ -255,6 +302,7 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
         COMMENT "Staging an unsigned, non-installing experimental firmware bundle"
         VERBATIM
     )
+    endif()
 
     if(GOOSEBOOT_BUILD_TESTS)
         add_test(NAME gooseboot_firmware_layout
@@ -264,6 +312,7 @@ if(GOOSEBOOT_BUILD_FIRMWARE)
                 "-DBIOS_STAGE1=${GOOSEBOOT_BIOS_STAGE1}"
                 "-DBIOS_STAGE2=${GOOSEBOOT_BIOS_STAGE2}"
                 "-DBIOS_IMAGE=${GOOSEBOOT_BIOS_IMAGE}"
+                "-DBIOS_CDSTUB=${GOOSEBOOT_BIOS_CDSTUB}"
                 "-DBIOS_STAGE2_PE=${GOOSEBOOT_BIOS_STAGE2_PE}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_firmware.cmake")
         set_tests_properties(gooseboot_firmware_layout PROPERTIES TIMEOUT 10)
