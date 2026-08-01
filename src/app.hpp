@@ -42,13 +42,13 @@ class GooseRotApp {
   void UpdateErrorSounds();
   void UpdateOwnedWindowsApps();
   void UpdateTaskbarGuard();
+  void FileFinding(const wchar_t* text);
   void UpdateDesktopActions();
   void UpdateGooseTargets(float deltaSeconds);
   void UpdateSprites();
   void UpdatePropInteractions();
   void UpdateCursorGrab(double logicalDelta);
   void UpdateCursorChaos();
-  void UpdatePopups();
   void UpdateToasts();
   void UpdateGlitch(double logicalDelta);
   void EnsureGooseCount();
@@ -92,7 +92,7 @@ class GooseRotApp {
   PromptWindow auraPrompt_;
   PromptWindow sigmaPrompt_;
   NotepadWindow notepad_;
-  PopupSwarm popups_;
+  Typewriter typist_;
   OwnedWindowsApps ownedWindowsApps_;
   TaskbarGuard taskbarGuard_;
   WindowsKeyGuard windowsKeyGuard_;
@@ -104,13 +104,10 @@ class GooseRotApp {
   LARGE_INTEGER lastCounter_{};
   double logicalTime_ = 0.0;
   double realTime_ = 0.0;
-  double lastTypedAt_ = 0.0;
-  double nextKeyBurstAt_ = -1.0;
   double nextErrorSoundAt_ = -1.0;
   double nextWindowAction_ = phase::kCursorAndWindows;
   double nextCursorAction_ = phase::kCursorAndWindows + 15.0;
   double nextSpriteAt_ = phase::kGooseReturn;
-  double nextPopupDissolveAt_ = 0.0;
   double nextOwnedAppAtReal_ = 0.0;
   double bubbleUntil_ = 0.0;
   double emergencyHeldSeconds_ = 0.0;
@@ -119,6 +116,8 @@ class GooseRotApp {
   double grabStartedAt_ = -1.0;
   double grabDeadline_ = -1.0;
   double lastTaskbarGuardPokeAt_ = -1000.0;
+  // When the scorecard was pinned up. Before that it does not exist at all.
+  double auraRevealedAt_ = -1.0;
   double shutdownStartedRealTime_ = -1.0;
   int auraDelta_ = 0;
   int grabRemainingPixels_ = 0;
@@ -144,15 +143,18 @@ class GooseRotApp {
   bool recoveryFailure_ = false;
   bool errorSoundActive_ = false;
   bool tagZoneCleared_ = false;
+  bool auraVisible_ = false;
+  bool inspectionRound_ = false;
   int aura_ = 0;
   int exitCode_ = 0;
-  int typedWordCount_ = 0;
   // Photos the user tore off the desktop, and the replacements still owed.
   int propsClosed_ = 0;
   int pendingPropOrders_ = 0;
   // Extra geese earned by closing photos, on top of the timeline's own count.
   int extraGeese_ = 0;
   unsigned patrolStep_ = 0;
+  // -1 until the inspector reaches its first station on the opening round.
+  int inspectionStation_ = -1;
   Vec2 patrolFocus_;
   POINT auraReferenceCursor_{};
   PendingAction pendingAction_;

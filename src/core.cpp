@@ -175,7 +175,7 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
     return false;
   }
   if (config.startAtSeconds > phase::kEnd) {
-    error = L"--start-at cannot exceed 06:00.";
+    error = L"--start-at cannot exceed 07:30.";
     return false;
   }
   if (config.preview) {
@@ -284,24 +284,26 @@ FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale) {
 
 TimelineEngine::TimelineEngine()
     : events_({
-          {TimelineEventId::PassiveEntrance, phase::kEntrance, L"Passive Entrance"},
-          {TimelineEventId::AuraPrompt, phase::kAuraPrompt, L"Aura Deduction"},
-          {TimelineEventId::GooseExit, phase::kGooseExit, L"The Goose Walks Out"},
-          {TimelineEventId::NotepadStart, phase::kNotepad, L"Auto-Typing"},
-          {TimelineEventId::GooseReturn, phase::kGooseReturn, L"The Goose Comes Back"},
+          {TimelineEventId::PassiveEntrance, phase::kEntrance, L"The Inspector Arrives"},
+          {TimelineEventId::Introduction, phase::kIntroduction, L"Credentials"},
+          {TimelineEventId::InspectionRound, phase::kInspectionRound, L"Inspection Round"},
+          {TimelineEventId::NotepadStart, phase::kNotepad, L"The Case File Opens"},
+          {TimelineEventId::AuraPrompt, phase::kAuraPrompt, L"First Deduction"},
+          {TimelineEventId::GooseExit, phase::kGooseExit, L"Off To Fetch Evidence"},
+          {TimelineEventId::GooseReturn, phase::kGooseReturn, L"Evidence Delivered"},
           {TimelineEventId::CursorAndWindows, phase::kCursorAndWindows, L"Cursor & Window Hijack"},
           {TimelineEventId::MemeSubtitles, phase::kSubtitles, L"Brainrot Subtitles"},
           {TimelineEventId::ClipboardBadge, phase::kClipboard, L"Clipboard Certified"},
-          {TimelineEventId::Duplicate, phase::kDuplicate, L"Duplication"},
-          {TimelineEventId::Graffiti, phase::kGraffiti, L"Graffiti & Vibe"},
-          {TimelineEventId::SigmaPrompt, phase::kSigma, L"Sigma Trap"},
+          {TimelineEventId::Duplicate, phase::kDuplicate, L"Backup Inspectors"},
+          {TimelineEventId::Graffiti, phase::kGraffiti, L"The Score On The Wall"},
+          {TimelineEventId::SigmaPrompt, phase::kSigma, L"Right Of Appeal"},
           {TimelineEventId::ScreenShake, phase::kScreenShake, L"Screen Shake"},
           {TimelineEventId::ColorFilter, phase::kColorFilter, L"Color Filter"},
-          {TimelineEventId::FinalMonologue, phase::kFinalMonologue, L"Final Monologue"},
+          {TimelineEventId::FinalMonologue, phase::kFinalMonologue, L"The Verdict"},
           {TimelineEventId::Countdown, phase::kCountdown, L"Final Countdown"},
           {TimelineEventId::CircleDance, phase::kCircleDance, L"Circle Dance"},
           {TimelineEventId::ResetAura, phase::kResetAura, L"Final Trigger"},
-          {TimelineEventId::Shutdown, phase::kEnd, L"Aura Core Explosion"},
+          {TimelineEventId::Shutdown, phase::kEnd, L"The File Is Closed"},
       }) {
   Reset();
 }
@@ -455,18 +457,92 @@ float CursorStormEnvelope(double logicalTime) {
   return std::clamp(shape * (0.40f + 0.60f * ramp), 0.0f, 1.0f);
 }
 
-int DesiredPopupCount(double logicalTime, int maximum) {
-  if (maximum <= 0 || logicalTime < phase::kDuplicate) return 0;
-  if (logicalTime <= phase::kFinalMonologue) {
-    const double growth = (logicalTime - phase::kDuplicate) /
-                          (phase::kFinalMonologue - phase::kDuplicate);
-    return std::clamp(1 + static_cast<int>(growth * maximum), 1, maximum);
+void Typewriter::Queue(const std::wstring& text) { pending_ += text; }
+
+void Typewriter::SetSpeed(double charactersPerSecond) {
+  charactersPerSecond_ = std::clamp(charactersPerSecond, 1.0, 90.0);
+}
+
+void Typewriter::Reset(double now) {
+  pending_.clear();
+  typoRemaining_ = 0;
+  nextKeystrokeAt_ = now;
+  started_ = true;
+}
+
+bool Typewriter::Advance(double now, std::mt19937& random, std::wstring& visible) {
+  if (!started_) {
+    started_ = true;
+    nextKeystrokeAt_ = now;
   }
-  // Past the monologue the display itself is the effect: the swarm is consumed
-  // so the finale is glitch instead of a wall of dialogs.
-  const double decay = (logicalTime - phase::kFinalMonologue) /
-                       (phase::kCircleDance - phase::kFinalMonologue);
-  return std::clamp(static_cast<int>(std::ceil((1.0 - decay) * maximum)), 0, maximum);
+  // A long stall must not be repaid as one instantaneous paragraph. The budget
+  // counts characters actually put on screen, including the ones a typo adds,
+  // so a burst of corrections cannot smuggle a whole line through.
+  constexpr int kMaximumKeystrokesPerAdvance = 24;
+  int budget = kMaximumKeystrokesPerAdvance;
+  const double base = 1.0 / charactersPerSecond_;
+  std::uniform_real_distribution<double> jitter(0.55, 1.7);
+  std::uniform_int_distribution<int> chance(0, 999);
+
+  bool changed = false;
+  while (budget > 0 && now >= nextKeystrokeAt_) {
+    if (typoRemaining_ > 0) {
+      // Noticed. Rubbing out is quicker and steadier than typing.
+      if (!visible.empty()) visible.pop_back();
+      --typoRemaining_;
+      --budget;
+      nextKeystrokeAt_ += base * 0.55;
+      // A short breath before picking the sentence back up.
+      if (typoRemaining_ == 0) nextKeystrokeAt_ += base * 3.0;
+      changed = true;
+      continue;
+    }
+    if (pending_.empty()) {
+      nextKeystrokeAt_ = now;
+      break;
+    }
+
+    const wchar_t character = pending_.front();
+    // Fumble only mid-word, so the correction reads as a slip rather than as
+    // the typist forgetting how sentences start.
+    const bool typoCandidate = (character >= L'a' && character <= L'z') && !visible.empty() &&
+                               visible.back() != L' ' && visible.back() != L'\n';
+    if (typoCandidate && chance(random) < 22) {
+      static constexpr wchar_t kNearbyKeys[] = L"qwertyuiopasdfghjklzxcvbnm";
+      std::uniform_int_distribution<std::size_t> key(0, std::size(kNearbyKeys) - 2U);
+      std::uniform_int_distribution<int> length(1, 3);
+      typoRemaining_ = length(random);
+      for (int index = 0; index < typoRemaining_; ++index) {
+        visible += kNearbyKeys[key(random)];
+      }
+      budget -= typoRemaining_;
+      // Keep going for a moment before the mistake registers.
+      nextKeystrokeAt_ += base * (1.0 + static_cast<double>(typoRemaining_) * 0.8);
+      changed = true;
+      continue;
+    }
+
+    visible += character;
+    pending_.erase(pending_.begin());
+    --budget;
+    changed = true;
+
+    double delay = base * jitter(random);
+    switch (character) {
+      case L'\n': delay += base * 9.0; break;
+      case L'.':
+      case L'!':
+      case L'?': delay += base * 6.0; break;
+      case L',':
+      case L';':
+      case L':': delay += base * 3.0; break;
+      case L' ': delay += base * 0.6; break;
+      default: break;
+    }
+    nextKeystrokeAt_ += delay;
+  }
+  if (nextKeystrokeAt_ < now) nextKeystrokeAt_ = now;
+  return changed;
 }
 
 float TagScale(RectF canvas) {

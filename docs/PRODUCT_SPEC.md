@@ -2,9 +2,11 @@
 
 ## Expérience
 
-L’application joue automatiquement le scénario décrit dans `SCENARIO.md`. L’utilisateur peut provoquer des réactions supplémentaires, mais aucune étape ne dépend de son activité : un bureau laissé totalement inactif reste chaotique pendant les six minutes.
+L’application joue automatiquement le scénario décrit dans `SCENARIO.md`. L’utilisateur peut provoquer des réactions supplémentaires, mais aucune étape ne dépend de son activité : un bureau laissé totalement inactif reste occupé pendant les sept minutes et demie.
 
-L’oie est un acteur visible. Lorsqu’un effet concerne le curseur, une fenêtre, une image ou le presse-papiers, elle se déplace d’abord jusqu’à la cible puis annonce son action dans une bulle de BD. Rien n’apparaît sans auteur : les images brainrot sont rapportées depuis hors champ dans un bec, et une livraison attend plutôt que de se matérialiser toute seule.
+L’application raconte une histoire : une oie vient inspecter le bureau, ouvre un dossier, le rédige, rassemble des pièces à conviction, peint sa note sur le mur et clôt le dossier.
+
+L’oie est un acteur visible. Lorsqu’un effet concerne le curseur, une fenêtre, une pièce à conviction ou le presse-papiers, elle se déplace d’abord jusqu’à la cible puis annonce son action dans une bulle. Rien n’apparaît sans auteur : les pièces sont rapportées depuis hors champ dans un bec, le dossier s’ouvre sous le bec de l’oie qui vient de tamponner le bureau, et la fiche de notation n’existe pas tant que l’inspectrice n’a pas commencé à noter.
 
 L’expérience laisse toujours une prise à l’utilisateur. La tempête de curseur fonctionne par vagues et rend le pointeur entre deux, et les images posées peuvent réellement être fermées — au prix d’une escalade annoncée.
 
@@ -21,14 +23,14 @@ L’expérience laisse toujours une prise à l’utilisateur. La tempête de cur
 - joue toute la timeline ;
 - simule l’interception du presse-papiers dans ses propres overlays ;
 - déplace temporairement le curseur et les fenêtres ;
-- affiche une explosion factice, une coupure noire et l’oie d’adieu autour de `6:00`, puis se ferme ;
+- ferme l’expérience autour de `7:30` par un obturateur, une surexposition, un faux crash et l’oie d’adieu, puis se termine ;
 - restaure toutes les fenêtres déplacées, rend le bouton Démarrer et laisse le presse-papiers intact.
 
 ### `normal`
 
 - mêmes effets que `safe` ;
 - le gag de collage reste une simulation visuelle et ne lit pas le presse-papiers ;
-- autour de `6:00`, une explosion et une coupure noire sont simulées ;
+- autour de `7:30`, l’obturateur, la surexposition et le crash sont simulés ;
 - n’utilise ni élévation UAC, ni fermeture forcée des applications ;
 
 ### `lab`
@@ -71,5 +73,7 @@ Options de développement :
 - le Gestionnaire des tâches reste utilisable en `safe`, y compris par `Ctrl+Shift+Échap` ; aucune disponibilité n’est garantie après les dégradations du profil `lab` ;
 - le bouton Démarrer peut être recouvert par une fenêtre GooseRot pendant la démonstration ; elle est détruite au nettoyage et ne modifie ni le shell ni aucun raccourci clavier ;
 - la tempête de curseur ne doit jamais être continue : chaque cycle rend intégralement le pointeur pendant au moins deux secondes ;
+- aucune fenêtre, boîte de dialogue, icône ou notification ne doit imiter un composant de Windows ;
+- la fiche de notation d'aura ne doit pas exister avant que l'inspectrice ne l'ait ouverte ;
 - une seconde instance quitte immédiatement ;
 - le presse-papiers n’est jamais lu, journalisé ou envoyé ailleurs.

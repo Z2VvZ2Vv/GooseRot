@@ -22,6 +22,27 @@ void CenterWindow(HWND window) {
   SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
+// Drops a window just below and right of a screen point, kept fully inside the
+// work area. Used so the case file opens under the goose that stamped it.
+void PlaceWindowNear(HWND window, POINT anchor) {
+  RECT rectangle{};
+  if (!GetWindowRect(window, &rectangle)) return;
+  const int width = rectangle.right - rectangle.left;
+  const int height = rectangle.bottom - rectangle.top;
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &info)) return;
+  const int x = std::clamp(static_cast<int>(anchor.x) - width / 3,
+                           static_cast<int>(info.rcWork.left),
+                           std::max(static_cast<int>(info.rcWork.left),
+                                    static_cast<int>(info.rcWork.right) - width));
+  const int y = std::clamp(static_cast<int>(anchor.y) + 24,
+                           static_cast<int>(info.rcWork.top),
+                           std::max(static_cast<int>(info.rcWork.top),
+                                    static_cast<int>(info.rcWork.bottom) - height));
+  SetWindowPos(window, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 }  // namespace
 
 PromptWindow::~PromptWindow() { Close(); }
@@ -198,7 +219,7 @@ ATOM NotepadWindow::Register(HINSTANCE instance) {
   return RegisterClassExW(&windowClass);
 }
 
-bool NotepadWindow::Show(HINSTANCE instance) {
+bool NotepadWindow::Show(HINSTANCE instance, const POINT* anchor) {
   Close();
   if (!Register(instance)) return false;
   instance_ = instance;
@@ -208,7 +229,7 @@ bool NotepadWindow::Show(HINSTANCE instance) {
   respawnQueued_ = false;
   // WS_OVERLAPPEDWINDOW minus WS_MINIMIZEBOX and WS_MAXIMIZEBOX: the brainrot
   // stream is the show, so it does not get to hide as a taskbar button.
-  window_ = CreateWindowExW(WS_EX_APPWINDOW, L"GooseRotNotepad", L"Untitled - Grindset",
+  window_ = CreateWindowExW(WS_EX_APPWINDOW, L"GooseRotNotepad", L"AURA INSPECTION - case 67 - working copy",
                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME,
                             CW_USEDEFAULT, CW_USEDEFAULT, 650, 420,
                             nullptr, nullptr, instance, this);
@@ -226,7 +247,11 @@ bool NotepadWindow::Show(HINSTANCE instance) {
                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                       FIXED_PITCH | FF_MODERN, L"Consolas");
   SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
-  CenterWindow(window_);
+  if (anchor) {
+    PlaceWindowNear(window_, *anchor);
+  } else {
+    CenterWindow(window_);
+  }
   ShowWindow(window_, SW_SHOWNORMAL);
   UpdateWindow(window_);
   return true;
@@ -268,7 +293,7 @@ void NotepadWindow::RefuseMinimise() {
   ++pendingMinimiseReports_;
   if (!window_) return;
   ShowWindow(window_, SW_RESTORE);
-  SetWindowTextW(window_, L"Untitled - Grindset (it does not go in the taskbar)");
+  SetWindowTextW(window_, L"AURA INSPECTION - case 67 - the file stays open");
 }
 
 // The [X] is answered with a new title and a shove instead of a destroyed
@@ -279,8 +304,10 @@ void NotepadWindow::RefuseClose() {
   if (!window_) return;
 
   constexpr std::array<const wchar_t*, 4> titles = {
-      L"Untitled - Grindset (unsaved)", L"NO - Grindset",
-      L"Untitled - Grindset (the close button is decorative)", L"Untitled - Grindset (67)"};
+      L"AURA INSPECTION - case 67 - unsaved",
+      L"AURA INSPECTION - case 67 - NO",
+      L"AURA INSPECTION - case 67 - the close button is decorative",
+      L"AURA INSPECTION - case 67 - still writing"};
   SetWindowTextW(window_,
                  titles[static_cast<std::size_t>(refusals_ - 1) % titles.size()]);
 
@@ -320,7 +347,7 @@ void NotepadWindow::Tick(double logicalTime) {
     const int previousRefusals = refusals_;
     if (Show(instance_)) {
       refusals_ = previousRefusals;
-      SetWindowTextW(window_, L"Untitled - Grindset (2) - recovered automatically");
+      SetWindowTextW(window_, L"AURA INSPECTION - case 67 - recovered automatically");
     }
     return;
   }
@@ -351,7 +378,7 @@ LRESULT NotepadWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
       // SC_MINIMIZE carries flag bits in its low nibble; mask them off.
       if ((wParam & 0xFFF0) == SC_MINIMIZE) {
         ++pendingMinimiseReports_;
-        SetWindowTextW(window_, L"Untitled - Grindset (it does not go in the taskbar)");
+        SetWindowTextW(window_, L"AURA INSPECTION - case 67 - the file stays open");
         return 0;
       }
       break;
@@ -373,256 +400,6 @@ LRESULT NotepadWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
       break;
   }
   return DefWindowProcW(window_, message, wParam, lParam);
-}
-
-// ---------------------------------------------------------------------------
-// PopupSwarm
-// ---------------------------------------------------------------------------
-
-namespace {
-
-constexpr int kPopupCloseButtonId = 6711;
-
-constexpr std::array<const wchar_t*, 12> kPopupTitles = {
-    L"Task Manager",
-    L"File Explorer",
-    L"Untitled - Notepad",
-    L"Windows Security",
-    L"Control Panel",
-    L"Command Prompt",
-    L"System Properties",
-    L"goose.exe - Application Error",
-    L"Aura Report - FINAL",
-    L"Ohio - File Explorer",
-    L"Rizz Assistant (Beta)",
-    L"67 processes - Task Manager"};
-
-constexpr std::array<const wchar_t*, 12> kPopupLines = {
-    L"CPU 100%\r\nGooseRot (67 processes)",
-    L"This PC > Aura > Ohio\r\n67 items found.",
-    L"HONK HONK HONK\r\nThe goose saved this file for you.",
-    L"Threat detected: critical brainrot.\r\nRecommended action: listen to the goose.",
-    L"Your desktop settings are now managed\r\nby GooseRot Administrator.",
-    L"C:\\AURA> goose.exe --take-over\r\nAccess granted. Bad idea.",
-    L"System protection: emotionally unavailable.\r\nAura integrity: 0%.",
-    L"goose.exe is not responding.\r\nIt is, however, multiplying.",
-    L"Clipboard certified: +10,000 aura.\r\nNo refunds. No appeals.",
-    L"This folder contains 67 items.\r\nEvery single one is named 67.",
-    L"NPC detected at this workstation.\r\nYes, that means you.",
-    L"Memory 99%  Disk 100%  Aura 0%\r\nClosing privileges have been revoked."};
-
-constexpr std::array<const wchar_t*, 6> kPopupButtons = {
-    L"END TASK", L"CLOSE", L"OK", L"REMOVE", L"CANCEL", L"MAKE IT STOP"};
-
-}  // namespace
-
-PopupSwarm::~PopupSwarm() { CloseAll(); }
-
-ATOM PopupSwarm::Register(HINSTANCE instance) {
-  WNDCLASSEXW windowClass{};
-  windowClass.cbSize = sizeof(windowClass);
-  if (GetClassInfoExW(instance, L"GooseRotPopup", &windowClass)) return 1;
-  windowClass.lpfnWndProc = &PopupSwarm::WindowProcedure;
-  windowClass.hInstance = instance;
-  windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-  windowClass.hIcon = LoadIconW(nullptr, IDI_WARNING);
-  windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
-  windowClass.lpszClassName = L"GooseRotPopup";
-  return RegisterClassExW(&windowClass);
-}
-
-bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
-  if (NativeCount() >= kMaximumNativePopups || !Register(instance)) return false;
-
-  auto popup = std::make_unique<Popup>();
-  popup->owner = this;
-
-  MONITORINFO info{};
-  info.cbSize = sizeof(info);
-  if (!GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &info)) return false;
-  constexpr int kWidth = 348;
-  constexpr int kHeight = 186;
-  const int spanX = std::max(1, static_cast<int>(info.rcWork.right - info.rcWork.left) - kWidth);
-  const int spanY = std::max(1, static_cast<int>(info.rcWork.bottom - info.rcWork.top) - kHeight);
-  std::uniform_int_distribution<int> pickX(0, spanX);
-  std::uniform_int_distribution<int> pickY(0, spanY);
-  const int x = static_cast<int>(info.rcWork.left) + pickX(random);
-  const int y = static_cast<int>(info.rcWork.top) + pickY(random);
-
-  const std::size_t variant = static_cast<std::size_t>(spawnCounter_++);
-  popup->window = CreateWindowExW(
-      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"GooseRotPopup",
-      kPopupTitles[variant % kPopupTitles.size()], WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
-      kWidth, kHeight, nullptr, nullptr, instance, popup.get());
-  if (!popup->window) return false;
-
-  popup->label = CreateWindowExW(0, L"STATIC", kPopupLines[variant % kPopupLines.size()],
-                                 WS_CHILD | WS_VISIBLE | SS_CENTER, 16, 20, kWidth - 40, 74,
-                                 popup->window, nullptr, instance, nullptr);
-  popup->button = CreateWindowExW(
-      0, L"BUTTON", kPopupButtons[variant % kPopupButtons.size()],
-      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-      kWidth / 2 - 70, 104, 140, 32, popup->window,
-      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPopupCloseButtonId)), instance, nullptr);
-  if (!font_) {
-    font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  }
-  for (HWND control : {popup->label, popup->button}) {
-    if (control && font_) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
-  }
-  ShowWindow(popup->window, SW_SHOWNOACTIVATE);
-  popups_.push_back(std::move(popup));
-  return true;
-}
-
-void PopupSwarm::Spawn(HINSTANCE instance, std::mt19937& random, int count) {
-  (void)instance;
-  (void)random;
-  if (count <= 0 || AtCap()) return;
-  logicalCount_ = std::min(ceiling_, logicalCount_ + count);
-}
-
-void PopupSwarm::SetCeiling(int ceiling) {
-  ceiling_ = std::clamp(ceiling, 0, kMaximumPopups);
-}
-
-int PopupSwarm::Dissolve(int count) {
-  const int removed = std::min(std::max(0, count), logicalCount_);
-  logicalCount_ -= removed;
-  int nativeToRemove = std::max(
-      0, static_cast<int>(popups_.size()) -
-             std::min(logicalCount_, kMaximumNativePopups));
-  for (auto popup = popups_.rbegin(); popup != popups_.rend() && nativeToRemove > 0; ++popup) {
-    if ((*popup)->dead) continue;
-    (*popup)->dead = true;
-    if ((*popup)->window) DestroyWindow((*popup)->window);
-    --nativeToRemove;
-  }
-  popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
-                               [](const std::unique_ptr<Popup>& popup) {
-                                 return popup->dead;
-                               }),
-                popups_.end());
-  return removed;
-}
-
-void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTime) {
-  lastTickTime_ = logicalTime;
-  popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
-                               [](const std::unique_ptr<Popup>& popup) {
-                                 return popup->dead;
-                               }),
-                popups_.end());
-
-  const int desiredNative = std::min(logicalCount_, kMaximumNativePopups);
-  const ULONGLONG now = GetTickCount64();
-  if (now >= nextNativeSpawnAttemptAt_) {
-    for (int created = 0; created < 2 && NativeCount() < desiredNative; ++created) {
-      if (!CreatePopup(instance, random)) {
-        nextNativeSpawnAttemptAt_ = now + 500;
-        break;
-      }
-      nextNativeSpawnAttemptAt_ = 0;
-    }
-  }
-
-  for (const std::unique_ptr<Popup>& popup : popups_) {
-    if (!popup->window || logicalTime > popup->jiggleUntil) continue;
-    RECT rectangle{};
-    if (!GetWindowRect(popup->window, &rectangle)) continue;
-    const int shove = (static_cast<int>(logicalTime * 26.0) % 2 == 0) ? 6 : -6;
-    SetWindowPos(popup->window, nullptr, rectangle.left + shove, rectangle.top, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-  }
-}
-
-// Closing a popup is never free. Below the current ceiling, one close produces
-// two replacements. At the ceiling, close controls are refused; only the
-// finale's Dissolve() and the emergency cleanup path destroy windows outright.
-void PopupSwarm::RequestClose(Popup& popup) {
-  ++closeAttempts_;
-  ++popup.refusals;
-  if (!AtCap()) {
-    logicalCount_ = std::min(kMaximumPopups, logicalCount_ + 1);
-    popup.dead = true;
-    if (popup.window) DestroyWindow(popup.window);
-    return;
-  }
-  popup.jiggleUntil = lastTickTime_ + 1.2;
-  if (popup.label) {
-    SetWindowTextW(popup.label,
-                   L"ACCESS DENIED.\r\n267 ERROR WINDOWS OWN THIS DESKTOP.");
-  }
-  if (popup.button) SetWindowTextW(popup.button, L"CLOSE DENIED");
-}
-
-bool PopupSwarm::ConsumeCloseAttempt() {
-  if (closeAttempts_ <= 0) return false;
-  --closeAttempts_;
-  return true;
-}
-
-void PopupSwarm::CloseAll() {
-  for (const std::unique_ptr<Popup>& popup : popups_) {
-    if (popup->window) DestroyWindow(popup->window);
-  }
-  popups_.clear();
-  if (font_) {
-    DeleteObject(font_);
-    font_ = nullptr;
-  }
-  logicalCount_ = 0;
-  nextNativeSpawnAttemptAt_ = 0;
-  closeAttempts_ = 0;
-}
-
-LRESULT CALLBACK PopupSwarm::WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-  Popup* popup = reinterpret_cast<Popup*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-  if (message == WM_NCCREATE) {
-    const auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
-    popup = static_cast<Popup*>(create->lpCreateParams);
-    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(popup));
-    popup->window = window;
-  }
-  if (message == WM_NCDESTROY) {
-    SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-    if (popup) {
-      popup->window = nullptr;
-      popup->label = nullptr;
-      popup->button = nullptr;
-      popup->dead = true;
-    }
-    return DefWindowProcW(window, message, wParam, lParam);
-  }
-  return popup && popup->owner
-             ? popup->owner->HandleMessage(*popup, window, message, wParam, lParam)
-             : DefWindowProcW(window, message, wParam, lParam);
-}
-
-LRESULT PopupSwarm::HandleMessage(Popup& popup, HWND window, UINT message, WPARAM wParam,
-                                  LPARAM lParam) {
-  switch (message) {
-    case WM_COMMAND:
-      if (LOWORD(wParam) == kPopupCloseButtonId) {
-        RequestClose(popup);
-        return 0;
-      }
-      break;
-    case WM_CLOSE:
-      RequestClose(popup);
-      return 0;
-    case WM_DESTROY:
-      popup.window = nullptr;
-      popup.label = nullptr;
-      popup.button = nullptr;
-      popup.dead = true;
-      return 0;
-    default:
-      break;
-  }
-  return DefWindowProcW(window, message, wParam, lParam);
 }
 
 // ---------------------------------------------------------------------------

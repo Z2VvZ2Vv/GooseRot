@@ -57,10 +57,9 @@ GooseRotApp
  │   └─ WindowDirector
  ├─ InteractionDirector
  │   ├─ ClipboardVisualGag
- │   ├─ NotepadGag
+ │   ├─ CaseFile (NotepadGag + Typewriter)
  │   ├─ PropDelivery
- │   ├─ TaskbarGuard
- │   └─ PopupSwarm
+ │   └─ TaskbarGuard
  ├─ AudioEffects
  ├─ BootGameHandoff
  └─ ShutdownDirector
@@ -102,13 +101,23 @@ Ne jamais cibler :
 - les fenêtres invisibles, minimisées ou appartenant à GooseRot ;
 - une fenêtre marquée comme exclue par le profil de test.
 
-### `NotepadGag`
+### `NotepadGag` et `Typewriter`
 
-Crée une fenêtre GooseRot imitant le Bloc-notes et remplit directement son contrôle en lecture seule avec la banque de mots du projet. Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur. La cadence continue jusqu’à `5:58` et le nettoyage détruit la fenêtre.
+Le dossier d’inspection est une fenêtre GooseRot. Elle n’apparaît jamais d’elle-même : `Show()` accepte un point d’ancrage en coordonnées écran, et la timeline lui passe la position du bec de l’oie au moment où celle-ci tamponne le bureau (`OverlayWindow::CanvasToScreen`). `PlaceWindowNear()` la borne ensuite à la zone de travail.
 
-`WM_CLOSE` est intercepté pour le gag : les premières tentatives renomment la fenêtre et la décalent de 67 pixels. Si elle finit par être détruite, la timeline la recrée tant que la phase de frappe reste active. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement.
+Le contenu est rédigé par `Typewriter`, une classe du cœur donc testable sans fenêtre. Chaque constat est mis en file par la timeline, puis sorti **caractère par caractère** : délai de base dérivé d’une vitesse en caractères par seconde, gigue par frappe, pause après une ponctuation, pause plus longue après un saut de ligne, et environ 2 % de risque de faute en milieu de mot — une à trois lettres erronées, remarquées après un instant, puis effacées. Un budget de 24 caractères par appel garantit qu’un long décrochage de frame ne recrache pas un paragraphe entier d’un coup. La vitesse monte avec la timeline, et double si l’arriéré de constats dépasse 320 caractères.
 
-La réduction est refusée par trois chemins complémentaires, pour que le flux de texte ne puisse pas être rangé dans la barre des tâches : le style ne comporte ni `WS_MINIMIZEBOX` ni `WS_MAXIMIZEBOX`, `SC_MINIMIZE` est avalé dans `WM_SYSCOMMAND` et grisé dans le menu système, et toute réduction obtenue depuis l’extérieur est annulée par `WM_SIZE`/`SIZE_MINIMIZED` puis, en dernier recours, par un contrôle `IsIconic` à chaque tick. Chaque refus est signalé une fois au moteur, qui répond par une bulle.
+Aucune saisie synthétique n’est envoyée et aucun changement de focus ne peut faire écrire dans une application utilisateur : le texte est écrit directement dans le contrôle EDIT en lecture seule de GooseRot.
+
+`WM_CLOSE` est intercepté pour le gag : les premières tentatives renomment la fenêtre et la décalent de 67 pixels. Si elle finit par être détruite, la timeline la rouvre au point tamponné et restaure le texte déjà écrit. Le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement.
+
+La réduction est refusée par trois chemins complémentaires : le style ne comporte ni `WS_MINIMIZEBOX` ni `WS_MAXIMIZEBOX`, `SC_MINIMIZE` est avalé dans `WM_SYSCOMMAND` et grisé dans le menu système, et toute réduction obtenue depuis l’extérieur est annulée par `WM_SIZE`/`SIZE_MINIMIZED` puis, en dernier recours, par un contrôle `IsIconic` à chaque tick.
+
+### `ClosingAperture`
+
+La conclusion est un obturateur, pas une explosion. `RenderState::finalIris` et `RenderState::finalExposure` montent ensemble sur les neuf dernières secondes de la timeline. `DrawFinalIris()` peint un `GraphicsPath` en `FillModeAlternate` — le rectangle plein écran moins une ellipse — de sorte que **tout ce qui est hors du cercle passe au noir** en une seule passe, quel que soit le contenu déjà dessiné ; le rayon décroît avec une sortie douce et le bord reçoit un halo. L’exposition, elle, est un voile blanc appliqué **à l’intérieur** du cercle, plafonné quand les flashs sont désactivés.
+
+`DrawFakeShutdown()` enchaîne ensuite sur le crash : l’image surexposée est écrasée en une ligne puis pincée en un point (0,00–0,55 s), suivi d’un noir complet (0,55–1,60 s), du retour à pied de l’oie (1,60–4,20 s) et de la dernière réplique (4,20 s). Le nettoyage et la restauration ont lieu avant ce bloc, dont la durée est comptée en temps réel.
 
 ### `OwnedWindowsApps`
 
@@ -124,15 +133,15 @@ Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVAT
 
 Après consentement à l’expérience complète uniquement, un hook bas niveau `WH_KEYBOARD_LL` absorbe strictement les messages de `VK_LWIN` et `VK_RWIN`. Il n’enregistre ni ne synthétise aucune saisie et ne modifie ni Registre ni stratégie système. Il reste actif pendant les visuels de conclusion, puis est retiré dès que la boucle d’expérience se termine ; un arrêt d’urgence ou une erreur le retire immédiatement. Le mode réduit et la Preview ne l’installent jamais. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie `Échap` restent disponibles.
 
-### `PopupSwarm`
+### Pas de fausses fenêtres
 
-Gère un mur logique borné à 267 popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que ce plafond n’est pas atteint. Au maximum 67 entrées possèdent des HWND interactifs ; le reste est composé de cadres virtuels opaques écrits directement dans le DIB de l’overlay, sans cache plein écran. Deux HWND au maximum sont matérialisés par tick, avec une police partagée, sans `UpdateWindow` synchrone et avec un backoff réel de 500 ms en cas d’échec de création. Le renderer soustrait le nombre natif réellement créé : le total visuel reste donc égal au compteur. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` détruit les fenêtres natives et remet aussi le compteur virtuel à zéro.
+GooseRot n’ouvre et ne dessine **aucune** fenêtre se faisant passer pour un composant de Windows. L’ancien `PopupSwarm` — un mur de 267 imitations de `Task Manager`, `File Explorer`, `Windows Security` et consorts, dont 67 HWND réels — a été retiré : à l’écran, une fausse fenêtre dessinée à la main ne ressemble jamais à la vraie, et l’écart casse l’illusion que le reste de l’expérience construit. Les faux glyphes d’erreur et le cadre `explorer.exe — (Ne répond pas)` ont été retirés pour la même raison.
 
-Le plafond courant est réglable via `SetCeiling()`. Jusqu’au monologue final il reste à 267, tandis que `DesiredPopupCount()` pilote la montée du compteur logique. Pendant la finale, le plafond suit le budget décroissant et `Dissolve()` retire directement N entrées sans passer par le refus de fermeture : le glitch mange l’essaim jusqu’à zéro. Les popups natives sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
+Ce qui reste appartient visiblement à l’inspection : le dossier `AURA INSPECTION - case 67`, deux boîtes de dialogue GooseRot titrées comme des avis d’inspection, et des avis peints dans l’overlay dont l’en-tête est toujours `AURA INSPECTION`. L’escalade de la fin repose désormais entièrement sur le nombre d’oies, les pièces à conviction et `GlitchLayer`.
 
 ### `GlitchLayer` et rendu dense
 
-Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas », 67 glyphes d’erreur originaux, rubans de lignes déplacées et flashs. Le planificateur des rubans et flashs dépend du seed et de l'horloge réelle : un accélérateur de timeline ne peut donc jamais compresser leur cadence. Les flashs sont plafonnés à un pulse par tranche de 720 ms, durent au plus 110 ms et gardent un alpha borné. Les rubans utilisent `memmove` uniquement dans le DIB ARGB local ; aucune capture du bureau n'a lieu. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, bandes de perte de signal, rubans de lignes déplacées et flashs. Le planificateur des rubans et flashs dépend du seed et de l'horloge réelle : un accélérateur de timeline ne peut donc jamais compresser leur cadence. Les flashs sont plafonnés à un pulse par tranche de 720 ms, durent au plus 110 ms et gardent un alpha borné. Les rubans utilisent `memmove` uniquement dans le DIB ARGB local ; aucune capture du bureau n'a lieu. Au-delà de douze oies, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
 
 ### `AudioEffects`
 
@@ -154,7 +163,7 @@ C’est la correction du cas observé sur Windows 10 : sur un écran de petite d
 
 Une image brainrot n’apparaît jamais seule. Chaque `VisualSprite` traverse quatre états — `Fetching`, `Carried`, `Placed`, `Tearing` — pilotés par `UpdateSprites()`. Une oie libre est choisie par `PickFreeCarrier()`, marquée hors champ, envoyée en charge vers le bord le plus proche, puis l’image devient visible dans son bec dès qu’elle a quitté le canvas et revient au pas. Sans oie libre, la livraison est simplement reportée. Chaque étape possède une échéance calculée sur la distance réelle, bornée entre 5 et 18 secondes, pour qu’un écran très large ne coupe jamais un trajet et qu’aucun état ne puisse rester bloqué.
 
-`PropCloseBox()` définit la croix `[x]` d’une image posée ; le moteur teste le clic sur cette même boîte, sans hook, en lisant la position du pointeur. La fermeture est réelle et payante : aura, pic de glitch, deux livraisons commandées, et une escalade sur l’essaim puis sur la troupe.
+`PropCloseBox()` définit la croix `[x]` d’une image posée ; le moteur teste le clic sur cette même boîte, sans hook, en lisant la position du pointeur. La fermeture est réelle et payante : aura, pic de glitch, deux livraisons commandées, et une oie supplémentaire à partir de la cinquième destruction.
 
 ### `ShutdownDirector`
 
@@ -171,7 +180,7 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 ## Performance VM
 
 - boucle Win32 cadencée par QPC à 60 images/seconde, avec résolution d'attente de 1 ms ;
-- pompe de messages bornée à 64 messages ou 2 ms avant de rendre, afin que les fenêtres de l'essaim ne puissent pas affamer la frame suivante ;
+- pompe de messages bornée à 64 messages ou 2 ms avant de rendre, afin qu'aucune fenêtre compagnon ne puisse affamer la frame suivante ;
 - plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
@@ -180,7 +189,7 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
 - croix `[x]` des images tracée à main levée en scène légère et en rectangle simple en scène dense ;
-- nombre maximal d’oies : 67 ; nombre maximal de popups logiques : 267, dont 67 HWND ;
+- nombre maximal d’oies : 67 ; nombre de fausses fenêtres système : zéro ;
 - effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les cadres virtuels opaques, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
 - mémoire cible : moins de 150 Mo sur un bureau courant ; sous le plafond extrême de 30 millions de pixels, la surface principale représente déjà environ 120 Mo et le processus reste borné sous environ 200 Mo ;
 - usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;

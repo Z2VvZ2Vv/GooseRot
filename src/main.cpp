@@ -33,7 +33,8 @@ TaskDialogIndirectProcedure ResolveTaskDialogIndirect() {
 
 bool AskForConsent(gooserot::AppConfig& config) {
   if (config.preview) return true;
-  std::wstring message = L"GooseRot will take over the desktop visually for six minutes.\r\n\r\n";
+  std::wstring message = L"A goose is going to inspect your desktop for seven and a half minutes, and it "
+                          L"will take the place over while it does.\r\n\r\n";
   if (config.desktopEffects) {
     message += L"With your consent, the geese will drag the pointer in waves — each wave hands it "
                L"back before the next one — and may temporarily move selected windows before "
@@ -49,18 +50,17 @@ bool AskForConsent(gooserot::AppConfig& config) {
   message += L"The experience includes brief rate-limited full-screen flashes, rapid glitch "
              L"motion and asynchronous Windows-style alert sounds. Choose Reduced / Muted if "
              L"you are photosensitive, motion-sensitive or do not want sound.\r\n";
-  message += L"GooseRot may create a 267-window visual swarm, with at most 67 native fake "
-              L"Task Manager, File Explorer, Notepad and system "
-              L"windows. They may multiply and refuse normal close requests. Every one belongs to "
-              L"GooseRot and is destroyed during cleanup.\r\n"
-              L"Its own Notepad refuses to minimise into the taskbar for as long as it is typing.\r\n"
-              L"It may also rotate up to 6 genuine built-in Windows utilities at once (Notepad, "
+  message += L"A goose opens one GooseRot text window and writes an inspection report in it. "
+              L"That window refuses to close for a while and refuses to minimise into the "
+              L"taskbar for as long as the goose is still writing; cleanup destroys it "
+              L"outright.\r\n"
+              L"GooseRot may also rotate up to 6 genuine built-in Windows utilities at once (Notepad, "
               L"Paint, Task Manager, Character Map, About Windows or a separate File Explorer), "
               L"move only those new windows, and ask them to close during cleanup. If needed, "
               L"GooseRot ends only the exact utility processes it launched. Random typing stays "
               L"inside GooseRot's own Notepad.\r\n"
-              L"Geese carry brainrot photos onto the desktop. Each one can be closed with its [x], "
-              L"which costs aura and makes the flock fetch two more.\r\n"
+              L"Geese carry photographic exhibits onto the desktop. Each one can be closed with "
+              L"its [x], which costs aura and makes the flock fetch two more.\r\n"
               L"Start or Search is dismissed if it covers "
               L"the experience.\r\n"
               L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"

@@ -15,7 +15,9 @@
 namespace gooserot {
 namespace {
 
-constexpr double kShutdownVisualDuration = 7.5;
+// Crash, silence, the walk back in and the closing line all have to finish
+// before the process leaves.
+constexpr double kShutdownVisualDuration = 9.5;
 // The scenario's own ceiling: sixty-seven geese, never one more.
 constexpr std::size_t kMaximumGeese = 67U;
 
@@ -178,13 +180,20 @@ int GooseRotApp::Run() {
 }
 
 void GooseRotApp::ApplyBaseline(double logicalTime) {
-  if (logicalTime >= phase::kAuraPrompt) aura_ = -10000;
+  // The scorecard only exists once the inspector has started scoring, so a
+  // resume before that point must not show one.
+  if (logicalTime >= phase::kAuraPrompt) {
+    auraVisible_ = true;
+    auraRevealedAt_ = logicalTime;
+    aura_ = -10000;
+  }
   if (logicalTime > phase::kClipboard) aura_ += 10000;
   if (logicalTime >= phase::kSigma + 8.0) aura_ -= 999998;
+  if (logicalTime >= phase::kInspectionRound) inspectionRound_ = true;
   EnsureGooseCount();
 
-  if (logicalTime > 0.0 && logicalTime < 7.0) {
-    SetBubble(L"Mewing in progress... DO NOT DISTURB.", 7.0 - logicalTime);
+  if (logicalTime > 0.0 && logicalTime < 9.0) {
+    SetBubble(L"Do not mind me.\nI am just having a look around.", 9.0 - logicalTime);
   }
   // Resuming inside the walk-out window has to leave the stage empty, or the
   // beat where the desktop is alone with its own Notepad never happens.
@@ -198,7 +207,14 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
   }
   if (logicalTime >= phase::kNotepad && logicalTime < phase::kCompanionCutoff) {
     notepad_.Show(instance_);
-    lastTypedAt_ = logicalTime;
+    // A resumed run joins the file mid-sentence rather than replaying every
+    // finding the inspector already wrote.
+    typist_.Reset(logicalTime);
+    notepadText_ =
+        L"AURA INSPECTION -- CASE 67\r\n"
+        L"Site: this desktop. Inspector: a goose.\r\n\r\n"
+        L"[earlier findings recorded]\r\n\r\n";
+    notepad_.SetText(notepadText_);
   }
   if (logicalTime >= phase::kAuraPrompt && logicalTime < phase::kAuraPrompt + 8.0) {
     auraPromptPending_ = true;
@@ -206,13 +222,9 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
     auraReferenceCursor_ = desktop_->CursorPosition();
   }
   if (logicalTime >= phase::kSigma && logicalTime < phase::kSigma + 8.0) {
-    sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
-                      L"SIGMA CHAD", L"NPC", true, logicalTime);
-  }
-  const int baselinePopups = DesiredPopupCount(logicalTime, PopupSwarm::kMaximumPopups);
-  popups_.SetCeiling(baselinePopups);
-  if (baselinePopups > 0) {
-    popups_.Spawn(instance_, random_, baselinePopups);
+    sigmaPrompt_.Show(instance_, L"AURA INSPECTION - Right of Appeal",
+                      L"Case 67. Do you wish to contest the inspector's findings?",
+                      L"I CONTEST", L"I ACCEPT", true, logicalTime);
   }
   if (logicalTime >= phase::kGooseReturn) {
     const std::size_t baselineProps = std::min<std::size_t>(
@@ -288,7 +300,6 @@ void GooseRotApp::Tick() {
     UpdatePrompts();
     UpdateNotepad();
     UpdateErrorSounds();
-    UpdatePopups();
     UpdateOwnedWindowsApps();
     UpdateTaskbarGuard();
     UpdateToasts();
@@ -330,12 +341,55 @@ void GooseRotApp::Tick() {
   overlay_.Render(BuildRenderState());
 }
 
+// The case file the inspector is writing. Each finding is queued at its beat
+// and then typed out one character at a time, so the window fills with sentences
+// somebody is composing rather than with blocks of pasted words.
+void GooseRotApp::FileFinding(const wchar_t* text) {
+  // Queued unconditionally: if the occupant just destroyed the window, the
+  // finding waits in the typist and is written out when it reopens.
+  typist_.Queue(text);
+}
+
 void GooseRotApp::HandleEvent(const TimelineEvent& event) {
   switch (event.id) {
     case TimelineEventId::PassiveEntrance:
-      SetBubble(L"Mewing in progress... DO NOT DISTURB.", 8.0);
+      SetBubble(L"Do not mind me.\nI am just having a look around.", 9.0);
       break;
+    case TimelineEventId::Introduction:
+      geese_.front().Honk(0.9f);
+      SetBubble(L"AURA INSPECTION.\nI am the inspector. Stay where you are.", 9.0);
+      PushToast(L"AURA INSPECTION", L"Case 67 opened for this desktop.\nAn inspector is already on site.");
+      break;
+    case TimelineEventId::InspectionRound:
+      SetBubble(L"Walking the site now.\nThis will take a moment.", 7.0);
+      // The goose starts its circuit; the patrol choreography does the rest.
+      inspectionRound_ = true;
+      break;
+    case TimelineEventId::NotepadStart: {
+      // The file does not appear from nowhere: the goose stops, stamps the
+      // desktop, and the window opens under its beak.
+      const Vec2 beak = geese_.empty() ? overlay_.CanvasBounds().Center()
+                                       : geese_.front().Rig().beakTip;
+      const POINT anchor = overlay_.CanvasToScreen(beak);
+      notepadText_.clear();
+      typist_.Reset(logicalTime_);
+      notepad_.Show(instance_, &anchor);
+      if (!geese_.empty()) geese_.front().Honk(0.7f);
+      SetBubble(L"Opening the file.\nEverything from here is written down.", 7.0);
+      KickGlitch(0.12f);
+      FileFinding(
+          L"AURA INSPECTION -- CASE 67\r\n"
+          L"Site: this desktop. Inspector: a goose.\r\n"
+          L"Authorisation: not required. I am already inside.\r\n\r\n"
+          L"FINDING 1. Arrived on site. Nobody stopped me.\r\n"
+          L"That is, in itself, the first finding.\r\n\r\n");
+      break;
+    }
     case TimelineEventId::AuraPrompt:
+      // The counter exists because the inspector just started scoring, not
+      // because the program started.
+      auraVisible_ = true;
+      auraRevealedAt_ = logicalTime_;
       aura_ = -10000;
       auraDelta_ = -10000;
       auraDeltaAt_ = logicalTime_;
@@ -343,96 +397,129 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       auraPromptArmedAt_ = logicalTime_;
       auraReferenceCursor_ = desktop_->CursorPosition();
       geese_.front().Honk(0.5f);
-      SetBubble(L"I can feel your aura moving...", 5.0);
-      PushToast(L"Windows Security", L"Threat detected: negative rizz.\nNo action is available. Or useful.");
+      SetBubble(L"Baseline aura measured.\nI am going to need a bigger form.", 7.0);
+      PushToast(L"AURA INSPECTION", L"Scorecard attached to case 67.\nYou may now watch it get worse.");
+      FileFinding(
+          L"FINDING 2. Baseline aura measured at -10,000.\r\n"
+          L"Scorecard attached to the top right of the site so the\r\n"
+          L"occupant can follow along. They will not enjoy it.\r\n\r\n");
       break;
     case TimelineEventId::GooseExit:
-      SetBubble(L"FINE. THIS DESKTOP HAS NO AURA.\nI AM GETTING REINFORCEMENTS.", 6.0);
+      SetBubble(L"I need evidence.\nDo not touch anything while I am out.", 7.0);
       geese_.front().Honk(0.8f);
       SendFlockOffstage();
-      PushToast(L"GooseRot", L"The goose has left the desktop.\nThat is not the good news it sounds like.");
-      break;
-    case TimelineEventId::NotepadStart:
-      notepadText_.clear();
-      typedWordCount_ = 0;
-      lastTypedAt_ = logicalTime_;
-      notepad_.Show(instance_);
-      // The window opens with nobody on screen: that is the whole joke here.
-      PushToast(L"Notepad", L"Untitled - Grindset opened itself.\nNo goose was present. Allegedly.");
-      KickGlitch(0.18f);
+      PushToast(L"AURA INSPECTION", L"Inspector off site collecting exhibits.\nThe file remains open.");
+      FileFinding(
+          L"FINDING 3. Verbal claims are not evidence.\r\n"
+          L"Leaving site to collect exhibits. Back shortly.\r\n"
+          L"The file stays open while I am gone. Obviously.\r\n\r\n");
       break;
     case TimelineEventId::GooseReturn:
       BringFlockBack();
+      FileFinding(
+          L"FINDING 4. Exhibit A recovered and pinned to the site.\r\n"
+          L"Do not move it. Do not close it. There is a form for that\r\n"
+          L"and I have not written it yet.\r\n\r\n");
       break;
     case TimelineEventId::CursorAndWindows:
-      if (notepad_.IsOpen()) {
-        notepadText_ += L"\r\nKEYBOARD CONTROL: REVOKED. HONK INPUT ENABLED.\r\n";
-        notepad_.SetText(notepadText_);
-      }
-      SetBubble(L"NO CLICK. ONLY 67.\nCursor privileges under review.", 6.0);
+      SetBubble(L"Pointer control: sloppy.\nConfiscating it for testing.", 7.0);
       nextWindowAction_ = logicalTime_ + 2.0;
       nextCursorAction_ = logicalTime_ + 8.0;
       leftMouseWasDown_ = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
       leftMousePressed_ = false;
+      FileFinding(
+          L"FINDING 5. Pointer handling assessed. It is sloppy.\r\n"
+          L"Confiscating the cursor at intervals for measurement.\r\n"
+          L"Window alignment was also out by 67 pixels. Corrected.\r\n"
+          L"You are welcome.\r\n\r\n");
       break;
     case TimelineEventId::MemeSubtitles:
       SpawnSprite();
-      SetBubble(L"Brainrot subtitles: certified.", 4.0);
+      SetBubble(L"Ambient brainrot detected.\nLogging it. Loudly.", 6.0);
       KickGlitch(0.2f);
+      FileFinding(
+          L"FINDING 6. Site is saturated with unregulated brainrot.\r\n"
+          L"Measured level: yes.\r\n\r\n");
       break;
     case TimelineEventId::ClipboardBadge:
       AddAura(10000);
-      SetBubble(L"+10,000 AURA\nClipboard certified. Nothing was copied.", 6.0);
-      PushToast(L"Clipboard", L"Paste certified. +10,000 AURA.\nNo clipboard data was read.");
+      SetBubble(L"Clipboard inspected.\nNothing was read. It passed anyway.", 7.0);
+      PushToast(L"AURA INSPECTION", L"Clipboard certified without inspection.\nNo clipboard data was read.");
+      FileFinding(
+          L"FINDING 7. Clipboard certified. I did not read it.\r\n"
+          L"I did not need to. +10,000 aura, non-refundable.\r\n\r\n");
       break;
     case TimelineEventId::Duplicate: {
       const Vec2 center = overlay_.CanvasBounds().Center();
       while (geese_.size() < 3) geese_.emplace_back(center);
       for (GooseEntity& goose : geese_) goose.Honk(0.9f);
-      SetBubble(L"ONE GOOSE WAS NOT ENOUGH.", 6.0);
+      SetBubble(L"This site needs more inspectors.\nThey were already outside.", 7.0);
       KickGlitch(0.55f);
-      // The flock starts opening windows the user cannot simply dismiss.
+      FileFinding(
+          L"FINDING 8. Workload exceeds one goose.\r\n"
+          L"Backup inspectors requested. Request granted by me.\r\n\r\n");
       break;
     }
     case TimelineEventId::Graffiti:
-      SetBubble(L"MOVE. I AM PAINTING HERE.", 6.0);
-      PushToast(L"Windows Update", L"Installing 67 aura updates...\nDo not restart. This is extremely fake.");
-      // The wall has to be bare before the tag goes up, so anything hanging on
-      // it is picked up and carried out of the way first.
+      SetBubble(L"Score computed.\nStand back, I am writing it on the wall.", 7.0);
+      PushToast(L"AURA INSPECTION", L"Final score being applied to the site.\nThe medium is permanent. The paint is not.");
+      // The wall has to be bare before the score goes up, so anything hanging
+      // on it is picked up and carried out of the way first.
       ClearPropsFromTagZone();
+      FileFinding(
+          L"FINDING 9. Final score computed: 67.\r\n"
+          L"Out of what, the form does not say. Applying it to the\r\n"
+          L"wall in a permanent medium, as regulations require.\r\n\r\n");
       break;
     case TimelineEventId::SigmaPrompt:
-      sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
-                        L"SIGMA CHAD", L"NPC", true, logicalTime_);
+      sigmaPrompt_.Show(instance_, L"AURA INSPECTION - Right of Appeal",
+                        L"Case 67. Do you wish to contest the inspector's findings?",
+                        L"I CONTEST", L"I ACCEPT", true, logicalTime_);
+      FileFinding(
+          L"FINDING 10. Right of appeal offered, as required.\r\n"
+          L"The appeal button was moved during the appeal. Also as\r\n"
+          L"required.\r\n\r\n");
       break;
     case TimelineEventId::ScreenShake:
-      SetBubble(L"CURSOR SEIZURES INCOMING.\nYou get it back between waves.", 5.0);
+      SetBubble(L"Display integrity: deteriorating.\nNot my department.", 6.0);
       KickGlitch(0.5f);
-      PushToast(L"File Explorer", L"explorer.exe is not responding.\n(It is fine. The geese are lying.)");
+      PushToast(L"AURA INSPECTION", L"Site display flagged as unstable.\nThe inspection continues regardless.");
+      FileFinding(
+          L"FINDING 11. Display integrity is deteriorating.\r\n"
+          L"I have noted it. I am not going to fix it.\r\n\r\n");
       break;
     case TimelineEventId::ColorFilter:
-      SetBubble(L"Matrix Green vs Neon Pink.", 4.0);
+      SetBubble(L"Colour calibration: also wrong.", 5.0);
       KickGlitch(0.4f);
+      FileFinding(
+          L"FINDING 12. Colour calibration is wrong in two directions\r\n"
+          L"at once. Impressive, in a way.\r\n\r\n");
       break;
     case TimelineEventId::FinalMonologue:
       for (GooseEntity& goose : geese_) goose.Honk(1.4f);
-      SetBubble(L"CRITICAL ERROR:\nMAXIMUM BRAINROT REACHED.", 8.0);
+      SetBubble(L"VERDICT: NON-COMPLIANT.\nThis desktop cannot be certified.", 9.0);
       KickGlitch(0.7f);
-      // From here the windows stop being the effect and the display takes over.
-      PushToast(L"System", L"Window subsystem surrendered.\nRendering the rest as damage.");
+      PushToast(L"AURA INSPECTION", L"Case 67 verdict recorded.\nThe site is scheduled for closure.");
+      FileFinding(
+          L"VERDICT. This desktop is non-compliant on all twelve\r\n"
+          L"findings. It cannot be certified. It cannot be appealed.\r\n"
+          L"It can only be closed.\r\n\r\n");
       break;
     case TimelineEventId::Countdown:
-      SetBubble(L"THIRTY SECONDS UNTIL TOTAL COLLAPSE.", 5.0);
-      PushToast(L"System", L"Desktop integrity expires in 00:30.\nThe geese are in control now.");
+      SetBubble(L"The file closes in forty seconds.\nSay something nice.", 6.0);
+      PushToast(L"AURA INSPECTION", L"Case 67 closes in 00:40.\nThank you for your cooperation.");
+      FileFinding(
+          L"CLOSING. The file will be closed in forty seconds.\r\n"
+          L"Thank you for your cooperation. You did not give any.\r\n\r\n");
       break;
     case TimelineEventId::CircleDance:
       for (GooseEntity& goose : geese_) goose.Honk(1.0f);
-      SetBubble(L"THE CIRCLE OF 67.", 5.0);
+      SetBubble(L"Inspectors, close the site.", 6.0);
       break;
     case TimelineEventId::ResetAura:
       geese_.front().SetTarget({overlay_.CanvasBounds().Center().x,
                                 overlay_.CanvasBounds().bottom - 98.0f}, SpeedTier::Charge, true);
-      SetBubble(L"LAST CHANCE. DO NOT PRESS IT.", 1.2);
+      SetBubble(L"Signature required.\nDo not press it.", 1.2);
       KickGlitch(1.0f);
       break;
     case TimelineEventId::Shutdown:
@@ -530,9 +617,10 @@ void GooseRotApp::UpdatePrompts() {
     const double dy = static_cast<double>(cursor.y - auraReferenceCursor_.y);
     if (std::sqrt(dx * dx + dy * dy) > 50.0 || logicalTime_ - auraPromptArmedAt_ >= 5.0) {
       const bool fallback = logicalTime_ - auraPromptArmedAt_ >= 5.0;
-      auraPrompt_.Show(instance_, L"Aura Points Deducted",
-                       L"You broke the streak. -10,000 Aura.\r\nApologize immediately.",
-                       L"Sorry", L"Forgive Me", false, logicalTime_);
+      auraPrompt_.Show(instance_, L"AURA INSPECTION - Notice of Deduction",
+                       L"Case 67. Baseline aura recorded at -10,000.\r\n"
+                       L"Please acknowledge the finding.",
+                       L"I ACKNOWLEDGE", L"I AM SORRY", false, logicalTime_);
       if (fallback) {
         const Vec2 cursorCanvas = overlay_.ScreenToCanvas(cursor);
         geese_.front().SetTarget(cursorCanvas, SpeedTier::Charge, true);
@@ -544,15 +632,15 @@ void GooseRotApp::UpdatePrompts() {
 
   auraPrompt_.Tick(logicalTime_);
   const PromptResult auraResult = auraPrompt_.ConsumeResult();
-  if (auraResult != PromptResult::None) SetBubble(L"Apology barely accepted.", 5.0);
+  if (auraResult != PromptResult::None) SetBubble(L"Acknowledgement recorded.\nIt changes nothing.", 5.0);
 
   sigmaPrompt_.Tick(logicalTime_);
   const PromptResult sigmaResult = sigmaPrompt_.ConsumeResult();
   if (sigmaResult != PromptResult::None) {
     AddAura(-1000000);
     SetBubble(sigmaResult == PromptResult::Primary
-                  ? L"Button caught. Suspiciously sigma."
-                  : L"AFK detected. NPC confirmed.\nHonesty bonus: +2 Aura.",
+                  ? L"Appeal lodged. Appeal denied.\nThat was quick, even for me."
+                  : L"No appeal lodged. Findings stand.\nHonesty bonus: +2 aura.",
               7.0);
     if (sigmaResult != PromptResult::Primary) AddAura(2);
     KickGlitch(0.45f);
@@ -612,56 +700,15 @@ float GooseRotApp::GraffitiProgress() const {
       std::clamp((logicalTime_ - phase::kGraffiti) / phase::kGraffitiDuration, 0.0, 1.0));
 }
 
-void GooseRotApp::UpdatePopups() {
-  // The logical wall may contain 267 frames, but PopupSwarm materialises only
-  // 67 native windows. During the finale, the budget shrinks and the display
-  // consumes the surplus instead of refilling it.
-  const bool consuming = logicalTime_ >= phase::kFinalMonologue;
-  const int budget = DesiredPopupCount(logicalTime_, PopupSwarm::kMaximumPopups);
-  popups_.SetCeiling(consuming ? budget : PopupSwarm::kMaximumPopups);
-
-  if (consuming) {
-    // The finale eats the swarm a few windows at a time, each one a small tear
-    // in the display: fewer dialogs, more damage.
-    if (popups_.Count() > budget && logicalTime_ >= nextPopupDissolveAt_) {
-      const int eaten = popups_.Dissolve(std::min(3, popups_.Count() - budget));
-      if (eaten > 0) {
-        KickGlitch(0.10f * static_cast<float>(eaten));
-        nextPopupDissolveAt_ = logicalTime_ + 0.5;
-        if (popups_.Count() == 0) SetBubble(L"NO MORE WINDOWS.\nONLY DAMAGE.", 5.0);
-      }
-    }
-  } else if (budget > popups_.Count()) {
-    popups_.Spawn(instance_, random_, budget - popups_.Count());
-  }
-
-  // Preview renders the full logical wall inside its canvas without creating
-  // any native popup windows outside the preview frame.
-  if (!config_.preview) popups_.Tick(instance_, random_, logicalTime_);
-
-  if (popups_.ConsumeCloseAttempt()) {
-    constexpr std::array<const wchar_t*, 5> lines = {
-        L"ONE WINDOW CLOSED. TWO WINDOWS SPAWNED.\nGOOSE MATHEMATICS.",
-        L"THE CLOSE BUTTON IS PURELY DECORATIVE.",
-        L"YOU CANNOT CLOSE THE GRINDSET.",
-        L"I DUPLICATED YOUR DECISION.",
-        L"EVERY CLICK FUNDS ANOTHER GOOSE."};
-    std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
-    SetBubble(popups_.AtCap() ? L"267 WINDOWS. CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
-    if (!geese_.empty()) geese_.front().Honk(0.45f);
-    KickGlitch(0.18f);
-  }
-}
-
 void GooseRotApp::UpdateNotepad() {
   // Consume first: a refused close can queue a respawn, and respawning resets
   // the window's counters.
   if (notepad_.ConsumeRefusal()) {
     constexpr std::array<const wchar_t*, 4> lines = {
-        L"NO. I AM NOT DONE TYPING.",
-        L"THE [X] BUTTON HAS BEEN TAXED.",
-        L"CLICK AGAIN. I DARE YOU.",
-        L"FINE. IT WILL BE BACK IMMEDIATELY."};
+        L"The file stays open. I am still writing.",
+        L"Closing an open case file is a finding.",
+        L"Try that again and it becomes two findings.",
+        L"Fine. It will reopen itself."};
     const std::size_t index =
         static_cast<std::size_t>(std::max(0, notepad_.Refusals() - 1)) % lines.size();
     SetBubble(lines[index], 4.0);
@@ -670,10 +717,10 @@ void GooseRotApp::UpdateNotepad() {
   }
   if (notepad_.ConsumeMinimiseRefusal()) {
     constexpr std::array<const wchar_t*, 4> lines = {
-        L"IT DOES NOT GO IN THE TASKBAR.",
-        L"MINIMISE IS NOT A FEATURE HERE.",
-        L"YOU WILL READ WHAT I TYPED.",
-        L"THE TASKBAR IS ALSO MINE NOW."};
+        L"The case file does not go in the taskbar.",
+        L"You are required to be able to see it.",
+        L"Minimising evidence is also a finding.",
+        L"It comes straight back. Every time."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
     SetBubble(lines[pick(random_)], 4.0);
     if (!geese_.empty()) geese_.front().Honk(0.35f);
@@ -682,53 +729,24 @@ void GooseRotApp::UpdateNotepad() {
   notepad_.Tick(logicalTime_);
   if (logicalTime_ < phase::kNotepad || logicalTime_ >= phase::kCompanionCutoff) return;
   if (!notepad_.IsOpen()) {
-    notepad_.Show(instance_);
-    lastTypedAt_ = logicalTime_;
+    // It was destroyed after too many refusals: the inspector reopens it and
+    // picks the file back up exactly where the typing stopped.
+    const Vec2 beak = geese_.empty() ? overlay_.CanvasBounds().Center()
+                                     : geese_.front().Rig().beakTip;
+    const POINT anchor = overlay_.CanvasToScreen(beak);
+    notepad_.Show(instance_, &anchor);
+    if (notepad_.IsOpen()) notepad_.SetText(notepadText_);
   }
   if (!notepad_.IsOpen()) return;
-  constexpr std::array<const wchar_t*, 34> words = {
-      L"skibidi", L"rizzler", L"alpha", L"grindset", L"no-cap", L"fr-fr",
-      L"ohio", L"sigma", L"mewing", L"streak", L"aura", L"farming",
-      L"level-67", L"fanum-tax", L"jawline", L"protocol", L"activated",
-      L"brainrot", L"goose", L"honk", L"NPC", L"certified", L"+10000", L"tralalero",
-      L"q", L"x", L"AAAA", L"hjkl", L"goose.exe", L"NO_ESCAPE", L"67-67-67",
-      L"typing...", L"wrong-window", L"HONK_INPUT"};
-  std::uniform_int_distribution<std::size_t> word(0, words.size() - 1);
-  const double interval = logicalTime_ >= phase::kScreenShake        ? 0.20
-                          : logicalTime_ >= phase::kCursorAndWindows ? 0.72
-                                                                     : 0.18;
-  int additions = 0;
-  while (lastTypedAt_ + interval <= logicalTime_ && additions < 80) {
-    lastTypedAt_ += interval;
-    if (typedWordCount_ > 0) notepadText_ += (typedWordCount_ % 11 == 0) ? L"...\r\n" : L" ";
-    notepadText_ += words[word(keyboardRandom_)];
-    ++typedWordCount_;
-    ++additions;
-  }
 
-  // MEMZ's global SendInput is deliberately not reproduced. These raw-looking
-  // key bursts are appended directly to GooseRot's own read-only EDIT control,
-  // so the foreground app and every real user document remain untouched.
-  if (nextKeyBurstAt_ < 0.0) nextKeyBurstAt_ = logicalTime_ + 0.8;
-  constexpr wchar_t kKeyAlphabet[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789[];=+-_";
-  int keyBursts = 0;
-  while (logicalTime_ >= nextKeyBurstAt_ && keyBursts < 24) {
-    const bool late = logicalTime_ >= phase::kScreenShake;
-    std::uniform_int_distribution<int> length(late ? 2 : 1, late ? 8 : 4);
-    std::uniform_int_distribution<std::size_t> key(0, std::size(kKeyAlphabet) - 2U);
-    if (!notepadText_.empty()) notepadText_ += (typedWordCount_ % 13 == 0) ? L"\r\n" : L" ";
-    const int burstLength = length(keyboardRandom_);
-    for (int index = 0; index < burstLength; ++index) {
-      notepadText_ += kKeyAlphabet[key(keyboardRandom_)];
-    }
-    ++typedWordCount_;
-    ++additions;
-    ++keyBursts;
-    std::uniform_real_distribution<double> delay(late ? 0.22 : 0.65,
-                                                  late ? 0.62 : 1.35);
-    nextKeyBurstAt_ += delay(keyboardRandom_);
-  }
-  if (additions > 0) {
+  // A tired inspector writes faster as the site falls apart, and the backlog of
+  // findings has to keep up with the timeline rather than lag a phase behind.
+  double speed = logicalTime_ >= phase::kFinalMonologue  ? 26.0
+                 : logicalTime_ >= phase::kScreenShake   ? 19.0
+                                                         : 13.0;
+  if (typist_.Remaining() > 320U) speed *= 1.8;
+  typist_.SetSpeed(speed);
+  if (typist_.Advance(logicalTime_, keyboardRandom_, notepadText_)) {
     if (notepadText_.size() > 7000U) {
       const std::size_t newline = notepadText_.find(L'\n', 1800U);
       notepadText_.erase(0, newline == std::wstring::npos ? 1800U : newline + 1U);
@@ -781,7 +799,7 @@ void GooseRotApp::UpdateOwnedWindowsApps() {
   }
   const bool launched = ownedWindowsApps_.LaunchRandom(random_, realTime_, false);
   if (launched) {
-    SetBubble(L"WINDOWS BROUGHT REINFORCEMENTS.", 3.5);
+    SetBubble(L"Opening a site application for inspection.", 3.5);
   }
   if (!launched) {
     // Missing optional utilities or a transient CreateProcess failure should
@@ -804,10 +822,10 @@ void GooseRotApp::UpdateTaskbarGuard() {
   if (taskbarGuard_.ConsumePressAttempt() && logicalTime_ - lastTaskbarGuardPokeAt_ > 2.5) {
     lastTaskbarGuardPokeAt_ = logicalTime_;
     constexpr std::array<const wchar_t*, 4> lines = {
-        L"START MENU: REVOKED.\nThere is a goose standing on it.",
-        L"THAT BUTTON BELONGS TO ME NOW.",
-        L"NO MENU. ONLY 67.",
-        L"I AM STANDING ON THE START BUTTON.\nIt was load-bearing."};
+        L"Start menu sealed for the inspection.\nThere is a goose standing on it.",
+        L"That button is part of the site. Do not touch it.",
+        L"Access to the menu is suspended.",
+        L"I am standing on the Start button.\nIt was load-bearing."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
     SetBubble(lines[pick(random_)], 4.5);
     AddAura(-67);
@@ -881,7 +899,9 @@ void GooseRotApp::ScheduleCursorAction(bool userTriggered) {
       static_cast<double>(Distance(geese_.front().Position(), bodyTarget)) / 400.0 + 2.5,
       4.5, 15.0);
   pendingAction_ = {PendingActionKind::Cursor, logicalTime_ + travel, {}, 0};
-  SetBubble(userTriggered ? L"NO CLICK. ONLY 67." : L"AFK IS NOT A DEFENSE.", 3.0);
+  SetBubble(userTriggered ? L"Clicking during an inspection. Noted."
+                          : L"Taking a pointer sample. Hold still.",
+            3.0);
 }
 
 // The goose bites down on the pointer and starts hauling. The drag is spread
@@ -898,7 +918,7 @@ void GooseRotApp::BeginCursorGrab() {
   pendingAction_ = {};
   geese_.front().SetLatched(true);
   geese_.front().Honk(0.55f);
-  SetBubble(L"GOTCHA.\nCursor privileges revoked.", 3.0);
+  SetBubble(L"Pointer seized for measurement.\nHold still.", 3.0);
   KickGlitch(0.25f);
 }
 
@@ -908,15 +928,15 @@ void GooseRotApp::EndCursorGrab(bool succeeded) {
   grabRemainingPixels_ = 0;
   if (!geese_.empty()) geese_.front().SetLatched(false);
   if (!succeeded) {
-    SetBubble(L"THE CURSOR HIT THE EDGE.\nI WILL BREAK IT AGAIN LATER.", 4.0);
+    SetBubble(L"Measurement aborted at the site boundary.\nI will retake it later.", 4.0);
     return;
   }
   AddAura(-67);
   constexpr std::array<const wchar_t*, 4> lines = {
-      L"CURSOR MOVED BY EXACTLY 67 PIXELS.",
-      L"YOUR AIM HAD NEGATIVE AURA.",
-      L"NO CLICK. ONLY 67.",
-      L"PUT IT BACK. I WILL STEAL IT AGAIN."};
+      L"Pointer displaced by exactly 67 pixels.\nWithin tolerance. Barely.",
+      L"Measurement complete. Your aim is a finding.",
+      L"Sample taken. You may have it back.",
+      L"Put it where you like. I will measure it again."};
   std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
   SetBubble(lines[pick(random_)], 4.5);
 }
@@ -1016,16 +1036,18 @@ void GooseRotApp::ExecutePendingAction() {
         AddAura(-67);
         geese_.front().Honk(0.4f);
         constexpr std::array<const wchar_t*, 4> lines = {
-            L"67 PIXELS. PERFECTLY CALCULATED.", L"Your window had negative aura.",
-            L"Interior design by Goose.", L"I put it there. Don't question the grindset."};
+            L"Window realigned to 67 pixels.\nRegulation spacing.",
+            L"That window was out of compliance.",
+            L"Corrected. Do not thank me in writing.",
+            L"Noted, moved, logged. Next."};
         std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
         SetBubble(lines[pick(random_)], 5.0);
       } else {
-        SetBubble(L"Window escaped. Faux panel moved instead.", 4.0);
+        SetBubble(L"Window withdrew from inspection.\nRecorded as non-cooperation.", 4.0);
       }
       break;
     case PendingActionKind::FauxPanel:
-      SetBubble(L"No eligible window. Interior design simulated.", 4.0);
+      SetBubble(L"No eligible window on site.\nMeasurement simulated instead.", 4.0);
       break;
     case PendingActionKind::None:
       break;
@@ -1165,6 +1187,30 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
         const float sign = index % 2 == 1 ? -1.0f : 1.0f;
         const float rank = static_cast<float>((index + 1) / 2);
         geese_[index].SetTarget(head + Vec2{sign * 86.0f * rank, 62.0f * rank}, SpeedTier::Run);
+      }
+    } else if (inspectionRound_ && logicalTime_ < phase::kNotepad && !IsGooseBusy(0)) {
+      // The opening round is a route, not a wander: the inspector visits the
+      // four corners of the site and the middle, in order, and says what it
+      // found at each one before moving on.
+      constexpr std::array<std::pair<float, float>, 5> stations = {
+          {{0.16f, 0.24f}, {0.84f, 0.26f}, {0.82f, 0.78f}, {0.18f, 0.76f}, {0.50f, 0.52f}}};
+      constexpr std::array<const wchar_t*, 5> remarks = {
+          L"Top left. Dust. Noted.",
+          L"Top right. This is where the scorecard goes.",
+          L"Bottom right. Something lives here.",
+          L"Bottom left. No comment. Written down anyway.",
+          L"Centre of the site. This will do."};
+      GooseEntity& inspector = geese_.front();
+      if (inspector.DistanceToTarget() < 22.0f || inspectionStation_ < 0) {
+        inspectionStation_ = std::min<int>(inspectionStation_ + 1,
+                                           static_cast<int>(stations.size()) - 1);
+        const auto& station = stations[static_cast<std::size_t>(inspectionStation_)];
+        // Five stations in thirty seconds: brisk, which is also how somebody
+        // with a clipboard and a schedule actually moves.
+        inspector.SetTarget({bounds.left + bounds.Width() * station.first,
+                             bounds.top + bounds.Height() * station.second},
+                            SpeedTier::Run, true);
+        SetBubble(remarks[static_cast<std::size_t>(inspectionStation_)], 6.0);
       }
     } else {
       for (std::size_t index = 0; index < geese_.size(); ++index) {
@@ -1347,20 +1393,17 @@ void GooseRotApp::ClosePropAt(std::size_t index) {
   nextSpriteAt_ = std::min(nextSpriteAt_, logicalTime_ + 0.4);
 
   constexpr std::array<const wchar_t*, 5> lines = {
-      L"YOU CLOSED ONE PHOTO.\nI AM FETCHING TWO.",
-      L"THAT WAS A GIFT.\n-6,700 AURA.",
-      L"THE WALL DECIDES. NOT YOU.",
-      L"I WALKED OFF SCREEN FOR THAT.",
-      L"EVERY [X] COSTS AURA. THIS ONE COST A LOT."};
+      L"You destroyed an exhibit.\nI am fetching two more.",
+      L"Tampering with evidence. -6,700 aura.",
+      L"That was case material. It is now a finding.",
+      L"I left the site to collect that.",
+      L"Every removed exhibit is replaced. Twice."};
   std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
   SetBubble(lines[pick(random_)], 5.0);
   if (!geese_.empty()) geese_.front().Honk(0.55f);
-  PushToast(L"GooseRot", L"Brainrot asset removed by user.\nTwo replacements dispatched.");
+  PushToast(L"AURA INSPECTION", L"Exhibit destroyed by the occupant.\nTwo replacements dispatched.");
 
-  // Escalation: at three the swarm answers, at five the flock does.
-  if (propsClosed_ % 3 == 0 && logicalTime_ >= phase::kDuplicate) {
-    popups_.Spawn(instance_, random_, 2);
-  }
+  // Escalation: from five removed exhibits the inspector calls in more help.
   if (propsClosed_ >= 5 && extraGeese_ < 6) ++extraGeese_;
 }
 
@@ -1524,7 +1567,6 @@ bool GooseRotApp::Cleanup() {
   // them the instant that final frame loop ends.
   if (!shutdownRequested_ || !completedTimeline_) windowsKeyGuard_.Close();
   taskbarGuard_.Close();
-  popups_.CloseAll();
   ownedWindowsApps_.CloseAll();
   cursorLatched_ = false;
   cursorChaos_ = 0.0f;
@@ -1589,20 +1631,28 @@ RenderState GooseRotApp::BuildRenderState() const {
   if (config_.reducedMotion) cue.faultRibbonIntensity *= 0.24f;
   state.screenFlash = cue.flashIntensity;
   state.faultRibbon = cue.faultRibbonIntensity;
+  // The aperture starts closing nine seconds before the end and the exposure
+  // is cranked over the same stretch, so the desktop is already a blown-out
+  // porthole by the time the file is actually closed.
   const float irisProgress = static_cast<float>(
-      std::clamp((logicalTime_ - (phase::kEnd - 1.0)) / 1.0, 0.0, 1.0));
+      std::clamp((logicalTime_ - phase::kIrisStart) / (phase::kEnd - phase::kIrisStart),
+                 0.0, 1.0));
   state.finalIris = irisProgress * irisProgress * (3.0f - 2.0f * irisProgress);
+  state.finalExposure = static_cast<float>(std::pow(
+      std::clamp((logicalTime_ - phase::kIrisStart - 2.0) / (phase::kEnd - phase::kIrisStart - 2.0),
+                 0.0, 1.0),
+      1.8));
   state.effectPattern = cue.pattern;
   state.reducedMotion = config_.reducedMotion;
   state.graffitiProgress = GraffitiProgress();
-  state.popupCount = popups_.Count();
-  state.nativePopupCount = popups_.NativeCount();
   state.propsClosed = propsClosed_;
+  state.auraVisible = auraVisible_;
+  state.auraRevealedAt = auraRevealedAt_;
   state.cursorStormPhase = logicalTime_ >= phase::kScreenShake &&
                            logicalTime_ < phase::kEnd && !shutdownStarted_;
   state.cursorLatched = cursorLatched_;
   state.clipboardBadge = logicalTime_ >= phase::kClipboard && logicalTime_ < phase::kGraffiti;
-  state.graffiti = logicalTime_ >= phase::kGraffiti && logicalTime_ < phase::kEnd - 1.0;
+  state.graffiti = logicalTime_ >= phase::kGraffiti && logicalTime_ < phase::kEnd;
   state.colorFilter = logicalTime_ >= phase::kColorFilter && logicalTime_ < phase::kEnd;
   state.finalMonologue = logicalTime_ >= phase::kFinalMonologue && logicalTime_ < phase::kEnd;
   state.countdown = logicalTime_ >= phase::kCountdown && logicalTime_ < phase::kEnd;

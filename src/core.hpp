@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -85,32 +86,42 @@ bool ParseTimestamp(const std::wstring& value, double& seconds);
 const wchar_t* ModeName(RunMode mode);
 std::wstring UsageText();
 
-// Every timeline anchor, in logical seconds, in one place. The experience runs
-// six minutes: the flock walks off the screen once near the start and comes
-// back carrying the first photo, and that beat needs room of its own instead of
-// squeezing the later phases.
+// Every timeline anchor, in logical seconds, in one place.
+//
+// The run is one story: a goose turns up to perform an Aura Inspection of the
+// desktop, opens a case file, collects evidence, paints its verdict on the wall
+// and finally condemns the machine. Seven and a half minutes, with a deliberate
+// opening — the goose arrives, introduces itself and walks a full inspection
+// round before anything is scored, so the aura counter appears because the
+// inspector started writing rather than because the program started.
 namespace phase {
 
 constexpr double kEntrance = 0.0;
-constexpr double kAuraPrompt = 15.0;
-constexpr double kGooseExit = 35.0;
-constexpr double kNotepad = 45.0;
-constexpr double kGooseReturn = 65.0;
-constexpr double kCursorAndWindows = 80.0;
-constexpr double kOwnedApps = 95.0;
-constexpr double kSubtitles = 110.0;
-constexpr double kClipboard = 140.0;
-constexpr double kDuplicate = 160.0;
-constexpr double kGraffiti = 190.0;
+constexpr double kIntroduction = 20.0;
+constexpr double kInspectionRound = 45.0;
+// The goose stamps the desktop and the case file opens under its beak.
+constexpr double kNotepad = 75.0;
+// First entry in the file: this is when the aura counter appears at all.
+constexpr double kAuraPrompt = 100.0;
+constexpr double kGooseExit = 125.0;
+constexpr double kGooseReturn = 148.0;
+constexpr double kCursorAndWindows = 165.0;
+constexpr double kOwnedApps = 178.0;
+constexpr double kSubtitles = 190.0;
+constexpr double kClipboard = 215.0;
+constexpr double kDuplicate = 235.0;
+constexpr double kGraffiti = 265.0;
 constexpr double kGraffitiDuration = 18.0;
-constexpr double kSigma = 216.0;
-constexpr double kScreenShake = 240.0;
-constexpr double kColorFilter = 270.0;
-constexpr double kFinalMonologue = 300.0;
-constexpr double kCountdown = 330.0;
-constexpr double kCircleDance = 345.0;
-constexpr double kResetAura = 358.4;
-constexpr double kEnd = 360.0;
+constexpr double kSigma = 295.0;
+constexpr double kScreenShake = 315.0;
+constexpr double kColorFilter = 345.0;
+constexpr double kFinalMonologue = 375.0;
+constexpr double kCountdown = 410.0;
+constexpr double kCircleDance = 430.0;
+// The last chance is offered just before the aperture starts closing, so the
+// screen visibly shuts on it rather than hiding it behind black.
+constexpr double kResetAura = 438.0;
+constexpr double kEnd = 450.0;
 
 // Third-party windows are only ever nudged inside the hijack phase.
 constexpr double kWindowHijackEnd = kDuplicate;
@@ -118,6 +129,9 @@ constexpr double kWindowHijackEnd = kDuplicate;
 constexpr double kCursorHuntEnd = kFinalMonologue;
 // Nothing new is fed to the scene this late; the finale needs a settled stage.
 constexpr double kCompanionCutoff = kEnd - 2.0;
+// The inspector closes the file: the aperture starts shutting on the desktop
+// while the exposure is cranked, well before the timeline itself runs out.
+constexpr double kIrisStart = kEnd - 9.0;
 
 }  // namespace phase
 
@@ -147,9 +161,11 @@ FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale);
 
 enum class TimelineEventId {
   PassiveEntrance,
+  Introduction,
+  InspectionRound,
+  NotepadStart,
   AuraPrompt,
   GooseExit,
-  NotepadStart,
   GooseReturn,
   CursorAndWindows,
   MemeSubtitles,
@@ -185,6 +201,32 @@ class TimelineEngine {
   std::vector<TimelineEvent> events_;
   std::vector<bool> fired_;
   double currentTime_ = 0.0;
+};
+
+// Types a script into a buffer the way somebody actually types it, instead of
+// dumping whole words at a fixed interval: one character at a time, with jitter
+// between keystrokes, a beat after punctuation, a longer one after a line
+// break, and the occasional typo that gets noticed a moment later and rubbed
+// out. Pure logic, so the cadence is unit-testable without a window.
+class Typewriter {
+ public:
+  void Queue(const std::wstring& text);
+  // How fast the typist is going, in characters per second.
+  void SetSpeed(double charactersPerSecond);
+  // Advances to `now`, appending to and correcting `visible`. Returns true when
+  // `visible` changed, so the caller only touches the control when it must.
+  bool Advance(double now, std::mt19937& random, std::wstring& visible);
+  // True when the whole script has been typed and any typo has been repaired.
+  bool Idle() const { return pending_.empty() && typoRemaining_ == 0; }
+  std::size_t Remaining() const { return pending_.size(); }
+  void Reset(double now);
+
+ private:
+  std::wstring pending_;
+  double nextKeystrokeAt_ = 0.0;
+  double charactersPerSecond_ = 11.0;
+  int typoRemaining_ = 0;
+  bool started_ = false;
 };
 
 enum class SpeedTier { Walk, Run, Charge };
@@ -298,11 +340,6 @@ std::size_t PickFreeCarrier(const std::vector<unsigned char>& carrierBusy, bool 
 // seized share and the peak both grow with the timeline, but the released
 // window never disappears entirely.
 float CursorStormEnvelope(double logicalTime);
-
-// How many popups the swarm is allowed to keep alive at `logicalTime`. It grows
-// until the final monologue, then the finale trades windows for glitch and eats
-// the swarm back down to nothing.
-int DesiredPopupCount(double logicalTime, int maximum);
 
 // Where and how big the sprayed 67 is on a given canvas. The renderer draws
 // from these, and prop placement keeps clear of them, so the tag can never be

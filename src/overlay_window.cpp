@@ -738,6 +738,18 @@ Vec2 OverlayWindow::ScreenToCanvas(POINT screenPoint) const {
   return {x, y};
 }
 
+POINT OverlayWindow::CanvasToScreen(Vec2 canvasPoint) const {
+  POINT point{static_cast<LONG>(std::lround(canvasPoint.x)),
+              static_cast<LONG>(std::lround(canvasPoint.y))};
+  if (preview_ && window_) {
+    ClientToScreen(window_, &point);
+    return point;
+  }
+  point.x += screenOriginX_;
+  point.y += screenOriginY_;
+  return point;
+}
+
 Vec2 OverlayWindow::GraffitiPaintHead(float progress) const {
   const float scale = TagScale(CanvasBounds());
   const Vec2 center = TagCenter(CanvasBounds());
@@ -771,7 +783,7 @@ void OverlayWindow::Render(const RenderState& state) {
   const std::size_t spriteCount = state.sprites ? state.sprites->size() : 0U;
   const std::uint64_t surfacePixels = static_cast<std::uint64_t>(width_) *
                                       static_cast<std::uint64_t>(height_);
-  heavyScene_ = (state.geese && state.geese->size() > 12U) || state.popupCount > 24 ||
+  heavyScene_ = (state.geese && state.geese->size() > 12U) ||
                 spriteCount > 8U || surfacePixels > 3'000'000ULL;
   const bool heavyScene = heavyScene_;
   graphics.SetSmoothingMode(heavyScene ? SmoothingModeHighSpeed : SmoothingModeAntiAlias);
@@ -807,9 +819,7 @@ void OverlayWindow::Render(const RenderState& state) {
     }
     DrawSceneEffects(graphics, state);
     sceneSampleMs_ += markProfile();
-    DrawVirtualWindows(graphics, state);
     DrawSprites(graphics, state);
-    DrawErrorIcons(graphics, state);
     spriteSampleMs_ += markProfile();
     // The tag goes on after the photos. Props keep clear of its footprint, but
     // drawing it last is what guarantees a small screen can never end up with
@@ -1224,148 +1234,24 @@ void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& tex
   DrawCenteredText(graphics, text, font, textRectangle, ink);
 }
 
-void OverlayWindow::DrawVirtualWindows(Graphics& graphics, const RenderState& state) {
-  // Overflow windows are deliberately painted rather than represented by
-  // extra HWNDs. Opaque rectangle spans are substantially faster than GDI+
-  // here and, unlike a full-canvas cache, keep memory independent of display
-  // resolution. Subtract the actual native count so the HUD always matches
-  // what is visible, including while --start-at materialises its HWNDs.
-  const int count = std::clamp(state.popupCount - state.nativePopupCount, 0, 267);
-  if (count <= 0) return;
-  graphics.Flush(FlushIntentionSync);
-  auto* pixels = static_cast<std::uint32_t*>(surfacePixels_);
-  const auto fill = [&](int x, int y, int rectangleWidth, int rectangleHeight,
-                        std::uint32_t color) {
-    const int left = std::clamp(x, 0, width_);
-    const int top = std::clamp(y, 0, height_);
-    const int right = std::clamp(x + rectangleWidth, 0, width_);
-    const int bottom = std::clamp(y + rectangleHeight, 0, height_);
-    if (left >= right || top >= bottom) return;
-    for (int row = top; row < bottom; ++row) {
-      std::fill_n(pixels + static_cast<std::size_t>(row) * width_ + left,
-                  right - left, color);
-    }
-  };
-
-  constexpr std::array<std::uint32_t, 3> bodies = {
-      0xFFF2F2F6U, 0xFFFAF6EBU, 0xFFE8F0FAU};
-  constexpr std::array<std::uint32_t, 3> titles = {
-      0xFF3D495CU, 0xFF4B3753U, 0xFF284C5BU};
-  constexpr std::uint32_t shadow = 0xFF343039U;
-  constexpr std::uint32_t close = 0xFFE83244U;
-  constexpr std::uint32_t line = 0xFF60636BU;
-  constexpr std::uint32_t border = 0xFF1A1C23U;
-  constexpr std::uint32_t cross = 0xFFFFFFFFU;
-
-  for (int index = 0; index < count; ++index) {
-    const std::uint32_t seed =
-        state.seed * 131U + static_cast<std::uint32_t>(index) * 977U;
-    // Once the wall is dense, smaller cards still read as individual windows
-    // while cutting the number of overwritten pixels by roughly two thirds.
-    const int windowWidth = heavyScene_
-                                ? 100 + static_cast<int>(Noise01(seed + 1U) * 100.0f)
-                                : 210 + static_cast<int>(Noise01(seed + 1U) * 230.0f);
-    const int windowHeight = heavyScene_
-                                 ? 60 + static_cast<int>(Noise01(seed + 2U) * 50.0f)
-                                 : 112 + static_cast<int>(Noise01(seed + 2U) * 118.0f);
-    const int x = static_cast<int>(Noise01(seed + 3U) *
-                                   std::max(1, width_ - windowWidth));
-    const int y = static_cast<int>(Noise01(seed + 4U) *
-                                   std::max(1, height_ - windowHeight));
-    const int titleHeight = (heavyScene_ ? 18 : 24) +
-                            static_cast<int>(Noise01(seed + 5U) * (heavyScene_ ? 5.0f : 7.0f));
-    const std::size_t palette = static_cast<std::size_t>(index % 3);
-    fill(x + 5, y + 6, windowWidth, windowHeight, shadow);
-    fill(x, y, windowWidth, windowHeight, bodies[palette]);
-    fill(x, y, windowWidth, titleHeight, titles[palette]);
-    fill(x + windowWidth - titleHeight, y, titleHeight, titleHeight, close);
-    const int inset = heavyScene_ ? 10 : 17;
-    fill(x + inset, y + titleHeight + (heavyScene_ ? 12 : 20),
-         static_cast<int>(windowWidth * (0.42f + Noise01(seed + 6U) * 0.38f)), 5, line);
-    if (!heavyScene_) {
-      fill(x + 17, y + titleHeight + 36,
-           static_cast<int>(windowWidth * (0.30f + Noise01(seed + 7U) * 0.48f)), 4, line);
-      fill(x + static_cast<int>(windowWidth * 0.36f), y + windowHeight - 31,
-           static_cast<int>(windowWidth * 0.28f), 18, titles[palette]);
-    }
-    fill(x, y, windowWidth, 2, border);
-    fill(x, y + windowHeight - 2, windowWidth, 2, border);
-    fill(x, y, 2, windowHeight, border);
-    fill(x + windowWidth - 2, y, 2, windowHeight, border);
-    for (int diagonal = 6; diagonal < titleHeight - 6; diagonal += 2) {
-      fill(x + windowWidth - titleHeight + diagonal, y + diagonal, 2, 2, cross);
-      fill(x + windowWidth - 1 - diagonal, y + diagonal, 2, 2, cross);
-    }
-  }
+void OverlayWindow::DrawEmergencyExitOverlay(Graphics& graphics,
+                                               const RenderState& state) const {
+  if (state.emergencyProgress <= 0.0f) return;
+  const float width = std::min(560.0f, static_cast<float>(width_) - 40.0f);
+  const float x = (width_ - width) * 0.5f;
+  const float y = height_ - 38.0f;
+  SolidBrush track(Color(245, 20, 20, 26));
+  SolidBrush progress(kMatrixGreen);
+  graphics.FillRectangle(&track, x, y, width, 24.0f);
+  graphics.FillRectangle(&progress, x + 3.0f, y + 3.0f,
+                         (width - 6.0f) * std::clamp(state.emergencyProgress, 0.0f, 1.0f),
+                         18.0f);
+  Font font(UiFamily(), 14.0f, FontStyleBold, UnitPixel);
+  SolidBrush light(Color(255, 255, 255, 255));
+  DrawCenteredText(graphics, L"Hold Esc to close everything and restore the desktop", font,
+                   {x, y - 26.0f, x + width, y - 2.0f}, light);
 }
 
-void OverlayWindow::DrawErrorIcons(Graphics& graphics, const RenderState& state) const {
-  if (state.logicalTime < phase::kSubtitles || state.logicalTime >= phase::kEnd) return;
-  const double progress = std::clamp(
-      (state.logicalTime - phase::kSubtitles) /
-          (phase::kEnd - phase::kSubtitles - 5.0),
-      0.0, 1.0);
-  const int count = std::clamp(1 + static_cast<int>(std::floor(progress * 66.0)), 1, 67);
-  if (heavyScene_ && surfacePixels_) {
-    // Avoid 67 antialiased GDI+ paths in the saturated scene. These compact
-    // opaque glyphs go straight into the local DIB and retain a distinct rim,
-    // red body and white cross for every logical error.
-    graphics.Flush(FlushIntentionSync);
-    auto* pixels = static_cast<std::uint32_t*>(surfacePixels_);
-    const auto fill = [&](int x, int y, int rectangleWidth, int rectangleHeight,
-                          std::uint32_t color) {
-      const int left = std::clamp(x, 0, width_);
-      const int top = std::clamp(y, 0, height_);
-      const int right = std::clamp(x + rectangleWidth, 0, width_);
-      const int bottom = std::clamp(y + rectangleHeight, 0, height_);
-      if (left >= right || top >= bottom) return;
-      for (int row = top; row < bottom; ++row) {
-        std::fill_n(pixels + static_cast<std::size_t>(row) * width_ + left,
-                    right - left, color);
-      }
-    };
-    for (int index = 0; index < count; ++index) {
-      const std::uint32_t seed =
-          state.seed * 313U + static_cast<std::uint32_t>(index) * 1597U;
-      const int size = 20 + static_cast<int>(Noise01(seed + 1U) * 23.0f);
-      const int x = static_cast<int>(Noise01(seed + 2U) * std::max(1, width_ - size));
-      const int y = static_cast<int>(Noise01(seed + 3U) * std::max(1, height_ - size));
-      fill(x + 3, y + 4, size, size, 0xFF351E28U);
-      fill(x, y, size, size, 0xFFEB2437U);
-      fill(x, y, size, 2, 0xFFFFE8ECU);
-      fill(x, y + size - 2, size, 2, 0xFFFFE8ECU);
-      fill(x, y, 2, size, 0xFFFFE8ECU);
-      fill(x + size - 2, y, 2, size, 0xFFFFE8ECU);
-      for (int diagonal = size / 4; diagonal < size - size / 4; diagonal += 2) {
-        fill(x + diagonal, y + diagonal, 2, 2, 0xFFFFFFFFU);
-        fill(x + size - diagonal - 2, y + diagonal, 2, 2, 0xFFFFFFFFU);
-      }
-    }
-    return;
-  }
-  const SmoothingMode previous = graphics.GetSmoothingMode();
-  graphics.SetSmoothingMode(SmoothingModeAntiAlias);
-  SolidBrush shadow(Color(80, 0, 0, 0));
-  SolidBrush disc(Color(246, 235, 36, 55));
-  Pen rim(Color(245, 255, 232, 236), 2.0f);
-  Pen cross(Color(255, 255, 255, 255), 5.0f);
-  cross.SetStartCap(LineCapRound);
-  cross.SetEndCap(LineCapRound);
-
-  for (int index = 0; index < count; ++index) {
-    const std::uint32_t seed = state.seed * 313U + static_cast<std::uint32_t>(index) * 1597U;
-    const float size = 24.0f + Noise01(seed + 1U) * 30.0f;
-    const float x = Noise01(seed + 2U) * std::max(1.0f, static_cast<float>(width_) - size);
-    const float y = Noise01(seed + 3U) * std::max(1.0f, static_cast<float>(height_) - size);
-    graphics.FillEllipse(&shadow, x + 3.0f, y + 4.0f, size, size);
-    graphics.FillEllipse(&disc, x, y, size, size);
-    graphics.DrawEllipse(&rim, x, y, size, size);
-    const float inset = size * 0.29f;
-    graphics.DrawLine(&cross, x + inset, y + inset, x + size - inset, y + size - inset);
-    graphics.DrawLine(&cross, x + size - inset, y + inset, x + inset, y + size - inset);
-  }
-  graphics.SetSmoothingMode(previous);
-}
 
 void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) {
   if (!state.sprites) return;
@@ -1955,31 +1841,9 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
                   kCriticalRed, 2.0f + cursorChaos * 8.0f);
   }
 
-  // A window that stopped responding, drawn as a hollow ghost frame.
-  if (intensity > 0.45f) {
-    const std::uint32_t seed = frame_ / 40U * 617U;
-    const float w = 300.0f + Noise01(seed + 2U) * 240.0f;
-    const float h = 180.0f + Noise01(seed + 3U) * 150.0f;
-    const float x = Noise01(seed) * std::max(1.0f, canvasWidth - w);
-    const float y = Noise01(seed + 1U) * std::max(1.0f, canvasHeight - h);
-    const float drift = NoiseSigned(frame_ / 3U * 29U) * 6.0f * intensity;
-    SolidBrush body(Color(70, 236, 240, 246));
-    SolidBrush bar(Color(120, 40, 46, 60));
-    Pen frameEdge(Color(150, 255, 45, 170), 2.0f);
-    graphics.FillRectangle(&body, x + drift, y, w, h);
-    graphics.FillRectangle(&bar, x + drift, y, w, 30.0f);
-    graphics.DrawRectangle(&frameEdge, x + drift, y, w, h);
-    Font font(UiFamily(), 15.0f, FontStyleRegular, UnitPixel);
-    SolidBrush ink(Color(210, 255, 255, 255));
-    StringFormat left;
-    left.SetLineAlignment(StringAlignmentCenter);
-    graphics.DrawString(L"explorer.exe - Not Responding", -1, &font,
-                        Gdiplus::RectF(x + drift + 10.0f, y, w - 20.0f, 30.0f), &left, &ink);
-  }
-
   // Rolling signal loss: whole bands of the display drop to black and shear
-  // sideways. This is what the finale spends its budget on now that the window
-  // swarm is being taken apart instead of grown.
+  // sideways. With no fake window chrome left to lean on, the late run carries
+  // its damage entirely in the display itself.
   if (intensity > 0.62f) {
     const float severity = (intensity - 0.62f) / 0.38f;
     const float rollHeight = canvasHeight * (0.06f + severity * 0.16f);
@@ -2069,14 +1933,25 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
   SolidBrush dark(Color(226, 18, 18, 24));
   SolidBrush light(Color(245, 255, 255, 255));
 
-  // Aura counter: shakes and flashes whenever the number moves.
-  {
+  // The scorecard. It is absent until the inspector pins it up, and then it
+  // drops into place instead of simply existing: the counter is a thing the
+  // goose brought, not part of the program's furniture.
+  if (state.auraVisible) {
     const double sinceDelta = state.logicalTime - state.auraDeltaAt;
     const float punch = static_cast<float>(std::clamp(1.0 - sinceDelta / 0.9, 0.0, 1.0));
+    const float reveal = state.auraRevealedAt < 0.0
+                             ? 1.0f
+                             : static_cast<float>(std::clamp(
+                                   (state.logicalTime - state.auraRevealedAt) / 0.8, 0.0, 1.0));
+    // Overshoots once on the way down, like a card being slapped onto a board.
+    const float settle = 1.0f - std::pow(1.0f - reveal, 3.0f);
+    const float drop = (1.0f - settle) * -140.0f +
+                       std::sin(reveal * 3.14159265f) * (1.0f - reveal) * 26.0f;
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(static_cast<float>(width_ - 286) + NoiseSigned(frame_ * 7U) * punch * 7.0f,
-                                14.0f + NoiseSigned(frame_ * 7U + 3U) * punch * 6.0f);
-    graphics.RotateTransform(1.6f + punch * NoiseSigned(frame_ * 11U) * 3.0f);
+                                14.0f + drop + NoiseSigned(frame_ * 7U + 3U) * punch * 6.0f);
+    graphics.RotateTransform(1.6f + (1.0f - settle) * -9.0f +
+                             punch * NoiseSigned(frame_ * 11U) * 3.0f);
     GraphicsPath auraBox;
     AddWobblyRectangle(auraBox, 0.0f, 0.0f, 268.0f, 48.0f, 2.6f, 733U + boil);
     SolidBrush auraFill(Color(232, 22, 22, 30));
@@ -2105,21 +1980,9 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
   }
 
   float hudRow = 112.0f;
-  if (state.popupCount > 0) {
+  if (state.auraVisible && state.propsClosed > 0) {
     std::wostringstream counter;
-    counter << L"WINDOWS OPEN: " << state.popupCount;
-    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
-    SolidBrush ink(Color(200, 255, 45, 170));
-    DrawCenteredText(graphics, counter.str(), font,
-                     {static_cast<float>(width_ - 286), hudRow,
-                      static_cast<float>(width_ - 18), hudRow + 24.0f},
-                     ink);
-    hudRow += 24.0f;
-  }
-
-  if (state.propsClosed > 0) {
-    std::wostringstream counter;
-    counter << L"PHOTOS TORN: " << state.propsClosed;
+    counter << L"EXHIBITS DESTROYED: " << state.propsClosed;
     Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
     SolidBrush ink(Color(200, 255, 36, 56));
     DrawCenteredText(graphics, counter.str(), font,
@@ -2161,7 +2024,7 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
 
   if (state.finalMonologue) {
     Font criticalFont(PosterFamily(), 46.0f, FontStyleBold, UnitPixel);
-    DrawSplitText(graphics, L"CRITICAL ERROR: MAXIMUM BRAINROT REACHED.", criticalFont,
+    DrawSplitText(graphics, L"VERDICT: NON-COMPLIANT. SITE CONDEMNED.", criticalFont,
                   {20.0f, height_ * 0.16f, static_cast<float>(width_ - 20), height_ * 0.28f},
                   kCriticalRed, 3.0f + state.glitch * 6.0f);
   }
@@ -2196,103 +2059,120 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     graphics.FillPath(&fill, &button);
     graphics.DrawPath(&edge, &button);
     Font font(PosterFamily(), 30.0f, FontStyleBold, UnitPixel);
-    DrawCenteredText(graphics, L"DO NOT PRESS", font, {0.0f, 2.0f, buttonWidth, 66.0f}, light);
+    DrawCenteredText(graphics, L"SIGN HERE", font, {0.0f, 2.0f, buttonWidth, 66.0f}, light);
     graphics.Restore(saved);
   }
 
 }
 
+// The inspector closes the file, and the aperture closes with it.
+//
+// Everything outside a shrinking circle is black, so the desktop is squeezed
+// down to a porthole and then to nothing. At the same time the exposure inside
+// the circle is cranked: the remaining image washes out brighter and brighter
+// until the frame is blown out entirely, which is what the crash lands on.
 void OverlayWindow::DrawFinalIris(Graphics& graphics, const RenderState& state) const {
-  const float progress = std::clamp(state.finalIris, 0.0f, 1.0f);
-  if (progress <= 0.0f || state.fakeShutdown) return;
+  const float iris = std::clamp(state.finalIris, 0.0f, 1.0f);
+  const float exposure = std::clamp(state.finalExposure, 0.0f, 1.0f);
+  if (iris <= 0.0f && exposure <= 0.0f) return;
+  if (state.fakeShutdown) return;
+
   const float centerX = width_ * 0.5f;
   const float centerY = height_ * 0.48f;
   const float farthestX = std::max(centerX, static_cast<float>(width_) - centerX);
   const float farthestY = std::max(centerY, static_cast<float>(height_) - centerY);
   const float maximumRadius = std::sqrt(farthestX * farthestX + farthestY * farthestY) + 32.0f;
-  const float radius = maximumRadius * progress;
+  // Ease out, so the last stretch of the closing is slow and deliberate.
+  const float radius = maximumRadius * (1.0f - iris) * (1.0f - iris * 0.35f);
+
+  if (exposure > 0.0f) {
+    // Blown highlights inside the aperture. Capped without flashes, so the
+    // scene still washes out but never reaches a full-frame white field.
+    const float ceiling = state.flashesEnabled ? 1.0f : 0.45f;
+    const float wash = std::min(exposure, ceiling);
+    SolidBrush blowout(WithAlpha(Color(255, 255, 255, 255), wash * 0.92f));
+    if (radius > 0.5f) {
+      graphics.FillEllipse(&blowout, centerX - radius, centerY - radius, radius * 2.0f,
+                           radius * 2.0f);
+    } else {
+      graphics.FillRectangle(&blowout, 0, 0, width_, height_);
+    }
+  }
+
+  if (iris <= 0.0f) return;
+  // The mask: a full-screen rectangle with the aperture punched out of it.
+  GraphicsPath mask;
+  mask.SetFillMode(FillModeAlternate);
+  mask.AddRectangle(Gdiplus::RectF(-4.0f, -4.0f, static_cast<float>(width_) + 8.0f,
+                                   static_cast<float>(height_) + 8.0f));
+  if (radius > 0.5f) {
+    mask.AddEllipse(centerX - radius, centerY - radius, radius * 2.0f, radius * 2.0f);
+  }
   SolidBrush black(Color(255, 0, 0, 0));
-  graphics.FillEllipse(&black, centerX - radius, centerY - radius,
-                       radius * 2.0f, radius * 2.0f);
-  if (progress < 0.985f) {
-    const BYTE alpha = static_cast<BYTE>(220.0f * (1.0f - progress));
-    Pen ring(Color(alpha, 255, 45, 170), 7.0f + progress * 16.0f);
-    graphics.DrawEllipse(&ring, centerX - radius, centerY - radius,
-                         radius * 2.0f, radius * 2.0f);
+  graphics.FillPath(&black, &mask);
+
+  if (radius > 1.0f) {
+    // A bright rim on the closing edge: the aperture is glowing as it shuts.
+    const float glow = std::max(exposure, iris * 0.6f);
+    Pen rim(WithAlpha(Color(255, 255, 244, 214), 0.35f + glow * 0.6f), 4.0f + glow * 20.0f);
+    graphics.DrawEllipse(&rim, centerX - radius, centerY - radius, radius * 2.0f, radius * 2.0f);
   }
 }
 
-void OverlayWindow::DrawEmergencyExitOverlay(Graphics& graphics,
-                                               const RenderState& state) const {
-  if (state.emergencyProgress <= 0.0f) return;
-  const float width = std::min(560.0f, static_cast<float>(width_) - 40.0f);
-  const float x = (width_ - width) * 0.5f;
-  const float y = height_ - 38.0f;
-  SolidBrush track(Color(245, 20, 20, 26));
-  SolidBrush progress(kMatrixGreen);
-  graphics.FillRectangle(&track, x, y, width, 24.0f);
-  graphics.FillRectangle(&progress, x + 3.0f, y + 3.0f,
-                         (width - 6.0f) * std::clamp(state.emergencyProgress, 0.0f, 1.0f),
-                         18.0f);
-  Font font(UiFamily(), 14.0f, FontStyleBold, UnitPixel);
-  SolidBrush light(Color(255, 255, 255, 255));
-  DrawCenteredText(graphics, L"Hold Esc to close everything and restore the desktop", font,
-                   {x, y - 26.0f, x + width, y - 2.0f}, light);
-}
-
+// What happens after the aperture has shut.
+//
+//   0.00-0.55  the crash: the blown-out frame collapses to a bright line, then
+//              to a single point, the way a tube television dies
+//   0.55-1.60  nothing at all. Black, and long enough to be uncomfortable
+//   1.60-4.20  the goose walks back in
+//   4.20+      it says the last thing anybody says
 void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& state) const {
   const double age = std::max(0.0, state.shutdownAge);
   SolidBrush background(Color(255, 0, 0, 0));
   graphics.FillRectangle(&background, 0, 0, width_, height_);
 
-  // A short, screen-filling aura-core detonation before the hard cut to black.
-  if (age < 1.15) {
-    const float blast = static_cast<float>(std::clamp(age / 1.15, 0.0, 1.0));
-    const Vec2 center{width_ * 0.5f, height_ * 0.48f};
-    if (state.flashesEnabled && age < 0.16) {
-      const BYTE alpha = static_cast<BYTE>(255.0 * (1.0 - age / 0.16));
-      SolidBrush flash(Color(alpha, 255, 255, 255));
-      graphics.FillRectangle(&flash, 0, 0, width_, height_);
-    }
-    for (int fragment = 0; fragment < 67; ++fragment) {
-      const std::uint32_t seed = static_cast<std::uint32_t>(fragment) * 977U + 67U;
-      const float angle = Noise01(seed) * 2.0f * kPi;
-      const float length = (70.0f + Noise01(seed + 1U) * width_ * 0.72f) * blast;
-      const float thickness = 2.0f + Noise01(seed + 2U) * 13.0f * (1.0f - blast * 0.45f);
-      const Color color = fragment % 3 == 0 ? kMatrixGreen
-                          : fragment % 3 == 1 ? kNeonPink
-                                              : Color(255, 255, 171, 36);
-      Pen ray(WithAlpha(color, 1.0f - blast * 0.72f), thickness);
-      ray.SetStartCap(LineCapRound);
-      ray.SetEndCap(LineCapRound);
-      graphics.DrawLine(&ray, center.x, center.y,
-                        center.x + std::cos(angle) * length,
-                        center.y + std::sin(angle) * length);
-    }
-    const Color coreColor = state.flashesEnabled ? Color(255, 255, 255, 255)
-                                                  : Color(150, 255, 45, 170);
-    const float coreOpacity = (state.flashesEnabled ? 1.0f : 0.55f) * (1.0f - blast);
-    SolidBrush core(WithAlpha(coreColor, coreOpacity));
-    const float radius = 36.0f + blast * std::min(width_, height_) * 0.46f;
-    FillCircle(graphics, core, center, radius);
-    Font detonation(PosterFamily(), 48.0f, FontStyleBold, UnitPixel);
-    DrawSplitText(graphics, L"AURA CORE DETONATED", detonation,
-                  {20.0f, height_ * 0.12f, static_cast<float>(width_ - 20), height_ * 0.28f},
-                  kCriticalRed, 4.0f + blast * 14.0f);
+  const float centerX = width_ * 0.5f;
+  const float centerY = height_ * 0.48f;
+
+  if (age < 0.55) {
+    const float collapse = static_cast<float>(std::clamp(age / 0.55, 0.0, 1.0));
+    // The overexposed frame is still there for an instant, then it is crushed
+    // vertically into a scan line and finally pinched into a dot.
+    const float verticalPinch = std::pow(1.0f - collapse, 2.2f);
+    const float horizontalPinch = collapse < 0.72f
+                                      ? 1.0f
+                                      : 1.0f - (collapse - 0.72f) / 0.28f;
+    const float bandHeight = std::max(2.0f, height_ * verticalPinch);
+    const float bandWidth = std::max(2.0f, width_ * std::max(0.0f, horizontalPinch));
+    const float brightness = state.flashesEnabled ? 1.0f : 0.5f;
+    SolidBrush white(WithAlpha(Color(255, 255, 255, 255), brightness));
+    graphics.FillRectangle(&white, centerX - bandWidth * 0.5f, centerY - bandHeight * 0.5f,
+                           bandWidth, bandHeight);
+    // The afterglow of the dying line.
+    SolidBrush bloom(WithAlpha(Color(255, 214, 236, 255), brightness * 0.45f));
+    graphics.FillRectangle(&bloom, 0.0f, centerY - bandHeight * 0.9f,
+                           static_cast<float>(width_), bandHeight * 1.8f);
     return;
   }
 
-  const float entrance = static_cast<float>(std::clamp((age - 1.35) / 1.35, 0.0, 1.0));
+  // A deliberate hole where a soundtrack would be.
+  if (age < 1.6) return;
+
+  const float entrance = static_cast<float>(std::clamp((age - 1.6) / 2.6, 0.0, 1.0));
   const float eased = 1.0f - std::pow(1.0f - entrance, 3.0f);
-  const Vec2 goosePosition = Lerp({-110.0f, static_cast<float>(height_) + 80.0f},
-                                  {std::min(width_ * 0.27f, 330.0f), height_ * 0.72f},
-                                  eased);
+  const Vec2 goosePosition = Lerp({-110.0f, height_ * 0.72f},
+                                  {std::min(width_ * 0.30f, 360.0f), height_ * 0.72f}, eased);
   GooseEntity farewell(goosePosition);
-  farewell.Honk(8.0f);
+  // Head turned to camera, beak shut: it is not honking, it is filing.
   DrawGoose(graphics, farewell, 0);
-  if (entrance > 0.55f) {
-    DrawSpeechBubble(graphics, L"GOODBYE, DUDE.\nYOU SHOULD'VE LISTENED.",
-                     farewell.Rig().beakTip);
+
+  if (age >= 4.2) {
+    const float appear = static_cast<float>(std::clamp((age - 4.2) / 0.45, 0.0, 1.0));
+    if (appear > 0.15f) {
+      DrawSpeechBubble(graphics,
+                       L"CASE 67 CLOSED.\nTHE SITE HAS BEEN CONDEMNED.\nHAVE A NICE DAY.",
+                       farewell.Rig().beakTip);
+    }
   }
 }
 

@@ -86,12 +86,16 @@ struct RenderState {
   float screenFlash = 0.0f;
   float faultRibbon = 0.0f;
   float finalIris = 0.0f;
+  // 0 = normal exposure, 1 = the aperture has blown the whole frame to white.
+  float finalExposure = 0.0f;
   std::uint32_t effectPattern = 0;
   // 0 = bare wall, 1 = the 67 tag is finished.
   float graffitiProgress = 0.0f;
-  int popupCount = 0;
-  int nativePopupCount = 0;
   int propsClosed = 0;
+  // The scorecard only exists once the inspector has started scoring; before
+  // that there is no counter on screen at all.
+  bool auraVisible = false;
+  double auraRevealedAt = -1.0;
   // True during the storm phase, including the windows where the pointer has
   // been handed back, so the HUD can say which of the two is happening.
   bool cursorStormPhase = false;
@@ -124,6 +128,9 @@ class OverlayWindow {
   HWND Handle() const { return window_; }
   RectF CanvasBounds() const;
   Vec2 ScreenToCanvas(POINT screenPoint) const;
+  // Inverse of ScreenToCanvas, so a companion window can be opened exactly
+  // where something happened on the canvas.
+  POINT CanvasToScreen(Vec2 canvasPoint) const;
   bool IsPreview() const { return preview_; }
   // Where the spray can currently is, so the geese can follow their own tag.
   Vec2 GraffitiPaintHead(float progress) const;
@@ -164,13 +171,11 @@ class OverlayWindow {
                           bool compact) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state);
-  void DrawVirtualWindows(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawClipboardBadge(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawGraffitiUncached(Gdiplus::Graphics& graphics, const RenderState& state) const;
   bool BuildGraffitiCache(const RenderState& state);
   void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
-  void DrawErrorIcons(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawChaosFlash(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void ApplyFaultRibbons(const RenderState& state);
   void DrawFinalIris(Gdiplus::Graphics& graphics, const RenderState& state) const;

@@ -44,18 +44,22 @@ class PromptWindow {
   int moveIndex_ = 0;
 };
 
-// The fake Notepad. It belongs to GooseRot, it types on its own, it declines to
-// be closed for a while, and it cannot be parked in the taskbar: there is no
-// minimise box, SC_MINIMIZE is swallowed and anything that iconifies it from
-// outside (Show Desktop, the taskbar button) is undone on the next tick.
-// `Close()` still destroys it outright, so cleanup and the emergency exit are
-// never blocked.
+// The inspector's case file: a text window that belongs to GooseRot, opens
+// where the goose stamped the desktop, is typed into by the goose itself, and
+// declines to be closed for a while. It cannot be parked in the taskbar either:
+// there is no minimise box, SC_MINIMIZE is swallowed and anything that
+// iconifies it from outside (Show Desktop, the taskbar button) is undone on the
+// next tick. `Close()` still destroys it outright, so cleanup and the emergency
+// exit are never blocked.
 class NotepadWindow {
  public:
   NotepadWindow() = default;
   ~NotepadWindow();
 
-  bool Show(HINSTANCE instance);
+  // `anchor` is where the goose's beak was, in screen coordinates: the file
+  // opens under it so the window visibly comes from the goose. A null anchor
+  // centres the window as before.
+  bool Show(HINSTANCE instance, const POINT* anchor = nullptr);
   void SetText(const std::wstring& text);
   void Close();
   void Tick(double logicalTime);
@@ -82,67 +86,6 @@ class NotepadWindow {
   int pendingMinimiseReports_ = 0;
   bool respawnQueued_ = false;
   bool respawnUsed_ = false;
-};
-
-// A bounded swarm of GooseRot popups. Closing one spawns two more until the
-// protective ceiling is reached, where normal close requests are refused.
-// Emergency cleanup still destroys every window directly.
-class PopupSwarm {
- public:
-  PopupSwarm() = default;
-  ~PopupSwarm();
-
-  PopupSwarm(const PopupSwarm&) = delete;
-  PopupSwarm& operator=(const PopupSwarm&) = delete;
-
-  // Adds up to `count` popups, never exceeding the current ceiling.
-  void Spawn(HINSTANCE instance, std::mt19937& random, int count);
-  // Applies queued multiplications, reaps closed windows and jiggles refusals.
-  void Tick(HINSTANCE instance, std::mt19937& random, double logicalTime);
-  // Destroys `count` popups outright and reports how many actually went away.
-  // This is the finale's path: the glitch eats the swarm, which is not the same
-  // thing as the user being allowed to close one.
-  int Dissolve(int count);
-  void CloseAll();
-  // Lowers the live ceiling below the protective maximum. The finale uses it to
-  // stop the swarm refilling itself while it is being consumed.
-  void SetCeiling(int ceiling);
-
-  int Count() const { return logicalCount_; }
-  int NativeCount() const { return static_cast<int>(popups_.size()); }
-  int Ceiling() const { return ceiling_; }
-  bool AtCap() const { return Count() >= ceiling_; }
-  // True once per close attempt, so the app can answer with a bubble.
-  bool ConsumeCloseAttempt();
-
-  static constexpr int kMaximumPopups = 267;
-  static constexpr int kMaximumNativePopups = 67;
-
- private:
-  struct Popup {
-    PopupSwarm* owner = nullptr;
-    HWND window = nullptr;
-    HWND label = nullptr;
-    HWND button = nullptr;
-    double jiggleUntil = -1.0;
-    int refusals = 0;
-    bool dead = false;
-  };
-
-  static ATOM Register(HINSTANCE instance);
-  static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
-  LRESULT HandleMessage(Popup& popup, HWND window, UINT message, WPARAM wParam, LPARAM lParam);
-  void RequestClose(Popup& popup);
-  bool CreatePopup(HINSTANCE instance, std::mt19937& random);
-
-  std::vector<std::unique_ptr<Popup>> popups_;
-  HFONT font_ = nullptr;
-  ULONGLONG nextNativeSpawnAttemptAt_ = 0;
-  double lastTickTime_ = 0.0;
-  int logicalCount_ = 0;
-  int closeAttempts_ = 0;
-  int spawnCounter_ = 0;
-  int ceiling_ = kMaximumPopups;
 };
 
 // A small set of genuine Windows utilities launched by GooseRot. Only process

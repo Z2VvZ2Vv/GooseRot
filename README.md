@@ -1,6 +1,6 @@
 # GooseRot
 
-GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de six minutes sur un bureau Windows : oies procédurales qui sortent du cadre et y reviennent, images brainrot rapportées une par une dans un bec, faux outils Windows, tempête de curseur par vagues, graffiti, filtres, compte à rebours et explosion finale sur écran noir.
+GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une histoire de sept minutes et demie sur un bureau Windows : **une oie vient inspecter votre bureau**. Elle arrive, se présente, fait sa tournée, ouvre un dossier et le rédige à la main, sort chercher des pièces à conviction, peint votre note sur le mur, rend son verdict, puis ferme le dossier — l’écran se referme en obturateur, surexpose et lâche.
 
 > [!CAUTION]
 > Le profil `lab` est un **destructeur volontaire**, pas une variante plus intense de la démo. À la fin de son exécution, la machine doit être considérée comme sacrifiée : fichiers supprimés ou corrompus, Registre Windows endommagé et chaîne de démarrage rendue inutilisable. Il est réservé à une VM jetable, isolée, sans données ni secrets, avec un snapshot hors ligne prêt à être restauré. Ne jamais l’exécuter sur un PC physique ou une VM importante.
@@ -10,34 +10,36 @@ Le profil `safe` reste la variante inoffensive et le seul profil offrant la sort
 > [!NOTE]
 > Cette documentation fixe le contrat produit visé. L’implémentation actuelle n’a pas encore été alignée : elle conserve des protections et une sortie `Esc` dans tous les profils et n’implémente pas les destructions décrites pour `lab`. Ne pas confondre ce constat avec une garantie pour une future build `lab`.
 
-Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : les fenêtres récalcitrantes appartiennent à GooseRot, le mur visuel est plafonné à 267 dont 67 HWND natifs et refuse les fermetures ordinaires au plafond, tandis que le nettoyage d’urgence détruit ses deux couches. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
+Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : la seule fenêtre récalcitrante est le dossier d’inspection, qui appartient à GooseRot et que le nettoyage détruit directement. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
 
 ## État de l’implémentation
 
 - moteur C++17 et timeline monotone indépendante du framerate ;
 - overlay Win32/GDI+ transparent, click-through et multi-écran, qui referme Start/Search lorsqu’ils recouvrent la scène ;
 - première oie entrant depuis un bord après consentement, puis dessin procédural complet en vue de dessus ;
-- sortie complète de l’écran à `0:35` puis retour par le bord opposé à `1:05`, une image dans le bec ;
+- ouverture délibérée : arrivée, présentation, tournée d’inspection sur itinéraire fixe, puis ouverture du dossier — la fiche d’aura n’apparaît qu’à `1:40`, quand l’inspectrice commence à noter ;
+- sortie complète de l’écran à `2:05` puis retour par le bord opposé à `2:28`, une pièce à conviction dans le bec ;
 - moteur de glitch piloté par la timeline et l'horloge réelle : déchirures, rubans de pixels déplacés dans l'overlay, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas » et flashs bornés ;
 - tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse, dessiné après les images et sous une passe d’encre pour rester visible sur n’importe quel écran ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
 - jusqu’à 67 entités indépendantes, bulles et 14 images PNG systématiquement rapportées depuis hors champ par une oie, fermables par leur croix `[x]` avec conséquences, et effets des cinq phases ;
 - traction initiale du curseur sur 67 pixels, puis tempête par vagues à partir de `4:00` : chaque cycle saisit le pointeur puis le rend intégralement, la part saisie et la violence montant jusqu’à la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
-- fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et refuse d’être réduit dans la barre des tâches, faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
+- dossier d’inspection ouvert **sous le bec de l’oie** qui vient de tamponner le bureau, rédigé caractère par caractère avec cadence irrégulière, pauses de ponctuation et fautes corrigées, et qui refuse d’être réduit dans la barre des tâches ;
+- **aucune fausse fenêtre système** : ni faux Task Manager, ni faux Explorateur, ni faux cadre « Ne répond pas » — l’escalade passe par les oies, les pièces à conviction et l’affichage ;
 - petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics ; en expérience complète, garde temporaire limitée aux deux touches Windows, sans modification du shell ni réglage persistant, retirée à la fin ou immédiatement lors d’un arrêt d’urgence ;
-- mur visuel plafonné à 267 fausses fenêtres : 67 HWND interactifs et 200 cadres légers rendus dans l’overlay ;
-- essaim de fenêtres dévoré par le glitch après `5:00` : moins de boîtes de dialogue et une dégradation d’affichage qui monte en continu jusqu’à la fin ;
+- dernier tiers porté uniquement par l’affichage : plus rien n’est ouvert après le verdict et la dégradation monte en continu jusqu’à la fin ;
 - jusqu’à six vrais utilitaires Windows simultanés (Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer), protégés par un Job Object privé, lancés à cadence réelle puis fermés avant la finale ;
 - pluie déterministe de 67 glyphes d’erreur originaux, dessinés uniquement dans l’overlay ;
 - sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;
 - rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
-- fausses notifications système peintes dans l’overlay, jamais envoyées à Windows, puis iris noir plein écran et explosion finale ;
+- avis d’inspection peints dans l’overlay, jamais envoyés à Windows, et jamais présentés comme un composant du système ;
+- clôture en obturateur : la partie visible du bureau se réduit à un cercle qui rétrécit pendant que l’exposition est poussée jusqu’au blanc, puis crash type tube cathodique, noir, et l’oie qui revient dire la dernière réplique ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau, muet, sans flash et à mouvement réduit par défaut ;
 - cœur AURA 67 déterministe — un runner infini pré-OS façon dinosaure Chrome, joué sur une carte mère — et `GooseBootPreview.exe` sûr dans `boot/` ;
 - adaptateurs freestanding UEFI x64 et BIOS, construits sur demande et vérifiés statiquement ;
-- tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le plafond, le refus de fermeture et le nettoyage d’urgence de l’essaim.
+- tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le refus de fermeture et de réduction du dossier, son ouverture au point tamponné et le budget de rendu de l’obturateur final.
 
 Le bundle firmware reste strictement expérimental : il est non signé et non installable. Le build vérifie les formats, tailles, signatures, points d’entrée, sections et imports ; le comportement au démarrage a été confirmé séparément sous QEMU 8.2.2 avec OVMF et SeaBIOS, mais jamais sur machine physique ni sur un autre hyperviseur. Aucun installateur, chemin firmware d’écriture disque ou procédure de modification du démarrage n’est fourni, et `--boot-game` continue donc d’échouer fermé.
 
@@ -123,7 +125,7 @@ Un build autonome place la Preview dans `build\boot\bin`; copiez-la à côté de
 
 ## Documentation
 
-- [SCENARIO.md](SCENARIO.md) — timeline créative de six minutes ;
+- [SCENARIO.md](SCENARIO.md) — l’histoire de l’inspection, minute par minute ;
 - [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) — profils et règles produit ;
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture et contraintes Win32 ;
 - [docs/CLEAN_ROOM_NOTES.md](docs/CLEAN_ROOM_NOTES.md) — observations de compatibilité v0.31 ;

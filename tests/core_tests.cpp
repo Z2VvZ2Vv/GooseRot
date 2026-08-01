@@ -204,7 +204,7 @@ void TestTimeline() {
   Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::PassiveEntrance,
          "entrance fires at zero");
   events = timeline.Advance(phase::kDuplicate);
-  Expect(events.size() == 8, "all crossed events fire exactly once");
+  Expect(events.size() == 10, "all crossed events fire exactly once");
   Expect(events.back().id == gooserot::TimelineEventId::Duplicate, "duplication ends the crossing");
   Expect(timeline.Advance(phase::kDuplicate).empty(), "event does not fire twice");
 
@@ -213,10 +213,9 @@ void TestTimeline() {
   Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::Countdown,
          "start-at primes earlier events");
 
-  // The walk-out beat only works if the flock is away long enough for the
-  // Notepad to open on an empty desktop and still be alone for a while.
-  Expect(phase::kGooseExit < phase::kNotepad && phase::kNotepad < phase::kGooseReturn,
-         "the fake Notepad opens while the flock is off screen");
+  // The goose leaves to collect evidence only once the file it is filling in
+  // already exists, and stays away long enough for the absence to register.
+  Expect(phase::kNotepad < phase::kGooseExit, "the case file is open before the goose leaves");
   Expect(phase::kGooseReturn - phase::kGooseExit >= 20.0, "the absence is long enough to register");
 
   double previous = -1.0;
@@ -262,26 +261,78 @@ void TestCursorStormWaves() {
          "the storm seizes the pointer for longer as the run goes on");
 }
 
-void TestPopupBudget() {
-  namespace phase = gooserot::phase;
-  using gooserot::DesiredPopupCount;
-  constexpr int kMaximum = 67;
-  Expect(DesiredPopupCount(phase::kDuplicate - 1.0, kMaximum) == 0, "no swarm before duplication");
-  Expect(DesiredPopupCount(phase::kDuplicate, kMaximum) == 1, "the swarm starts at one window");
-  Expect(DesiredPopupCount(phase::kFinalMonologue, kMaximum) == kMaximum,
-         "the swarm peaks at the protective ceiling");
-  Expect(DesiredPopupCount((phase::kFinalMonologue + phase::kCircleDance) * 0.5, kMaximum) <
-             kMaximum,
-         "the finale starts eating the swarm");
-  Expect(DesiredPopupCount(phase::kCircleDance, kMaximum) == 0, "the swarm is gone by the dance");
-  Expect(DesiredPopupCount(phase::kEnd, kMaximum) == 0, "nothing survives to the explosion");
+void TestCaseFileTypist() {
+  gooserot::Typewriter typist;
+  std::mt19937 random(67);
+  std::wstring visible;
+  const std::wstring script = L"FINDING 1. Arrived on site. Nobody stopped me.\n";
+  typist.SetSpeed(12.0);
+  typist.Reset(0.0);
+  typist.Queue(script);
+  Expect(!typist.Idle(), "a queued finding is not yet written");
 
-  int previous = -1;
-  for (double at = phase::kDuplicate; at <= phase::kFinalMonologue; at += 1.0) {
-    const int count = DesiredPopupCount(at, kMaximum);
-    Expect(count >= previous, "the swarm only grows before the monologue");
-    previous = count;
+  // Nothing may appear before its keystroke is due, and no single advance may
+  // repay a long stall as one instantaneous paragraph.
+  typist.Advance(0.0, random, visible);
+  Expect(visible.size() <= 2U, "typing starts one character at a time");
+  const std::size_t afterHugeStall = [&] {
+    std::wstring buffer;
+    gooserot::Typewriter stalled;
+    stalled.SetSpeed(12.0);
+    stalled.Reset(0.0);
+    stalled.Queue(script);
+    stalled.Advance(600.0, random, buffer);
+    return buffer.size();
+  }();
+  Expect(afterHugeStall > 0U && afterHugeStall <= 24U,
+         "a long stall advances the file but is not repaid as one instant paragraph");
+
+  double now = 0.0;
+  int guard = 0;
+  while (!typist.Idle() && guard++ < 20000) {
+    now += 1.0 / 60.0;
+    typist.Advance(now, random, visible);
   }
+  Expect(typist.Idle(), "the finding is eventually fully written");
+  Expect(visible == script, "typos are corrected, so the final text is exact");
+  Expect(now > script.size() / 30.0, "a human cadence is not instantaneous");
+  Expect(now < script.size() * 1.2, "and it does not take all day either");
+
+  // Queueing more while idle simply continues the same document.
+  typist.Queue(L"FINDING 2.\n");
+  Expect(!typist.Idle(), "a new finding reopens the file");
+  guard = 0;
+  while (!typist.Idle() && guard++ < 20000) {
+    now += 1.0 / 60.0;
+    typist.Advance(now, random, visible);
+  }
+  Expect(visible == script + L"FINDING 2.\n", "findings accumulate in order");
+
+  // The visible buffer must never run backwards past the start, even when a
+  // correction lands on the very first characters.
+  gooserot::Typewriter edge;
+  std::wstring shortBuffer;
+  edge.Reset(0.0);
+  edge.Queue(L"ab");
+  for (int step = 0; step < 400; ++step) edge.Advance(step * 0.05, random, shortBuffer);
+  Expect(shortBuffer == L"ab", "a correction never eats past the start of the file");
+}
+
+void TestClosingSequence() {
+  namespace phase = gooserot::phase;
+  // The aperture has to start closing well before the end, so the shutdown is
+  // the last step of something already happening rather than a cut.
+  Expect(phase::kIrisStart < phase::kEnd - 4.0, "the aperture closes over several seconds");
+  Expect(phase::kIrisStart > phase::kCountdown, "and only after the countdown has been announced");
+
+  // The opening must be long enough that the goose arrives, introduces itself
+  // and walks a round before anything is scored.
+  Expect(phase::kIntroduction > phase::kEntrance + 10.0, "the goose arrives before it speaks");
+  Expect(phase::kInspectionRound > phase::kIntroduction, "it introduces itself before inspecting");
+  Expect(phase::kNotepad > phase::kInspectionRound + 20.0,
+         "the round is walked before the file is opened");
+  Expect(phase::kAuraPrompt > phase::kNotepad,
+         "the scorecard appears only after the inspector starts writing");
 }
 
 void TestTagZoneAndCloseBox() {
@@ -420,7 +471,8 @@ int main() {
   TestPremultipliedAlphaBlend();
   TestTimeline();
   TestCursorStormWaves();
-  TestPopupBudget();
+  TestCaseFileTypist();
+  TestClosingSequence();
   TestTagZoneAndCloseBox();
   TestGooseLocomotion();
   TestGooseAnimationState();

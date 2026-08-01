@@ -1,114 +1,140 @@
 # GooseRot — scénario de référence
 
 > Statut : concept initial enregistré  
-> Version : 0.4  
-> Durée totale : 6 minutes  
+> Version : 0.5  
+> Durée totale : 7 minutes 30  
 > Plateforme cible : Windows, idéalement dans une VM de démonstration  
-> Ambiance : desktop goose, brainrot TikTok, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, alertes système optionnelles et désactivables
+> Ambiance : desktop goose, bureaucratie absurde, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, alertes système optionnelles et désactivables
 
 > Profils : `safe`, `normal` et `lab` — voir `docs/PRODUCT_SPEC.md` et `docs/SAFETY_MODEL.md`
 
 ## Intention
 
-GooseRot est un programme comique Windows mettant en scène une oie qui infiltre progressivement le bureau pendant six minutes. En `safe` et `normal`, l’expérience commence comme une petite nuisance absurde, escalade vers un chaos visuel contrôlé, puis se termine proprement. En `lab`, la même mise en scène masque une phase destructive réelle et se termine sur une VM saccagée.
+**Une oie vient inspecter votre bureau.** C’est toute l’histoire, et tout le reste en découle.
 
-Principe essentiel : **l’oie provoque elle-même le chaos**. Les actions de l’utilisateur peuvent déclencher des réactions bonus, mais la timeline ne doit jamais attendre un mouvement, un clic ou une réponse pour continuer. Même devant un bureau totalement inactif, les six minutes doivent rester remplies d’animations, de fenêtres déplacées, de textes et de gags autonomes.
+Elle arrive, elle se présente, elle fait le tour du propriétaire, elle ouvre un dossier, elle y consigne ses conclusions, elle sort chercher des pièces à conviction, elle peint votre note sur le mur, elle rend son verdict, et elle ferme le dossier — en emportant l’écran avec.
 
-Deuxième principe, ajouté en 0.4 : **chaque animation doit avoir une cause lisible**. Une image ne se matérialise pas, une oie va la chercher hors champ et la rapporte dans son bec. Le curseur n’est pas continuellement inutilisable, il est saisi par vagues et rendu entre deux. Les fenêtres ne s’accumulent pas jusqu’à la fin, elles sont dévorées par le glitch dans le dernier tiers.
+Trois principes tiennent la mise en scène :
 
-## Phase 1 — 0:00 à 1:20 : The Mewing Infiltration
+1. **La timeline ne dépend jamais de l’utilisateur.** Un bureau totalement inactif reste rempli pendant sept minutes et demie. Les actions de l’utilisateur ajoutent des réactions, elles ne débloquent rien.
+2. **Chaque animation a une cause lisible.** Une image ne se matérialise pas : une oie va la chercher hors champ et la rapporte dans son bec. Le dossier ne s’ouvre pas tout seul : l’oie tamponne le bureau et la fenêtre s’ouvre sous son bec. Le compteur d’aura n’existe pas au lancement : il apparaît quand l’inspectrice commence à noter.
+3. **Rien n’imite Windows.** GooseRot n’ouvre aucune fausse fenêtre système, ne dessine aucune fausse boîte de dialogue et ne peint aucun faux cadre « Ne répond pas ». Tout ce qui s’affiche appartient visiblement à l’inspection. Le seul décalage acceptable avec Windows est celui que l’oie provoque elle-même.
 
-### 0:00 — Passive Entrance
+## Phase 1 — 0:00 à 2:45 : L’inspection
 
-Après le consentement, l’oie entre entièrement depuis le bord gauche ou droit, choisi par le seed, puis marche vers le premier tiers de l’écran avec une bulle :
+L’ouverture est volontairement lente. Il ne se passe rien de spectaculaire pendant presque une minute, et c’est le sujet : quelqu’un est entré chez vous et prend des notes.
 
-> 🤫🧏‍♂️ *Mewing in progress... DO NOT DISTURB.*
+### 0:00 — L’inspectrice arrive
 
-### 0:15 — Aura Deduction
+L’oie entre entièrement depuis le bord gauche ou droit, choisi par le seed, et avance sans se presser. Pas de compteur, pas de HUD, pas de fenêtre. Juste une oie sur votre bureau.
 
-Déplacer le curseur de plus de 50 pixels fait sautiller l’oie sur place et déclenche une boîte de dialogue Win32 classique.
+> Do not mind me.  
+> I am just having a look around.
 
-- Titre : `Aura Points Deducted`
-- Texte : `You broke the streak. -10,000 Aura. Apologize immediately.`
-- Boutons : `[ Sorry ]` / `[ Forgive Me ]`
+### 0:20 — Les papiers
 
-Si l’utilisateur ne bouge pas, l’oie perd patience au bout de cinq secondes, bondit toute seule près du pointeur et affiche quand même la boîte avec une bulle :
+Elle s’arrête, cacarde une fois, et annonce ce qu’elle fait là.
 
-> I felt your aura move. Nice try.
+> AURA INSPECTION.  
+> I am the inspector. Stay where you are.
 
-Sans réponse, la boîte se ferme seule après quelques secondes et l’oie sélectionne arbitrairement `[ Sorry ]` avant de commenter :
+### 0:45 — La tournée
 
-> Apology barely accepted.
+Elle parcourt le site selon un **itinéraire fixe** — les quatre coins puis le centre — en s’arrêtant à chaque station pour commenter ce qu’elle voit. Ce n’est pas une déambulation aléatoire : c’est un tour d’inspection, et il se lit comme tel.
 
-### 0:35 — Elle s’en va vraiment
+> Top left. Dust. Noted.  
+> Top right. This is where the scorecard goes.  
+> Bottom right. Something lives here.  
+> Bottom left. No comment. Written down anyway.  
+> Centre of the site. This will do.
 
-Vexée, l’oie annonce qu’elle va chercher du renfort, marche jusqu’au bord latéral et **sort complètement de l’écran**. Le bureau reste seul.
+### 1:15 — Le dossier s’ouvre
 
-> FINE. THIS DESKTOP HAS NO AURA.  
-> I AM GETTING REINFORCEMENTS.
+Arrivée au centre, l’oie tamponne le bureau. **La fenêtre de dossier s’ouvre sous son bec**, exactement là où elle se trouve — jamais au centre par défaut, jamais sans cause visible.
 
-Cette absence n’est pas un temps mort : c’est pendant qu’il n’y a personne que le faux Bloc-notes s’ouvre tout seul et se met à écrire.
+> Opening the file.  
+> Everything from here is written down.
 
-### 0:45 — Auto-Typing (et la fenêtre qui refuse de partir)
+Le dossier est une fenêtre GooseRot intitulée `AURA INSPECTION - case 67`. L’oie y écrit **à la main** : caractère par caractère, avec une cadence irrégulière, un temps d’arrêt après chaque point, un temps plus long après un saut de ligne, et de temps en temps une faute qu’elle remarque une seconde trop tard et qu’elle efface. Ce n’est pas un flux de mots collés, c’est quelqu’un qui rédige.
 
-Un faux Bloc-notes appartenant au processus GooseRot s’ouvre **sans oie à l’écran** et y compose rapidement un flux aléatoire de brainrot :
+```
+AURA INSPECTION -- CASE 67
+Site: this desktop. Inspector: a goose.
+Authorisation: not required. I am already inside.
 
-> skibidi rizzler alpha male grindset non-stop no cap fr fr...  
-> ohio sigma mewing streak aura farming level 67...  
-> fanum tax detected. jawline protocol activated...
+FINDING 1. Arrived on site. Nobody stopped me.
+That is, in itself, the first finding.
+```
 
-Le texte est recomposé en permanence depuis une banque de mots, de nombres et de fragments de lettres. À `1:20`, la cadence ralentit mais ne s’arrête plus : GooseRot continue d’écrire environ chaque seconde dans son propre Bloc-notes, puis accélère fortement à partir de `4:00`. Aucune touche n’est injectée dans l’application active de l’utilisateur.
+Chaque étape suivante de la timeline ajoute son constat au même dossier. Le texte n’est jamais aléatoire : c’est le compte rendu de ce que le spectateur vient de voir.
 
-Tenter de fermer cette fenêtre ne marche pas durablement. Le `[X]` change son titre, la décale de 67 pixels et finit par la détruire, mais le moteur de timeline la recrée tant que la frappe chaotique est active. Le nettoyage final la détruit directement.
+Cette fenêtre refuse de se fermer pendant un temps — le `[X]` change son titre, la décale de 67 pixels, et si elle finit détruite l’inspectrice la rouvre en reprenant le texte là où il s’était arrêté. Elle **ne peut pas non plus être rangée dans la barre des tâches** : pas de bouton Réduire, `SC_MINIMIZE` refusé, et toute réduction venue de l’extérieur — bouton de la barre des tâches, Afficher le Bureau, `Win+D` — est annulée à la frame suivante.
 
-Cette fenêtre **ne peut pas non plus être rangée dans la barre des tâches** : elle n’a pas de bouton Réduire, `SC_MINIMIZE` est refusé, et toute réduction venant de l’extérieur — bouton de la barre des tâches, Afficher le Bureau, `Win+D` — est annulée à la frame suivante. L’oie commente chaque tentative.
+### 1:40 — La première déduction
 
-### 1:05 — Le retour
+**C’est ici, et pas avant, que le compteur d’aura existe.** Il ne fait pas partie du décor du programme : l’inspectrice vient d’ouvrir une fiche de notation, et la fiche tombe en place en haut à droite, avec un léger dépassement, comme une carte plaquée sur un tableau.
 
-L’oie revient **par le bord opposé**, en cacardant, et elle ne revient pas les ailes vides : la première image brainrot de la partie arrive dans son bec.
+> Baseline aura measured.  
+> I am going to need a bigger form.
 
-> I WENT TO GET SUPPLIES.  
-> LOOK WHAT I FOUND.
+Une boîte GooseRot demande un accusé de réception :
 
-## Phase 2 — 1:20 à 2:40 : Cursor & Window Hijack
+- Titre : `AURA INSPECTION - Notice of Deduction`
+- Texte : `Case 67. Baseline aura recorded at -10,000. Please acknowledge the finding.`
+- Boutons : `[ I ACKNOWLEDGE ]` / `[ I AM SORRY ]`
 
-### 1:20 — Sprint & Double Offset
+Sans réponse, la boîte se ferme seule et l’inspectrice consigne l’absence de réponse.
+
+### 2:05 — Elle sort chercher des preuves
+
+Le dossier étant ouvert, elle a besoin de pièces à conviction. Elle marche jusqu’au bord et **sort complètement de l’écran**. Le bureau reste seul, avec un dossier qui continue de se remplir tout seul — ce qui est bien plus inquiétant qu’une oie visible.
+
+> I need evidence.  
+> Do not touch anything while I am out.
+
+### 2:28 — Elle revient chargée
+
+Elle revient **par le bord opposé**, la première pièce à conviction dans le bec.
+
+## Phase 2 — 2:45 à 3:55 : Relevés sur site
+
+### 2:45 — Mesure du pointeur et des fenêtres
 
 L’oie prend le contrôle à la fois du curseur et des fenêtres, toujours avec le nombre `67` comme règle.
 
 Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l’oie sprinte jusqu’au pointeur, s’y accroche avec son bec et **traîne elle-même le curseur de 67 pixels vers la droite**. La traction dure environ une seconde : un lien rose relie le bec au pointeur, un anneau pulse autour du curseur et le mot `GRABBED` s’affiche dessous. Chaque pas repart de la position réelle du pointeur, donc résister à la souris ne fait que déplacer le point de départ. Si le bord de l’écran bloque, l’oie tire dans l’autre sens, puis abandonne proprement. Elle affiche aussitôt une bulle :
 
-> NO CLICK. ONLY 67.  
-> Cursor privileges revoked.  
-> Your aim had negative aura.
+> Pointer seized for measurement. Hold still.  
+> Pointer displaced by exactly 67 pixels. Within tolerance. Barely.  
+> Sample taken. You may have it back.
 
 En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, sprinte jusqu’à sa barre de titre, s’y accroche et **déplace elle-même cette fenêtre de exactement 67 pixels** dans une direction choisie au hasard.
 
-À partir de `1:35`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
+À partir de `2:58`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
-> 67 PIXELS. PERFECTLY CALCULATED.  
-> Your window had negative aura.  
-> Interior design by Goose.  
-> I put it there. Don't question the grindset.
+> Window realigned to 67 pixels. Regulation spacing.  
+> That window was out of compliance.  
+> Corrected. Do not thank me in writing.  
+> Noted, moved, logged. Next.
 
-Le déplacement de fenêtres se reproduit automatiquement toutes les quelques secondes, même si l’utilisateur ne touche à rien. Si aucun clic n’a lieu pendant quinze secondes, l’oie va chercher le curseur immobile et le pousse quand même de 67 pixels en annonçant :
+Le déplacement de fenêtres se reproduit automatiquement toutes les quelques secondes, même si l’utilisateur ne touche à rien. Si aucun clic n’a lieu pendant quinze secondes, l’oie va chercher le curseur immobile et prend son relevé quand même :
 
-> AFK IS NOT A DEFENSE.
+> Taking a pointer sample. Hold still.
 
 Le curseur reste toujours dans les limites de l’écran. Les fenêtres restent entièrement visibles et reviennent à leur position initiale lors de la fermeture de GooseRot.
 
-Le déplacement des fenêtres tierces s’arrête à `2:40`. La chasse ponctuelle au curseur laisse place à `4:00` à une tempête **par vagues**, tandis que la troupe continue de grandir jusqu’à la fin.
+Le déplacement des fenêtres tierces s’arrête à `3:55`. La chasse ponctuelle au curseur laisse place à `5:15` à une tempête **par vagues**, tandis que la troupe continue de grandir jusqu’à la fin.
 
 Depuis le début de cette phase, un petit panneau GooseRot est posé **sur le bouton Démarrer** et avale les clics qui l’atteignent : un menu Démarrer ouvert au milieu de la scène recouvrirait tout ce que la timeline est en train de construire. En expérience complète uniquement, un garde clavier temporaire absorbe aussi `Win gauche` et `Win droite`. Aucune fenêtre du shell n’est modifiée et aucun réglage n’est persistant : le garde reste actif jusque pendant les visuels de conclusion, puis rend immédiatement les touches à Windows ; un arrêt d’urgence le retire sans attendre. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie d’urgence `Échap` ne sont jamais touchés.
 
-> START MENU: REVOKED.  
+> Start menu sealed for the inspection.  
 > There is a goose standing on it.
 
-### 1:50 — Brainrot Subtitles
+### 3:10 — Les pièces à conviction
 
-Des images brainrot — créatures italiennes et visages de chats en réaction — **sont toujours rapportées par une oie**. Le trajet est visible en entier : une oie libre sort par le bord le plus proche, disparaît, revient avec l’image dans le bec, traverse le bureau et la dépose. Aucune image n’apparaît d’elle-même ; s’il n’y a aucune oie disponible, la livraison attend simplement qu’il y en ait une. Les zones de dépôt protègent le HUD **et l’emplacement du futur tag `67`**. Du texte défile au-dessus de l’oie :
+Les pièces à conviction — créatures italiennes, visages de chats en réaction et photos d’oies — **sont toujours rapportées par une oie**. Le trajet est visible en entier : une oie libre sort par le bord le plus proche, disparaît, revient avec l’image dans le bec, traverse le bureau et la dépose. Aucune image n’apparaît d’elle-même ; s’il n’y a aucune oie disponible, la livraison attend simplement qu’il y en ait une. Les zones de dépôt protègent le HUD **et l’emplacement du futur tag `67`**. Du texte défile au-dessus de l’oie :
 
 Sept photos d’oies fournies pour le projet rejoignent le même pool de livraison : comme les sept images historiques, chacune est rapportée depuis hors champ par une oie, conserve son ratio et reste posée jusqu’à sa fermeture ou à la fin de l’expérience.
 
@@ -122,11 +148,11 @@ Chaque image posée porte une petite croix `[x]`, et elle est **réellement cliq
 - `-6 700` d’aura ;
 - deux oies partent aussitôt en chercher deux autres ;
 - le glitch prend un pic, une fausse notification annonce le remplacement ;
-- une fermeture sur trois réveille l’essaim de popups, et à partir de cinq fermetures la troupe gagne une oie supplémentaire.
+- à partir de cinq destructions, l’inspectrice fait venir une oie supplémentaire.
 
-Le compteur `PHOTOS TORN` s’affiche dans le HUD. Cette interaction n’utilise aucun hook souris : le clic est lu depuis la position du pointeur, puisque l’overlay laisse passer les clics.
+Le compteur `EXHIBITS DESTROYED` s’affiche sous la fiche de notation. Cette interaction n’utilise aucun hook souris : le clic est lu depuis la position du pointeur, puisque l’overlay laisse passer les clics.
 
-### 2:20 — Clipboard Certified
+### 3:35 — Presse-papiers certifié
 
 Un gag visuel simule un verrouillage du collage sans installer de hook et sans lire ou modifier le presse-papiers :
 
@@ -134,15 +160,18 @@ Un gag visuel simule un verrouillage du collage sans installer de hook et sans l
 
 Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme badge `CLIPBOARD CERTIFIED: +10,000 AURA` au milieu de l’écran, puis le traîne dans une zone réservée en bas à gauche. Le badge est rendu devant les images afin de rester lisible.
 
-## Phase 3 — 2:40 à 4:00 : The “Spray-Painted 67” Squad
+## Phase 3 — 3:55 à 5:15 : La note sur le mur
 
-### 2:40 — Duplication
+### 3:55 — Renforts
 
-L’oie tremble puis se divise en trois oies distinctes, toutes cacardent, et l’essaim de popups commence.
+La charge dépasse une seule oie. Deux inspectrices supplémentaires arrivent — elles étaient déjà dehors — et la troupe continue ensuite de grandir jusqu’à 67 avant la clôture.
 
-Des fenêtres GooseRot imitent aléatoirement `Task Manager`, `File Explorer`, `Untitled - Notepad`, `Windows Security`, `Command Prompt` et d’autres outils système. **En fermer une en fait apparaître deux autres.** Le compteur monte suivant une courbe quadratique jusqu’à 267 à `4:52`. Les 67 premières sont des HWND interactifs ; les 200 suivantes sont des cadres légers rendus dans l’overlay afin de préserver le framerate. Au plafond, toutes les fermetures ordinaires sont refusées ; seul le nettoyage de fin ou `Esc` maintenu deux secondes détruit le mur complet.
+> This site needs more inspectors.  
+> They were already outside.
 
-### 3:10 — The Graffiti & Vibe
+**Aucune fausse fenêtre système n’est ouverte, à aucun moment de l’expérience.** Le décalage entre un faux `Task Manager` dessiné à la main et un vrai composant Windows se voit immédiatement et casse l’illusion ; l’escalade passe donc entièrement par le nombre d’oies, les pièces à conviction accrochées au bureau et la dégradation de l’affichage.
+
+### 4:25 — La note est peinte
 
 - Avant le premier trait, les oies **débarrassent le mur** : toute image posée sur l’emplacement du tag est reprise dans un bec et raccrochée ailleurs.
 - Oie 1 : peint un `67` géant en rose néon, **trait par trait, en direct**. Le tag occupe environ la moitié de la hauteur de l’écran. L’oie marche le long du tracé en suivant la buse, la peinture apparaît derrière elle, des coulures se mettent à couler sous les traits déjà posés et l’overspray s’accumule autour. Le tag est peint en dix-huit secondes.
@@ -150,7 +179,7 @@ Des fenêtres GooseRot imitent aléatoirement `Task Manager`, `File Explorer`, `
 
 Le tag est dessiné après les images et sous une passe d’encre presque opaque : quel que soit l’écran, le fond du bureau ou le filtre de couleur en cours, le `67` garde une silhouette nette et ne peut pas être recouvert par une pile de photos.
 
-### 3:36 — The Sigma Trap
+### 4:55 — Droit de recours
 
 Une boîte de dialogue apparaît au centre :
 
@@ -162,9 +191,9 @@ Le bouton `[ SIGMA CHAD ]` s’éloigne de 100 pixels dès que le pointeur le su
 
 > AFK detected. NPC confirmed.
 
-## Phase 4 — 4:00 à 5:30 : Visual Chaos & Error Chorus
+## Phase 4 — 5:15 à 6:50 : Le site se dégrade
 
-### 4:00 — Screen Shake et tempête par vagues
+### 5:15 — Secousses et tempête par vagues
 
 L’overlay principal déclenche une secousse rapide de 4 pixels toutes les deux secondes, ce qui garde le rythme lisible même si la VM ne restitue pas le son.
 
@@ -176,60 +205,70 @@ Si le menu Démarrer ou la recherche Windows recouvre le tag et les oies, GooseR
 
 ### Tout du long — Dégradation de l’affichage
 
-Une intensité de glitch monte avec la timeline (proche de 0 au début, 0,18 à `2:40`, 0,26 à `3:10`, 0,42 à `4:00`, 0,58 à `4:30`, puis une montée **continue** de 0,70 à 1,00 entre `5:00` et la fin) et chaque gros gag ajoute un pic qui retombe. Le dernier tiers troque volontairement les fenêtres contre de la dégradation. Elle pilote, toujours à l’intérieur de l’overlay :
+Une intensité de glitch monte avec la timeline (proche de 0 au début, 0,18 à `3:55`, 0,26 à `4:25`, 0,42 à `5:15`, 0,58 à `5:45`, puis une montée **continue** de 0,70 à 1,00 entre `6:15` et la fin) et chaque constat ajoute un pic qui retombe. Le dernier tiers ne compte que sur l’affichage lui-même : il n’y a aucune fenêtre à empiler. Elle pilote, toujours à l’intérieur de l’overlay :
 
 - des bandes de déchirure horizontales décalées en rose et cyan ;
 - des blocs de framebuffer « corrompus » ;
 - des scanlines CRT qui défilent ;
 - une aberration chromatique rouge/cyan sur les textes lourds ;
 - des curseurs fantômes qui se multiplient autour du vrai pointeur ;
-- jusqu’à 67 glyphes d’erreur rouges originaux qui s’accumulent sans dessiner sur le vrai bureau ;
-- un faux cadre `explorer.exe — (Ne répond pas)` qui dérive ;
 - des bandes de perte de signal qui défilent et cisaillent l’image au-delà de 0,62 ;
 - de brefs flashs plein écran, cadencés par l’horloge réelle et de plus en plus probables à mesure que l’intensité monte.
 
-### Tout du long — Fausses notifications
+### Tout du long — Avis d’inspection
 
-Des notifications style Windows glissent depuis le coin bas-droit, peintes dans l’overlay et jamais envoyées au centre de notifications :
+Des avis glissent depuis le coin bas-droit, peints dans l’overlay et jamais envoyés au centre de notifications de Windows. Ils portent tous le même en-tête, `AURA INSPECTION`, et ne se font jamais passer pour un composant du système :
 
-> Sécurité Windows — Menace détectée : negative rizz.
-> Windows Update — Installation de 67 mises à jour de l’aura…
-> Explorateur de fichiers — explorer.exe ne répond plus. *(mensonge, il va très bien)*
+> AURA INSPECTION — Case 67 opened for this desktop. An inspector is already on site.
+> AURA INSPECTION — Scorecard attached to case 67. You may now watch it get worse.
+> AURA INSPECTION — Case 67 verdict recorded. The site is scheduled for closure.
 
-### 4:30 — Color Filter
+### 5:45 — Filtre de couleur
 
 Un overlay transparent plein écran, à 15 % d’opacité, alterne la teinte du bureau entre vert Matrix et rose néon, en synchronisation avec les secousses.
 
-### 5:00 — Final Monologue
+### 6:15 — Le verdict
 
-La troupe, déjà bien plus nombreuse que les trois oies initiales, encercle le pointeur et affiche :
+La troupe, déjà bien plus nombreuse que les trois oies initiales, encercle le pointeur pendant que le verdict s’inscrit en travers de l’écran :
 
-> CRITICAL ERROR: MAXIMUM BRAINROT REACHED.
+> VERDICT: NON-COMPLIANT. SITE CONDEMNED.
 
-À partir de cet instant, plus aucune fenêtre n’est ouverte. L’essaim, à son maximum de 67, est **dévoré par le glitch** trois fenêtres à la fois jusqu’à disparaître complètement vers `5:45`, chaque disparition ajoutant un pic de dégradation. La fin n’est plus un mur de boîtes de dialogue, c’est un affichage qui s’effondre.
+Le dossier reçoit sa conclusion, et plus rien de nouveau n’est ouvert sur le site : aucune application n’est lancée après ce point. La dernière minute et quart ne repose que sur la dégradation de l’affichage.
 
-> NO MORE WINDOWS.  
-> ONLY DAMAGE.
+## Phase 5 — 6:50 à 7:30 : La clôture
 
-## Phase 5 — 5:30 à 6:00 : The Final Countdown
-
-### 5:30 — Red Timer
+### 6:50 — Compte à rebours
 
 Un grand compte à rebours rouge apparaît en haut de l’écran :
 
-> 00:30
+> 00:40
 
-### 5:45 — The Circle Dance
+### 7:10 — Les inspecteurs se déploient
 
 Le nombre d’oies accélère jusqu’à 67. Elles quittent leur spirale autour du pointeur et se répartissent sur une grille mouvante qui remplit tout l’écran.
 
-### 5:58 — The Final Click
+### 7:18 — La signature
 
-L’oie principale marche sur un bouton virtuel `[ DO NOT PRESS ]`.
+L’inspectrice descend vers un bouton virtuel `[ SIGN HERE ]` posé en bas de l’écran. Il apparaît **juste avant** que l’obturateur ne commence à se refermer, de sorte que l’écran se referme visiblement dessus.
 
-### 6:00 — Fin selon le profil
+### 7:30 — Le dossier est clos
 
-Dans l’implémentation actuelle, un cercle noir grandit depuis le centre jusqu’à recouvrir tous les coins de l’écran. Une explosion rose/verte éclate ensuite sur le noir, puis une dernière oie remonte réellement depuis le coin inférieur gauche et annonce `GOODBYE, DUDE. YOU SHOULD'VE LISTENED.` avant la fermeture propre. Le nettoyage et la restauration ont lieu avant l’explosion et la conclusion dure 7,5 secondes réelles, même avec une timeline accélérée.
+La fin est un obturateur qui se ferme, pas une explosion.
+
+À partir de `7:21`, la partie visible du bureau se réduit à **un cercle qui rétrécit** : tout ce qui est en dehors passe au noir, et le bord du cercle s’éclaire. Pendant la même descente, **l’exposition est poussée** : ce qu’il reste dans le cercle blanchit de plus en plus, jusqu’à être complètement brûlé au moment où le cercle se referme. Neuf secondes de fermeture progressive, sans coupure.
+
+Puis le crash, en quatre temps :
+
+1. **0,00–0,55 s** — l’image surexposée est écrasée en une ligne horizontale puis pincée en un point, comme un tube cathodique qu’on éteint ;
+2. **0,55–1,60 s** — plus rien. Noir complet, assez long pour être inconfortable ;
+3. **1,60–4,20 s** — une oie revient, en marchant, depuis le bord gauche ;
+4. **4,20 s** — elle parle.
+
+> CASE 67 CLOSED.  
+> THE SITE HAS BEEN CONDEMNED.  
+> HAVE A NICE DAY.
+
+Le nettoyage et la restauration ont lieu **avant** le crash. La conclusion dure 9,5 secondes réelles, même avec une timeline accélérée. Sans les flashs (`--no-flashes`, `--reduced-motion` ou le profil réduit), la surexposition est plafonnée et le crash reste une extinction douce.
 
 L’appui de deux secondes sur `Esc` est une sortie d’urgence uniquement en `safe`. Il ne doit pas interrompre `normal` ou `lab`.
 
@@ -241,20 +280,18 @@ Le code actuel n’est pas encore aligné avec ce scénario cible : ses effets `
 
 Ces idées ne remplacent pas le scénario de base ; elles forment une réserve pour les prochaines versions.
 
-### Un fil rouge : le compteur d’Aura
+### Un fil rouge : la fiche de notation
 
-Afficher discrètement un compteur d’Aura dès `0:15`, puis le faire évoluer à chaque gag. Les valeurs peuvent devenir volontairement absurdes :
+La fiche **n’existe pas au lancement**. Elle apparaît à `1:40`, au moment où l’inspectrice ouvre sa notation, et elle tombe en place avec un léger dépassement : c’est un objet que l’oie a apporté, pas un élément d’interface du programme. Elle évolue ensuite à chaque constat, avec des valeurs volontairement absurdes :
 
-- mouvement de souris : `−10 000`
-- fenêtre déplacée par l’oie : `−67`
-- choix « NPC » : `−1 000 000`
-- tentative de collage : `+9 999`
-- apparition du graffiti : compteur remplacé momentanément par `67`
+- relevé de base : `−10 000`
+- fenêtre réalignée : `−67`
+- recours rejeté : `−1 000 000`
+- presse-papiers certifié sans lecture : `+10 000`
+- pièce à conviction détruite par l’occupant : `−6 700`
+- clic sur le bouton Démarrer scellé : `−67`
 
-À `5:58`, le bouton `[ DO NOT PRESS ]` déclenche l’explosion du noyau d’Aura au lieu de remettre le compteur à zéro.
-
-- fermeture d’une image brainrot : `−6 700`
-- clic sur le bouton Démarrer condamné : `−67`
+Le compteur `EXHIBITS DESTROYED` se place juste dessous dès la première destruction.
 
 ### Micro-gags possibles
 
@@ -287,7 +324,9 @@ Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` s
 - afficher avant `lab` un avertissement bloquant annonçant la corruption des fichiers, du Registre et du démarrage ;
 - interdire `lab` hors d’une VM isolée et jetable ;
 - ne jamais lire ou modifier le presse-papiers système ;
-- fermer uniquement le Bloc-notes lancé par GooseRot ;
+- fermer uniquement le dossier d’inspection lancé par GooseRot ;
+- n’ouvrir aucune fausse fenêtre système, aucun faux cadre « Ne répond pas » et aucune notification se faisant passer pour un composant Windows : tout ce qui s’affiche s’annonce comme appartenant à l’inspection ;
+- ne jamais faire apparaître une pièce à conviction sans qu’une oie l’ait rapportée, ni ouvrir le dossier sans que l’oie l’ait tamponné ;
 - ne jamais enregistrer les frappes ni lire le contenu du presse-papiers ;
 - permettre de désactiver les sons, les secousses et les flashes avec `--mute`, `--reduced-motion` et `--no-flashes` ;
 - utiliser uniquement un faux écran de redémarrage en `safe` et `normal`.

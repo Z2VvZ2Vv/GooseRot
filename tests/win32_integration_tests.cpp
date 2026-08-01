@@ -406,91 +406,10 @@ void TestCrashRecovery() {
   CloseVictim(victim);
 }
 
-HWND FindPopupWindow() {
-  return FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr);
-}
-
-void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
-  HINSTANCE instance = GetModuleHandleW(nullptr);
-  std::mt19937 random(67);
-
-  {
-    gooserot::PopupSwarm swarm;
-    swarm.Spawn(instance, random, 1);
-    swarm.Tick(instance, random, 0.0);
-    Expect(swarm.Count() == 1, "popup swarm creates its first window");
-    HWND popup = FindPopupWindow();
-    Expect(popup != nullptr, "popup window is discoverable");
-    if (popup) SendMessageW(popup, WM_CLOSE, 0, 0);
-    swarm.Tick(instance, random, 1.0);
-    Expect(swarm.Count() == 2, "closing below the cap replaces one popup with two");
-    swarm.CloseAll();
-  }
-
-  {
-    gooserot::PopupSwarm swarm;
-    swarm.Spawn(instance, random, gooserot::PopupSwarm::kMaximumPopups);
-    for (int tick = 0; tick < 34; ++tick) {
-      swarm.Tick(instance, random, static_cast<double>(tick) / 60.0);
-    }
-    Expect(swarm.AtCap(), "popup swarm reaches but never exceeds its cap");
-    Expect(swarm.NativeCount() == gooserot::PopupSwarm::kMaximumNativePopups,
-           "the 267-window wall materialises exactly 67 native HWND popups");
-
-    HWND popup = FindPopupWindow();
-    Expect(popup != nullptr, "a tracked popup has a live window");
-    if (popup) {
-      SendMessageW(popup, WM_CLOSE, 0, 0);
-      SendMessageW(popup, WM_CLOSE, 0, 0);
-      swarm.Tick(instance, random, 2.0);
-      Expect(IsWindow(popup) != FALSE, "at the cap every normal close is refused");
-      Expect(swarm.Count() == gooserot::PopupSwarm::kMaximumPopups,
-             "refused closes keep the capped swarm full");
-    }
-    swarm.CloseAll();
-    Expect(swarm.Count() == 0 && swarm.NativeCount() == 0,
-           "emergency cleanup destroys the native and virtual capped swarm");
-  }
-}
-
-void TestPopupSwarmCeilingAndDissolve() {
-  HINSTANCE instance = GetModuleHandleW(nullptr);
-  std::mt19937 random(67);
-  gooserot::PopupSwarm swarm;
-
-  swarm.SetCeiling(4);
-  swarm.Spawn(instance, random, 20);
-  swarm.Tick(instance, random, 0.0);
-  Expect(swarm.Count() == 4, "the live ceiling bounds spawning below the maximum");
-  Expect(swarm.AtCap(), "the swarm reports being at its live ceiling");
-
-  HWND popup = FindPopupWindow();
-  Expect(popup != nullptr, "a capped swarm still has live windows");
-  if (popup) {
-    SendMessageW(popup, WM_CLOSE, 0, 0);
-    swarm.Tick(instance, random, 1.0);
-    Expect(IsWindow(popup) != FALSE, "closes are refused at the live ceiling");
-    Expect(swarm.Count() == 4, "a refused close leaves the count untouched");
-  }
-
-  // The finale's path: windows are destroyed outright, refusal does not apply.
-  Expect(swarm.Dissolve(3) == 3, "dissolving reports what it destroyed");
-  swarm.Tick(instance, random, 2.0);
-  Expect(swarm.Count() == 1, "dissolved windows are reaped");
-  Expect(swarm.Dissolve(9) == 1, "dissolving never claims more than it had");
-  swarm.Tick(instance, random, 3.0);
-  Expect(swarm.Count() == 0, "the finale can empty the swarm completely");
-
-  swarm.SetCeiling(gooserot::PopupSwarm::kMaximumPopups);
-  swarm.Spawn(instance, random, 1);
-  Expect(swarm.Count() == 1, "raising the ceiling lets the swarm grow again");
-  swarm.CloseAll();
-}
-
 void TestNotepadRefusesTheTaskbar() {
   HINSTANCE instance = GetModuleHandleW(nullptr);
   gooserot::NotepadWindow notepad;
-  Expect(notepad.Show(instance), "the fake Notepad opens");
+  Expect(notepad.Show(instance), "the case file opens");
   HWND window = FindWindowW(L"GooseRotNotepad", nullptr);
   Expect(window != nullptr, "the fake Notepad is discoverable");
   if (!window) {
@@ -515,7 +434,44 @@ void TestNotepadRefusesTheTaskbar() {
   Expect(notepad.ConsumeMinimiseRefusal(), "the external minimise is reported too");
 
   notepad.Close();
-  Expect(IsWindow(window) == FALSE, "cleanup still destroys the fake Notepad outright");
+  Expect(IsWindow(window) == FALSE, "cleanup still destroys the case file outright");
+}
+
+// The file is opened by the goose, so it has to land where the goose was
+// rather than always in the middle of the screen.
+void TestCaseFileOpensWhereTheGooseStamped() {
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  MONITORINFO monitor{};
+  monitor.cbSize = sizeof(monitor);
+  if (!GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &monitor)) {
+    Expect(false, "primary monitor is queryable");
+    return;
+  }
+
+  gooserot::NotepadWindow centred;
+  Expect(centred.Show(instance), "the case file opens without an anchor");
+  HWND centredWindow = FindWindowW(L"GooseRotNotepad", nullptr);
+  RECT centredRect{};
+  const bool haveCentred = centredWindow && GetWindowRect(centredWindow, &centredRect);
+  Expect(haveCentred, "the unanchored case file is discoverable");
+  centred.Close();
+
+  const POINT anchor{monitor.rcWork.left + 90, monitor.rcWork.top + 90};
+  gooserot::NotepadWindow anchored;
+  Expect(anchored.Show(instance, &anchor), "the case file opens at a stamped point");
+  HWND anchoredWindow = FindWindowW(L"GooseRotNotepad", nullptr);
+  RECT anchoredRect{};
+  const bool haveAnchored = anchoredWindow && GetWindowRect(anchoredWindow, &anchoredRect);
+  Expect(haveAnchored, "the anchored case file is discoverable");
+  if (haveCentred && haveAnchored) {
+    Expect(anchoredRect.left != centredRect.left || anchoredRect.top != centredRect.top,
+           "the stamped file does not land where a centred one would");
+    Expect(anchoredRect.top >= monitor.rcWork.top && anchoredRect.left >= monitor.rcWork.left &&
+               anchoredRect.right <= monitor.rcWork.right &&
+               anchoredRect.bottom <= monitor.rcWork.bottom,
+           "the stamped file stays inside the work area");
+  }
+  anchored.Close();
 }
 
 void TestWindowsKeySuppressionPolicy() {
@@ -642,8 +598,8 @@ void TestDenseRenderBudget() {
   state.faultRibbon = 0.92f;
   state.effectPattern = 67U;
   state.graffitiProgress = 1.0f;
-  state.popupCount = 267;
-  state.nativePopupCount = 0;
+  state.auraVisible = true;
+  state.propsClosed = 9;
   state.graffiti = true;
   state.colorFilter = true;
   state.finalMonologue = true;
@@ -651,11 +607,15 @@ void TestDenseRenderBudget() {
   state.flashesEnabled = false;
 
   for (int frame = 0; frame < 12; ++frame) overlay.Render(state);
+
+  // The closing aperture composites a full-screen mask every frame on top of an
+  // already saturated scene, so it gets its own budget check.
   std::vector<double> rampSamples;
   rampSamples.reserve(30);
-  state.nativePopupCount = 67;
   for (int frame = 0; frame < 30; ++frame) {
-    state.popupCount = 68 + (199 * frame) / 29;
+    const float progress = static_cast<float>(frame) / 29.0f;
+    state.finalIris = progress;
+    state.finalExposure = progress * progress;
     const auto started = std::chrono::steady_clock::now();
     overlay.Render(state);
     const auto finished = std::chrono::steady_clock::now();
@@ -665,13 +625,12 @@ void TestDenseRenderBudget() {
   std::sort(rampSamples.begin(), rampSamples.end());
   const double rampP95 =
       rampSamples[static_cast<std::size_t>(rampSamples.size() * 0.95)];
-  Expect(rampP95 < 100.0,
-         "incremental 68-to-267 popup growth keeps the 10 FPS p95 budget");
+  Expect(rampP95 < 100.0, "the closing aperture keeps the 10 FPS p95 budget");
+  state.finalIris = 0.0f;
+  state.finalExposure = 0.0f;
 
   std::vector<double> samples;
   samples.reserve(30);
-  state.popupCount = 267;
-  state.nativePopupCount = 0;
   for (int frame = 0; frame < 30; ++frame) {
     const auto started = std::chrono::steady_clock::now();
     state.effectPattern += 17U;
@@ -685,7 +644,7 @@ void TestDenseRenderBudget() {
                          static_cast<double>(samples.size());
   std::cout << "Dense render (" << static_cast<int>(bounds.Width()) << 'x'
             << static_cast<int>(bounds.Height()) << "): average " << average
-            << " ms, p95 " << p95 << " ms, ramp p95 " << rampP95 << " ms\n";
+            << " ms, p95 " << p95 << " ms, iris p95 " << rampP95 << " ms\n";
   wchar_t profileTitle[512]{};
   GetWindowTextW(overlay.Handle(), profileTitle, static_cast<int>(std::size(profileTitle)));
   std::wcout << L"Dense render profile: " << profileTitle << L'\n';
@@ -734,9 +693,8 @@ int wmain(int argc, wchar_t** argv) {
   TestSlowWindowFallback();
   TestShellSurfaceAllowList();
   TestCrashRecovery();
-  TestPopupSwarmCapRefusalAndEmergencyCleanup();
-  TestPopupSwarmCeilingAndDissolve();
   TestNotepadRefusesTheTaskbar();
+  TestCaseFileOpensWhereTheGooseStamped();
   TestWindowsKeySuppressionPolicy();
   TestEmbeddedChaosAssets();
   TestDenseRenderBudget();

@@ -43,19 +43,20 @@ Les images brainrot posées sur le bureau portent une croix `[x]` réellement cl
 - le clic est détecté en lisant la position du pointeur au moment d’un appui, sans hook clavier ni souris, puisque l’overlay laisse déjà passer les clics ;
 - aucune saisie n’est enregistrée : seul l’état du bouton gauche et la position du pointeur sont consultés, jamais le contenu d’une frappe ;
 - la fermeture ne touche qu’un dessin interne à l’overlay et n’affecte aucune fenêtre du système ;
-- les conséquences — aura, glitch, deux images commandées, escalade sur l’essaim et la troupe — restent entièrement dans les limites décrites ici.
+- les conséquences — aura, glitch, deux livraisons commandées et une oie supplémentaire à partir de la cinquième destruction — restent entièrement dans les limites décrites ici.
 
-## Fenêtres récalcitrantes
+## Aucune imitation de Windows
 
-Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une fenêtre fermée en fait apparaître deux » est borné par construction :
+GooseRot n’ouvre et ne dessine aucune fenêtre, boîte de dialogue, icône d’erreur ou notification se faisant passer pour un composant du système. C’est d’abord un choix de mise en scène — l’écart se voit et casse l’illusion — mais c’est aussi une propriété utile ici : rien de ce qui s’affiche ne peut être confondu avec un avertissement réel de Windows. Toutes les surfaces GooseRot s’annoncent comme appartenant à l’inspection.
 
-- il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
-- le compteur visuel est plafonné à 267 : 67 popups possèdent un HWND et les 200 suivantes sont de simples cadres dans l’overlay ; une fois ce plafond atteint, les fermetures ordinaires restent refusées ;
-- après le monologue final, le plafond décroît et l’essaim est détruit par ce même chemin privilégié jusqu’à disparaître : la fin réduit le nombre de fenêtres au lieu de l’augmenter ;
-- le faux Bloc-notes refuse d’être réduit, jamais d’être détruit : le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement ;
-- le faux Bloc-notes peut revenir tant que sa phase de frappe est active, puis le nettoyage le détruit directement ;
+## Fenêtre récalcitrante
+
+Une seule fenêtre résiste, et elle est bornée par construction :
+
+- il s’agit du dossier d’inspection créé par GooseRot, jamais d’une fenêtre appartenant à une autre application ;
+- il refuse d’être réduit, jamais d’être détruit : le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement ;
+- il peut revenir tant que sa phase de rédaction est active, puis le nettoyage le détruit directement ;
 - chaque vrai utilitaire est créé suspendu et refusé si son assignation au Job Object privé échoue ; les plus anciens reçoivent d’abord `WM_CLOSE` de façon répétée puis, après quatre secondes de grâce et au nettoyage, le job ou le handle exact retourné par `CreateProcessW` empêchent uniquement ces enfants de survivre, sans jamais adopter ni viser un PID préexistant ;
-- les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
 - le consentement initial annonce explicitement ce comportement.
 - le consentement propose un démarrage réduit et muet ; `--mute`, `--no-flashes` et `--reduced-motion` restent disponibles en ligne de commande.
@@ -67,7 +68,8 @@ Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une 
 - modification de BCD, Winlogon, Run/RunOnce, Startup ou des tâches planifiées ;
 - persistance après déconnexion ou redémarrage ;
 - désactivation de Defender, SmartScreen, UAC ou du Gestionnaire des tâches ;
-- fenêtre non fermable appartenant à une autre application, ou popup sans plafond ;
+- fenêtre non fermable appartenant à une autre application ;
+- fenêtre, dialogue, icône ou notification imitant un composant de Windows ;
 - élévation, exploitation ou contournement de droits ;
 - dissimulation du processus ou communication réseau cachée ;
 - fermeture forcée d’applications avec des données non enregistrées.
@@ -119,7 +121,7 @@ Un processus de secours du même exécutable surveille le moteur via une mémoir
 - la position initiale du curseur et le focus sont restaurés ;
 - aucun BSOD réel ni processus de représailles n’existe ; après terminaison, le seul effet permis au processus de secours est la restauration.
 
-Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, le plafond, le refus de fermeture et le nettoyage privilégié complet de l’essaim de popups, le plafond réglable et la destruction directe utilisée par la fin, ainsi que le refus de réduction du faux Bloc-notes par les trois chemins prévus.
+Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres processus et fenêtres factices. Il vérifie un déplacement exact, une cible lente, le fallback borné, la restauration par le watchdog après un `ExitProcess` volontaire du parent de test, le refus de réduction du dossier d’inspection par les trois chemins prévus, son ouverture au point tamponné par l’oie et le budget de rendu de l’obturateur final.
 
 ## Consentement et environnement
 
