@@ -1,21 +1,26 @@
-# AURA 67: Firmware Frenzy — portable core, Preview, and firmware adapters
+# AURA 67: POST Runner — portable core, Preview, and firmware adapters
 
 This directory contains the deterministic mini-game core, its 640×360 software
 renderer, fixed-memory helpers, core tests, a safe windowed Win32 Preview, and
 experimental freestanding adapters for UEFI x64 and legacy BIOS.
 
-The firmware artifacts compile and pass static layout checks, but they have not
-been run under QEMU/OVMF or SeaBIOS because those tools are unavailable in the
-current validation environment. They are unsigned, non-installable, and not
-runtime-validated. This directory contains no installer, physical-disk writer,
-boot-manager modification, UEFI-variable update, persistence mechanism, or
-physical-machine deployment procedure.
+The firmware artifacts compile, pass the static layout checks, and now boot in
+an emulator: both targets were run under QEMU 8.2.2 (TCG, no KVM) with OVMF
+2024.02 for UEFI x64 and SeaBIOS 1.16.3 for legacy BIOS. Observed there: the
+game reaches its render loop, the HUD and goose draw correctly, the keyboard
+restarts a run, `R` performs a real platform reset, and one `Esc` press returns
+the UEFI application to the firmware menu with the original GOP mode restored.
+
+They remain unsigned and non-installable, and they are still unvalidated on
+physical hardware and on every other hypervisor. This directory contains no
+installer, physical-disk writer, boot-manager modification, UEFI-variable
+update, persistence mechanism, or physical-machine deployment procedure.
 
 The Preview does not overlay or control the desktop. Pressing `R` only produces
 a `ResetRequested` value inside the core; the Preview ignores it. The firmware
-adapters map that signal to a platform reset only after the 67-second result
-screen and only when the player explicitly presses `R`; that path remains
-runtime-untested.
+adapters map that signal to a platform reset only on the kernel-panic screen
+that follows a crash, and only when the player explicitly presses `R`; that path
+remains runtime-untested.
 
 ## Build and test
 
@@ -57,23 +62,95 @@ README.txt
 
 The manifest deliberately records `trust: experimental-unsigned`,
 `installable: false`, and `runtimeValidated: false`. The raw BIOS image is a
-build artifact for future disposable-VM testing, not an instruction or tool for
-writing a physical disk.
+build artifact for disposable-VM testing, not an instruction or tool for writing
+a physical disk.
 
-## Controls
+### Cross-building the firmware from Linux
+
+The firmware targets are PE/COFF, so a Linux host needs the mingw-w64 toolchain
+and can then use the same rules:
+
+```bash
+apt-get install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+cmake -S boot -B build-firmware -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_TOOLCHAIN_FILE=boot/cmake/toolchain-mingw-w64.cmake \
+      -DGOOSEBOOT_BUILD_FIRMWARE=ON -DGOOSEBOOT_BUILD_PREVIEW=OFF
+cmake --build build-firmware --parallel
+```
+
+A cross build produces every firmware binary except the raw `gooseboot-bios.img`
+and skips `gooseboot_firmware_bundle`, because that one artifact is assembled by
+a tool that has to run on the build host. The two bootable ISOs do not need it.
+
+### Bootable test images
+
+`boot/tools/make_boot_isos.sh` turns built firmware into two ISOs for a
+throwaway virtual machine. It needs `xorriso`, `mtools` and `dosfstools`, and it
+only ever writes ordinary files inside the output directory it is given:
+
+```bash
+./boot/tools/make_boot_isos.sh build-firmware/firmware build-firmware/iso
+```
+
+| Image | El Torito catalog | What the firmware runs |
+|---|---|---|
+| `gooseboot.iso` | BIOS default entry, then an EFI entry behind a platform section header | either, depending on the VM's firmware type |
+| `gooseboot-bios.iso` | BIOS default entry only | `gooseboot-bios-cdstub.bin` followed by stage 2 |
+
+The section header matters. A catalog may also carry a single entry whose
+platform id lives in the validation entry, and OVMF boots that happily — but
+firmware that only scans section headers for platform `0xEF`, VMware included,
+sees no EFI entry at all and falls through. The dual-entry layout above is what
+every mainstream installer ISO uses. The ESP is FAT16 rather than FAT12 for the
+same reason: both are legal for removable media, FAT16 is better supported.
+
+Stage 1 is not used on optical media: its `INT 13h/AH=42h` path assumes 512-byte
+sectors, while a no-emulation CD boot exposes 2048-byte sectors. The CD stub in
+`platform/bios/cdrom_stub.S` replaces it with a pure in-memory move — the
+firmware is asked to load the whole 128-sector image, so the stub performs no
+disk call at all, and the layout verifier asserts the sector contains no `INT
+13h` opcode. It relies only on the default 0x7C00 load address, so no firmware
+has to honour a custom El Torito load segment.
+
+## The game
+
+An endless side-scrolling run, in the spirit of the offline dinosaur, played on
+a motherboard. The goose runs by itself, the board scrolls faster and faster,
+and the run only ends when something hits her. There is no timer and no finish
+line: the score is the whole point, and the previous best stays on the HUD.
 
 | Input | Action |
 |---|---|
-| Arrows or `WASD` | Move the goose |
-| `Space` | Cardinal dash of exactly 67 pixels |
-| `Enter` | Start the same seeded round again after 67 seconds |
-| `R` | Emit a reset request after the round (ignored by Preview) |
+| `Space`, `Up` or `W` | Jump. Press again in mid-air for one wing flap |
+| `Down` or `S` | Duck on the ground, dive when airborne |
+| `Space` or `Enter` on the panic screen | Start the next run immediately |
+| `R` on the panic screen | Emit a reset request (ignored by Preview) |
 | Hold `Esc` for two seconds | Close the Preview safely |
 
-The game starts at `-10000 AURA`. Green badges award `+9999`; red `NPC`
-blocks and the hostile cursor deduct `67`. A dash performed close to the cursor
-pushes it by exactly 67 pixels. Palette waves cycle through Matrix green, neon
-pink, and critical red until the 67-second result screen.
+A ground jump lasts exactly 25 ticks and peaks 86 pixels up. Every wave the
+spawner rolls is guaranteed to fit inside that arc: the shortest gap it may
+draw is 36 ticks, and patterns unlock progressively — memory modules and
+capacitors first, then flying cursors to duck under, RAM clusters, high cursors
+that punish a reflex jump, and finally full blue screens.
+
+Scoring keeps the project's `67` economy:
+
+- one AURA per five pixels travelled, which is the backbone of the score;
+- badges pay `67` multiplied by the current chain;
+- shaving an obstacle by 14 pixels or less is a `CLUTCH`: `67` and one chain step;
+- the chain is built by risk only — never by picking badges up — and lapses
+  after five quiet seconds;
+- an overclock chip arms `ROOT MODE` for exactly 67 ticks: obstacles shatter for
+  `67` each instead of ending the run;
+- the firmware palette flips every `670` AURA, and `9999` lights `MAX BRAINROT`.
+
+The scroll speed ramps from 345 to 622 pixels per second over roughly 79
+seconds and then holds while obstacle density keeps its ceiling, so the endless
+part is a flow state rather than an eventually impossible wall.
+
+Crashing shows a `KERNEL PANIC` panel with the run's AURA, the best score, the
+badge/clutch/cleared counters and how long the goose survived. A 20-tick lockout
+stops the keypress that caused the crash from skipping the panel.
 
 ## Determinism and memory contract
 
@@ -88,24 +165,35 @@ pink, and critical red until the 67-second result screen.
 - the Win32 Preview uses one static 640×360 pixel array allocated before entry
   to the message loop.
 
-The tests cover equal-seed replay, seed divergence, the exact 67-pixel dash and
-cursor push, scoring, the 67-second boundary, end controls, the held-Escape
-exit, framebuffer bounds guards, identical rendered frames, and fixed-arena
-alignment.
+Runs never re-seed the generator, so a whole session — crash, restart, crash
+again — replays identically from one seed while each individual run still gets a
+fresh course.
+
+The tests cover equal-seed replay, seed divergence, the fixed 25-tick/86-pixel
+jump arc, the single wing flap per airtime, ducking under a head-height cursor,
+the `67` economy and chain rules, ROOT MODE shattering and expiring on schedule,
+a 10 000-tick run proving no timer can end it, spawner gaps staying above the
+jump bound on six seeds, a reactive autopilot surviving the ramp on five seeds,
+record keeping across restarts, the reset request being reachable only after a
+crash, the held-Escape exit, framebuffer bounds guards, identical rendered
+frames, and fixed-arena alignment.
 
 ## Clean-room goose renderer
 
 DesktopGoose v0.31 is used only as a behavioral reference. The renderer in
-`game/renderer.cpp` is an original integer rasterizer. Its broad silhouette and
-locomotion scale were informed by values intentionally exposed in the supplied
-public `GooseModdingAPI` source (for example the 22-pixel body radius, procedural
-feet, and 80-pixel/second walk tier). No code or asset was extracted from or
-copied out of `GooseDesktop.exe`.
+`game/renderer.cpp` is an original integer rasterizer: side-view goose with a
+four-frame run cycle, tucked airborne legs and a crouch pose, drawn over three
+parallax layers of firmware scenery (setup grid and drifting dialogs, a memory
+map histogram, then sockets, capacitor banks and DIMM slots). Its broad
+silhouette and locomotion scale were informed by values intentionally exposed in
+the supplied public `GooseModdingAPI` source (for example the 22-pixel body
+radius, procedural feet, and 80-pixel/second walk tier). No code or asset was
+extracted from or copied out of `GooseDesktop.exe`.
 
 ## Firmware status and limits
 
 The UEFI x64 adapter stays in Boot Services and uses GOP, Simple Text Input, a
-periodic timer, and `ResetSystem` only for the explicit post-game reset request.
+periodic timer, and `ResetSystem` only for the reset the panic screen offers.
 If the active GOP mode is smaller than 640×360 it enumerates modes, selects the
 smallest compatible one, and restores the original mode on return. Direct
 32-bit modes use integer scaling and letterboxing; a Blt-only fallback is
@@ -129,9 +217,16 @@ imports, and contains usable `.reloc` and `.bss` sections. It also checks the
 BIOS sizes and `55 AA` signature, exact stage composition, i386 stage-2 entry at
 `0x10000`, and all real-mode VBE/GDT state inside the CS-relative 64 KiB
 window. The UEFI checks also require x86-64, a nonzero entry point, a real
-`DIR64` relocation, and file-free framebuffer BSS. These are structural checks only:
-boot, graphics, keyboard, timer, and reset behavior still require runtime tests
-under OVMF and SeaBIOS on blank disposable virtual media.
+`DIR64` relocation, and file-free framebuffer BSS. When a CD stub is present it
+must be 512 bytes, carry `55 AA`, and contain no `INT 13h` opcode.
+
+These are structural checks. Boot, graphics, keyboard, timer and reset behaviour
+were confirmed separately by running both ISOs under QEMU 8.2.2 with OVMF
+2024.02 and SeaBIOS 1.16.3: UEFI came up letterboxed at 1280×720 inside a
+1280×800 GOP mode, BIOS selected a 640×400 VBE mode, both accepted keystrokes
+and restarted runs, `R` reset the machine, and `Esc` returned the UEFI build to
+the firmware menu with the original mode restored. Physical hardware, VMware,
+VirtualBox and Hyper-V remain untested.
 
 The adapters remain display/input/time-only during gameplay. They do not
 implement disk writes, ESP/MBR edits, BCD changes, UEFI-variable changes,

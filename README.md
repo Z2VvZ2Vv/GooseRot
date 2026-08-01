@@ -30,11 +30,11 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau, muet, sans flash et à mouvement réduit par défaut ;
-- cœur AURA 67 déterministe et `GooseBootPreview.exe` sûr dans `boot/` ;
+- cœur AURA 67 déterministe — un runner infini pré-OS façon dinosaure Chrome, joué sur une carte mère — et `GooseBootPreview.exe` sûr dans `boot/` ;
 - adaptateurs freestanding UEFI x64 et BIOS, construits sur demande et vérifiés statiquement ;
 - tests CTest pour les moteurs GooseRot et AURA 67, plus un harness Win32 couvrant les fenêtres tierces réactives/lentes, la restauration après arrêt brutal du parent, le plafond, le refus de fermeture et le nettoyage d’urgence de l’essaim.
 
-Le bundle firmware reste strictement expérimental : il est non signé, non installable et n’a pas été exécuté sous QEMU/OVMF ou SeaBIOS. Le build vérifie les formats, tailles, signatures, points d’entrée, sections et imports, mais pas le comportement au démarrage. Aucun installateur, chemin firmware d’écriture disque ou procédure de modification du démarrage n’est fourni, et `--boot-game` continue donc d’échouer fermé.
+Le bundle firmware reste strictement expérimental : il est non signé et non installable. Le build vérifie les formats, tailles, signatures, points d’entrée, sections et imports ; le comportement au démarrage a été confirmé séparément sous QEMU 8.2.2 avec OVMF et SeaBIOS, mais jamais sur machine physique ni sur un autre hyperviseur. Aucun installateur, chemin firmware d’écriture disque ou procédure de modification du démarrage n’est fourni, et `--boot-game` continue donc d’échouer fermé.
 
 ## Construire
 
