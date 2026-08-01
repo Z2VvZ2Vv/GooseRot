@@ -15,17 +15,43 @@
 
 namespace gooserot {
 
+// A brainrot photo, from the moment a goose is sent to fetch it to the moment
+// the user tears it off the desktop.
+//
+//   Fetching -> the carrier is walking off the edge; nothing is drawn yet
+//   Carried  -> the photo is in the beak, crossing the desktop
+//   Placed   -> it is pinned down, and its [x] badge becomes clickable
+//   Tearing  -> it was closed; a short rip plays before it is removed
+enum class PropStage : unsigned char { Fetching, Carried, Placed, Tearing };
+
 struct VisualSprite {
   int resourceId = 0;
   Vec2 center;
   Vec2 targetCenter;
+  // Where the carrier leaves the frame to collect it.
+  Vec2 fetchPoint;
   float size = 180.0f;
   float angleDegrees = 0.0f;
   double createdAt = 0.0;
   double lifetime = 320.0;
-  double deliveryDeadline = 0.0;
+  // Bound on the current stage, so a stuck carrier can never strand a photo.
+  double stageDeadline = 0.0;
+  double stageChangedAt = 0.0;
   std::size_t carrierIndex = 0;
-  bool carried = false;
+  PropStage stage = PropStage::Placed;
+  // True once the photo has been pinned down at least once. A photo on its first
+  // trip is not in the world yet and must not be drawn; one being picked back up
+  // off the wall stays visible while its carrier walks over to collect it.
+  bool everPlaced = false;
+
+  bool HasCarrier() const {
+    return stage == PropStage::Fetching || stage == PropStage::Carried;
+  }
+  bool IsVisible() const { return stage != PropStage::Fetching || everPlaced; }
+  // Only a settled photo may be closed: no clicking props out of a beak.
+  bool IsClosable(double logicalTime) const {
+    return stage == PropStage::Placed && logicalTime - stageChangedAt >= 0.9;
+  }
 };
 
 // Fake system notification drawn inside the overlay. Nothing is ever posted to
@@ -57,6 +83,10 @@ struct RenderState {
   // 0 = bare wall, 1 = the 67 tag is finished.
   float graffitiProgress = 0.0f;
   int popupCount = 0;
+  int propsClosed = 0;
+  // True during the storm phase, including the windows where the pointer has
+  // been handed back, so the HUD can say which of the two is happening.
+  bool cursorStormPhase = false;
   bool cursorLatched = false;
   bool clipboardBadge = false;
   bool graffiti = false;
@@ -118,6 +148,8 @@ class OverlayWindow {
   void DrawGooseCompact(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawSpeechBubble(Gdiplus::Graphics& graphics, const std::wstring& text, Vec2 anchor) const;
   void DrawSprites(Gdiplus::Graphics& graphics, const RenderState& state);
+  void DrawPropCloseBadge(Gdiplus::Graphics& graphics, const VisualSprite& sprite,
+                          bool compact) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawClipboardBadge(Gdiplus::Graphics& graphics, const RenderState& state) const;
@@ -159,6 +191,9 @@ class OverlayWindow {
   DWORD lastTopmostError_ = ERROR_SUCCESS;
   // Advances once per rendered frame and drives every deterministic wobble.
   unsigned frame_ = 0;
+  // Set once per frame: the scene is dense enough that decoration has to give
+  // way to throughput.
+  bool heavyScene_ = false;
   ULONG_PTR gdiplusToken_ = 0;
   std::function<void()> tickHandler_;
   std::function<void()> closeHandler_;
@@ -170,6 +205,9 @@ class OverlayWindow {
   int graffitiCacheY_ = 0;
   int graffitiCacheCanvasWidth_ = 0;
   int graffitiCacheCanvasHeight_ = 0;
+  // A canvas that refuses to cache the tag falls back to drawing it live, but
+  // it must not retry the expensive build on every single frame.
+  int graffitiCacheFailures_ = 0;
 };
 
 }  // namespace gooserot

@@ -1,6 +1,6 @@
 # GooseRot
 
-GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de cinq minutes sur un bureau Windows : oies procédurales, images brainrot persistantes, faux outils Windows, tempête de curseur, graffiti, filtres, compte à rebours et explosion finale sur écran noir.
+GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une timeline comique de six minutes sur un bureau Windows : oies procédurales qui sortent du cadre et y reviennent, images brainrot rapportées une par une dans un bec, faux outils Windows, tempête de curseur par vagues, graffiti, filtres, compte à rebours et explosion finale sur écran noir.
 
 > [!CAUTION]
 > Le profil `lab` est un **destructeur volontaire**, pas une variante plus intense de la démo. À la fin de son exécution, la machine doit être considérée comme sacrifiée : fichiers supprimés ou corrompus, Registre Windows endommagé et chaîne de démarrage rendue inutilisable. Il est réservé à une VM jetable, isolée, sans données ni secrets, avec un snapshot hors ligne prêt à être restauré. Ne jamais l’exécuter sur un PC physique ou une VM importante.
@@ -17,13 +17,16 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - moteur C++17 et timeline monotone indépendante du framerate ;
 - overlay Win32/GDI+ transparent, click-through et multi-écran, qui referme Start/Search lorsqu’ils recouvrent la scène ;
 - première oie entrant depuis un bord après consentement, puis dessin procédural complet en vue de dessus ;
+- sortie complète de l’écran à `0:35` puis retour par le bord opposé à `1:05`, une image dans le bec ;
 - moteur de glitch piloté par la timeline : déchirures, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas », flashs ;
-- tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse ;
+- tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse, dessiné après les images et sous une passe d’encre pour rester visible sur n’importe quel écran ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
-- jusqu’à 67 entités indépendantes, bulles, images PNG livrées par les oies puis laissées à l’écran et effets des cinq phases ;
-- traction initiale du curseur sur 67 pixels, puis tempête de mouvement de plus en plus violente entre `3:30` et la fin, toujours restaurée ;
+- jusqu’à 67 entités indépendantes, bulles, images PNG systématiquement rapportées depuis hors champ par une oie, fermables par leur croix `[x]` avec conséquences, et effets des cinq phases ;
+- traction initiale du curseur sur 67 pixels, puis tempête par vagues à partir de `4:00` : chaque cycle saisit le pointeur puis le rend intégralement, la part saisie et la violence montant jusqu’à la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
-- fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
+- fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et refuse d’être réduit dans la barre des tâches, faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
+- petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics, sans hook ni modification du shell, détruit au nettoyage ;
+- essaim de fenêtres dévoré par le glitch après `5:00` : moins de boîtes de dialogue et une dégradation d’affichage qui monte en continu jusqu’à la fin ;
 - jusqu’à six vrais utilitaires Windows lancés, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
 - rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
 - fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
@@ -91,7 +94,7 @@ GooseRot.exe --mode lab --vm-confirmed
 Options utiles :
 
 ```text
---start-at 02:15
+--start-at 02:40
 --duration-scale 0.1
 --primary-monitor-only
 --no-desktop-effects
@@ -114,7 +117,7 @@ Un build autonome place la Preview dans `build\boot\bin`; copiez-la à côté de
 
 ## Documentation
 
-- [SCENARIO.md](SCENARIO.md) — timeline créative de cinq minutes ;
+- [SCENARIO.md](SCENARIO.md) — timeline créative de six minutes ;
 - [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) — profils et règles produit ;
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture et contraintes Win32 ;
 - [docs/CLEAN_ROOM_NOTES.md](docs/CLEAN_ROOM_NOTES.md) — observations de compatibilité v0.31 ;

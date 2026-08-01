@@ -581,8 +581,8 @@ Vec2 OverlayWindow::ScreenToCanvas(POINT screenPoint) const {
 }
 
 Vec2 OverlayWindow::GraffitiPaintHead(float progress) const {
-  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
-  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  const float scale = TagScale(CanvasBounds());
+  const Vec2 center = TagCenter(CanvasBounds());
   return StrokeHead(BuildTagStrokes(center, scale), progress);
 }
 
@@ -613,9 +613,9 @@ void OverlayWindow::Render(const RenderState& state) {
   const std::size_t spriteCount = state.sprites ? state.sprites->size() : 0U;
   const std::uint64_t surfacePixels = static_cast<std::uint64_t>(width_) *
                                       static_cast<std::uint64_t>(height_);
-  const bool heavyScene = (state.geese && state.geese->size() > 12U) ||
-                          state.popupCount > 24 || spriteCount > 8U ||
-                          surfacePixels > 3'000'000ULL;
+  heavyScene_ = (state.geese && state.geese->size() > 12U) || state.popupCount > 24 ||
+                spriteCount > 8U || surfacePixels > 3'000'000ULL;
+  const bool heavyScene = heavyScene_;
   graphics.SetSmoothingMode(heavyScene ? SmoothingModeHighSpeed : SmoothingModeAntiAlias);
   graphics.SetInterpolationMode(heavyScene ? InterpolationModeLowQuality
                                            : InterpolationModeHighQualityBicubic);
@@ -633,11 +633,11 @@ void OverlayWindow::Render(const RenderState& state) {
     effectsSampleMs_ += markProfile();
   } else {
     const GraphicsState saved = graphics.Save();
-    // Shake: a steady beat from 3:30, plus an extra kick the more the display
-    // is falling apart.
-    if (state.logicalTime >= 210.0) {
-      const int pulse = static_cast<int>((state.logicalTime - 210.0) / 2.0);
-      if (std::fmod(state.logicalTime - 210.0, 2.0) < 0.18) {
+    // Shake: a steady beat from the screen-shake beat onwards, plus an extra
+    // kick the more the display is falling apart.
+    if (state.logicalTime >= phase::kScreenShake) {
+      const int pulse = static_cast<int>((state.logicalTime - phase::kScreenShake) / 2.0);
+      if (std::fmod(state.logicalTime - phase::kScreenShake, 2.0) < 0.18) {
         graphics.TranslateTransform((pulse % 2 == 0) ? 4.0f : -4.0f,
                                     (pulse % 3 == 0) ? -3.0f : 3.0f);
       }
@@ -650,8 +650,13 @@ void OverlayWindow::Render(const RenderState& state) {
     DrawSceneEffects(graphics, state);
     sceneSampleMs_ += markProfile();
     DrawSprites(graphics, state);
-    DrawClipboardBadge(graphics, state);
     spriteSampleMs_ += markProfile();
+    // The tag goes on after the photos. Props keep clear of its footprint, but
+    // drawing it last is what guarantees a small screen can never end up with
+    // the 67 buried under a stack of brainrot images.
+    if (state.graffiti) DrawGraffiti(graphics, state);
+    DrawClipboardBadge(graphics, state);
+    sceneSampleMs_ += markProfile();
     if (state.geese) {
       for (std::size_t index = 0; index < state.geese->size(); ++index) {
         if (heavyScene && index >= 3U) {
@@ -1053,18 +1058,29 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) {
   const int sceneOffsetY = static_cast<int>(std::lround(transform[5]));
   bool gdiDrawingSinceFlush = true;
   for (const VisualSprite& sprite : *state.sprites) {
+    // A photo on its first trip has not entered the world yet.
+    if (!sprite.IsVisible()) continue;
     Image* image = FindImage(sprite.resourceId);
     if (!image) continue;
     const double age = state.logicalTime - sprite.createdAt;
     if (age < 0.0 || age > sprite.lifetime) continue;
+    const double sinceStage = state.logicalTime - sprite.stageChangedAt;
     const float fadeIn = static_cast<float>(std::clamp(age / 0.6, 0.0, 1.0));
     const float fadeOut = static_cast<float>(std::clamp((sprite.lifetime - age) / 1.0, 0.0, 1.0));
-    const float alpha = std::min(fadeIn, fadeOut);
+    float alpha = std::min(fadeIn, fadeOut);
+    // Torn off the desktop: it snaps outward and burns off in a few frames.
+    float tear = 0.0f;
+    if (sprite.stage == PropStage::Tearing) {
+      tear = static_cast<float>(std::clamp(sinceStage / 0.45, 0.0, 1.0));
+      alpha = std::min(alpha, 1.0f - tear);
+    }
     // Stickers slap down with a short overshoot instead of fading in politely.
-    const float pop = age < 0.35 ? 1.0f + static_cast<float>(0.35 - age) * 0.75f : 1.0f;
-    const float carriedScale = sprite.carried ? 0.68f : 1.0f;
-    const float size = sprite.size * pop * carriedScale;
-    const bool stableGeometry = age >= 0.35;
+    const double sincePlaced = sprite.stage == PropStage::Placed ? sinceStage : 1.0;
+    const float pop = sincePlaced < 0.35 ? 1.0f + static_cast<float>(0.35 - sincePlaced) * 0.75f
+                                         : 1.0f;
+    const float carriedScale = sprite.stage == PropStage::Carried ? 0.68f : 1.0f;
+    const float size = sprite.size * pop * carriedScale * (1.0f + tear * 0.35f);
+    const bool stableGeometry = sprite.stage == PropStage::Placed && sincePlaced >= 0.35;
     CachedSprite* cached = stableGeometry
                                ? FindCachedSprite(sprite.resourceId,
                                                   std::max(1, static_cast<int>(std::lround(size))),
@@ -1107,13 +1123,67 @@ void OverlayWindow::DrawSprites(Graphics& graphics, const RenderState& state) {
                          UnitPixel, &attributes);
     }
     graphics.Restore(saved);
+    if (tear > 0.0f) {
+      // A pink slash across whatever is left, so removing a photo reads as
+      // damage rather than as a polite fade.
+      Pen rip(WithAlpha(kNeonPink, 1.0f - tear), 4.0f + tear * 10.0f);
+      rip.SetStartCap(LineCapRound);
+      rip.SetEndCap(LineCapRound);
+      const float reach = size * (0.35f + tear * 0.5f);
+      graphics.DrawLine(&rip, sprite.center.x - reach, sprite.center.y - reach * 0.7f,
+                        sprite.center.x + reach, sprite.center.y + reach * 0.7f);
+      graphics.DrawLine(&rip, sprite.center.x + reach, sprite.center.y - reach * 0.7f,
+                        sprite.center.x - reach, sprite.center.y + reach * 0.7f);
+    }
     gdiDrawingSinceFlush = true;
   }
+
+  // Badges go in one pass after every photo, for two reasons: a badge is never
+  // hidden by a photo delivered later, and the cached photos keep their single
+  // batched flush instead of one per sprite.
+  for (const VisualSprite& sprite : *state.sprites) {
+    if (sprite.IsClosable(state.logicalTime)) DrawPropCloseBadge(graphics, sprite, heavyScene_);
+  }
+}
+
+// The [x] the flock leaves on a delivered photo. It is a real target: the app
+// hit-tests the same box, and closing it costs aura and buys two more photos.
+// Dense scenes get a plain frame instead of a hand-drawn one — dozens of boiling
+// outlines per frame is not where the budget belongs.
+void OverlayWindow::DrawPropCloseBadge(Graphics& graphics, const VisualSprite& sprite,
+                                       bool compact) const {
+  const RectF box = PropCloseBox(sprite.center, sprite.size);
+  const float width = box.Width();
+  const float height = box.Height();
+  SolidBrush fill(Color(226, 24, 22, 30));
+  Pen edge(kNeonPink, 2.4f);
+  edge.SetLineJoin(LineJoinRound);
+  if (compact) {
+    graphics.FillRectangle(&fill, box.left, box.top, width, height);
+    graphics.DrawRectangle(&edge, box.left, box.top, width, height);
+  } else {
+    GraphicsPath frame;
+    AddWobblyRectangle(frame, box.left, box.top, width, height, 1.6f,
+                       static_cast<std::uint32_t>(sprite.resourceId) * 131U +
+                           static_cast<std::uint32_t>(std::max(0.0f, sprite.center.x)) +
+                           frame_ / 8U % 3U);
+    graphics.FillPath(&fill, &frame);
+    graphics.DrawPath(&edge, &frame);
+  }
+
+  Pen cross(Color(240, 255, 251, 234), 2.6f);
+  cross.SetStartCap(LineCapRound);
+  cross.SetEndCap(LineCapRound);
+  const float inset = width * 0.29f;
+  graphics.DrawLine(&cross, box.left + inset, box.top + inset, box.right - inset,
+                    box.bottom - inset);
+  graphics.DrawLine(&cross, box.right - inset, box.top + inset, box.left + inset,
+                    box.bottom - inset);
 }
 
 void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& state) {
   if (state.colorFilter) {
-    const bool matrix = static_cast<int>((state.logicalTime - 240.0) / 2.0) % 2 == 0;
+    const bool matrix = static_cast<int>((state.logicalTime - phase::kColorFilter) / 2.0) % 2 == 0;
     const Color filterColor = matrix ? Color(38, 57, 255, 20) : Color(38, 255, 45, 170);
     if (!preview_ && surfacePixels_) {
       graphics.Flush(FlushIntentionSync);
@@ -1132,13 +1202,11 @@ void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& stat
       graphics.FillRectangle(&filter, 0, 0, width_, height_);
     }
   }
-
-  if (state.graffiti) DrawGraffiti(graphics, state);
 }
 
 void OverlayWindow::DrawClipboardBadge(Graphics& graphics, const RenderState& state) const {
   if (!state.clipboardBadge) return;
-  const float age = static_cast<float>(state.logicalTime - 120.0);
+  const float age = static_cast<float>(state.logicalTime - phase::kClipboard);
   const float travel = std::clamp(age / 5.0f, 0.0f, 1.0f);
   // Settle in a protected lower-left lane, away from the aura counter and the
   // toast stack. Drawing after sprites keeps the certification legible.
@@ -1173,9 +1241,15 @@ void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) {
     graffitiCache_.reset();
     graffitiCacheCanvasWidth_ = width_;
     graffitiCacheCanvasHeight_ = height_;
+    graffitiCacheFailures_ = 0;
   }
-  if (!graffitiCache_) BuildGraffitiCache(state);
+  constexpr int kMaximumCacheAttempts = 3;
+  if (!graffitiCache_ && graffitiCacheFailures_ < kMaximumCacheAttempts) {
+    if (!BuildGraffitiCache(state)) ++graffitiCacheFailures_;
+  }
   if (!graffitiCache_) {
+    // A canvas that will not give us an offscreen bitmap still gets its tag;
+    // it just costs a little more per frame.
     DrawGraffitiUncached(graphics, state);
     return;
   }
@@ -1190,8 +1264,8 @@ void OverlayWindow::DrawGraffiti(Graphics& graphics, const RenderState& state) {
 }
 
 bool OverlayWindow::BuildGraffitiCache(const RenderState& state) {
-  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
-  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  const float scale = TagScale(CanvasBounds());
+  const Vec2 center = TagCenter(CanvasBounds());
   const std::vector<SprayStroke> strokes = BuildTagStrokes(center, scale);
   float minimumX = static_cast<float>(width_);
   float minimumY = static_cast<float>(height_);
@@ -1276,8 +1350,8 @@ void OverlayWindow::DrawGraffitiUncached(Graphics& graphics, const RenderState& 
   // drips behind the nozzle and overspray keeps accumulating.
   const float progress = std::clamp(state.graffitiProgress, 0.0f, 1.0f);
   if (progress <= 0.0f) return;
-  const float scale = std::max(70.0f, std::min(height_ * 0.30f, width_ * 0.20f));
-  const Vec2 center{width_ * 0.5f, height_ * 0.47f};
+  const float scale = TagScale(CanvasBounds());
+  const Vec2 center = TagCenter(CanvasBounds());
   const std::vector<SprayStroke> strokes = BuildTagStrokes(center, scale);
 
   float total = 0.0f;
@@ -1290,7 +1364,14 @@ void OverlayWindow::DrawGraffitiUncached(Graphics& graphics, const RenderState& 
   halo.SetStartCap(LineCapRound);
   halo.SetEndCap(LineCapRound);
   halo.SetLineJoin(LineJoinRound);
-  // The dark pass is laid down first and slightly wider, so the pink core reads
+  // A near-opaque ink pass under everything else. Whatever the desktop, the
+  // colour filter or a stray photo is doing behind the tag, the glyph keeps a
+  // hard silhouette instead of dissolving into the background.
+  Pen backing(Color(235, 24, 6, 26), band * 1.40f);
+  backing.SetStartCap(LineCapRound);
+  backing.SetEndCap(LineCapRound);
+  backing.SetLineJoin(LineJoinRound);
+  // The dark pass is laid down next and slightly wider, so the pink core reads
   // as paint with an edge rather than a line with a stripe through it.
   Pen edge(Color(255, 55, 5, 40), band * 1.16f);
   edge.SetStartCap(LineCapRound);
@@ -1325,6 +1406,7 @@ void OverlayWindow::DrawGraffitiUncached(Graphics& graphics, const RenderState& 
     }
     if (visible.size() >= 2) {
       graphics.DrawLines(&halo, visible.data(), static_cast<INT>(visible.size()));
+      graphics.DrawLines(&backing, visible.data(), static_cast<INT>(visible.size()));
       graphics.DrawLines(&edge, visible.data(), static_cast<INT>(visible.size()));
       graphics.DrawLines(&core, visible.data(), static_cast<INT>(visible.size()));
 
@@ -1535,8 +1617,27 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
                         Gdiplus::RectF(x + drift + 10.0f, y, w - 20.0f, 30.0f), &left, &ink);
   }
 
-  // Full-frame white/blue kicks, only ever painted inside our own overlay.
-  if (intensity > 0.6f && Noise01(frame_ * 613U) > 0.955f) {
+  // Rolling signal loss: whole bands of the display drop to black and shear
+  // sideways. This is what the finale spends its budget on now that the window
+  // swarm is being taken apart instead of grown.
+  if (intensity > 0.62f) {
+    const float severity = (intensity - 0.62f) / 0.38f;
+    const float rollHeight = canvasHeight * (0.06f + severity * 0.16f);
+    const float roll = std::fmod(static_cast<float>(frame_) * (5.0f + severity * 16.0f),
+                                 canvasHeight + rollHeight) -
+                       rollHeight;
+    SolidBrush blackout(Color(static_cast<BYTE>(70 + 130 * severity), 0, 0, 0));
+    graphics.FillRectangle(&blackout, 0.0f, roll, canvasWidth, rollHeight);
+    Pen seam(Color(static_cast<BYTE>(120 + 100 * severity), 255, 45, 170), 2.0f + severity * 3.0f);
+    graphics.DrawLine(&seam, 0.0f, roll, canvasWidth, roll + NoiseSigned(frame_ * 53U) * 14.0f);
+    graphics.DrawLine(&seam, 0.0f, roll + rollHeight, canvasWidth,
+                      roll + rollHeight + NoiseSigned(frame_ * 59U) * 14.0f);
+  }
+
+  // Full-frame white/blue kicks, only ever painted inside our own overlay. They
+  // get noticeably more frequent as the display gives up.
+  const float flashOdds = 0.955f - std::max(0.0f, intensity - 0.6f) * 0.14f;
+  if (intensity > 0.6f && Noise01(frame_ * 613U) > flashOdds) {
     SolidBrush flash(Noise01(frame_ * 977U) > 0.5f ? Color(46, 255, 255, 255) : Color(56, 18, 92, 171));
     graphics.FillRectangle(&flash, 0, 0, width_, height_);
   }
@@ -1582,17 +1683,45 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     }
   }
 
+  float hudRow = 112.0f;
   if (state.popupCount > 0) {
     std::wostringstream counter;
     counter << L"WINDOWS OPEN: " << state.popupCount;
     Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
     SolidBrush ink(Color(200, 255, 45, 170));
     DrawCenteredText(graphics, counter.str(), font,
-                     {static_cast<float>(width_ - 286), 112.0f, static_cast<float>(width_ - 18), 136.0f},
+                     {static_cast<float>(width_ - 286), hudRow,
+                      static_cast<float>(width_ - 18), hudRow + 24.0f},
+                     ink);
+    hudRow += 24.0f;
+  }
+
+  if (state.propsClosed > 0) {
+    std::wostringstream counter;
+    counter << L"PHOTOS TORN: " << state.propsClosed;
+    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
+    SolidBrush ink(Color(200, 255, 36, 56));
+    DrawCenteredText(graphics, counter.str(), font,
+                     {static_cast<float>(width_ - 286), hudRow,
+                      static_cast<float>(width_ - 18), hudRow + 24.0f},
+                     ink);
+    hudRow += 24.0f;
+  }
+
+  // During the storm the pointer alternates between seized and released. Saying
+  // which of the two is happening is what turns it into a game instead of a
+  // stretch of dead input.
+  if (state.cursorStormPhase && !state.cursorLatched) {
+    const bool seized = state.cursorChaos > 0.02f;
+    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
+    SolidBrush ink(seized ? Color(220, 255, 36, 56) : Color(210, 57, 255, 20));
+    DrawCenteredText(graphics, seized ? L"CURSOR: SEIZED" : L"CURSOR: YOURS", font,
+                     {static_cast<float>(width_ - 286), hudRow,
+                      static_cast<float>(width_ - 18), hudRow + 24.0f},
                      ink);
   }
 
-  if (state.logicalTime >= 90.0 && state.logicalTime < 135.0) {
+  if (state.logicalTime >= phase::kSubtitles && state.logicalTime < phase::kDuplicate) {
     constexpr std::array<const wchar_t*, 3> subtitles = {
         L"Tralala la la la...", L"Tutti frutti cappuccina", L"Bombardino crocodilo"};
     const auto index = static_cast<std::size_t>(state.logicalTime / 4.0) % subtitles.size();
@@ -1617,7 +1746,9 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
   }
 
   if (state.countdown) {
-    const int remaining = std::clamp(30 - static_cast<int>(state.logicalTime - 270.0), 0, 30);
+    const int span = static_cast<int>(phase::kEnd - phase::kCountdown);
+    const int remaining =
+        std::clamp(static_cast<int>(std::ceil(phase::kEnd - state.logicalTime)), 0, span);
     wchar_t countdown[16]{};
     swprintf(countdown, std::size(countdown), L"00:%02d", remaining);
     Font countdownFont(MonoFamily(), 72.0f, FontStyleBold, UnitPixel);
@@ -1666,7 +1797,7 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
 }
 
 void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& state) const {
-  const double age = state.logicalTime - 300.0;
+  const double age = state.logicalTime - phase::kEnd;
   SolidBrush background(Color(255, 0, 0, 0));
   graphics.FillRectangle(&background, 0, 0, width_, height_);
 

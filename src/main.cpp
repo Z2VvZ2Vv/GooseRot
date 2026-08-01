@@ -15,17 +15,25 @@ namespace {
 
 bool AskForConsent(const gooserot::AppConfig& config) {
   if (config.preview) return true;
-  std::wstring message = L"GooseRot will take over the desktop visually for five minutes.\r\n\r\n";
+  std::wstring message = L"GooseRot will take over the desktop visually for six minutes.\r\n\r\n";
   if (config.desktopEffects) {
-    message += L"With your consent, the geese will move and violently shake the pointer, and may "
-               L"temporarily move selected windows before restoring their positions.\r\n";
+    message += L"With your consent, the geese will drag the pointer in waves — each wave hands it "
+               L"back before the next one — and may temporarily move selected windows before "
+               L"restoring their positions.\r\n"
+               L"A small GooseRot window is parked over the Start button and swallows clicks that "
+               L"land on it, so the Start menu cannot cover the scene. It is destroyed during "
+               L"cleanup and the button then works normally again. Ctrl+Shift+Esc, Alt+Tab and the "
+               L"Esc exit below are never affected.\r\n";
   }
   message += L"GooseRot may create up to 67 fake Task Manager, File Explorer, Notepad and system "
              L"windows. They may multiply and refuse normal close requests. Every one belongs to "
              L"GooseRot and is destroyed during cleanup.\r\n"
+             L"Its own Notepad refuses to minimise into the taskbar for as long as it is typing.\r\n"
              L"It may also launch up to 6 genuine built-in Windows utilities (Notepad, Paint, "
              L"Task Manager or a separate File Explorer), move only those new windows, and ask "
              L"them to close during cleanup. Random typing stays inside GooseRot's own Notepad.\r\n"
+             L"Geese carry brainrot photos onto the desktop. Each one can be closed with its [x], "
+             L"which costs aura and makes the flock fetch two more.\r\n"
              L"The Start or Search surface is dismissed if it covers the experience.\r\n"
              L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
              L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.\r\n\r\n"

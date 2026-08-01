@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cwchar>
+#include <limits>
 #include <sstream>
 
 #include "resource.h"
@@ -13,8 +14,21 @@
 namespace gooserot {
 namespace {
 
-constexpr double kTimelineEnd = 300.0;
+constexpr double kTimelineEnd = phase::kEnd;
 constexpr double kShutdownVisualDuration = 7.5;
+// The scenario's own ceiling: sixty-seven geese, never one more.
+constexpr std::size_t kMaximumGeese = 67U;
+
+// Photos the scene keeps on the desktop at once.
+std::size_t PropLimit(RunMode mode) { return mode == RunMode::Lab ? 48U : 36U; }
+
+// How long a goose is given to walk a leg of a delivery before the photo is
+// released on its own. Derived from the actual distance so a long walk across a
+// wide desktop is never cut short, and bounded so nothing can hang.
+double DeliveryDeadline(Vec2 from, Vec2 to) {
+  const double travel = static_cast<double>(Distance(from, to)) / 190.0;
+  return std::clamp(travel + 3.5, 5.0, 18.0);
+}
 
 double CounterSeconds(const LARGE_INTEGER& value, const LARGE_INTEGER& frequency) {
   return static_cast<double>(value.QuadPart) / static_cast<double>(frequency.QuadPart);
@@ -46,6 +60,7 @@ bool GooseRotApp::Initialize(std::wstring& error) {
                                                desktopEffects ? &watchdog_ : nullptr);
 
   const RectF bounds = overlay_.CanvasBounds();
+  patrolFocus_ = bounds.Center();
   if (logicalTime_ < 5.0) {
     std::uniform_int_distribution<int> side(0, 1);
     std::uniform_real_distribution<float> entranceY(bounds.top + bounds.Height() * 0.28f,
@@ -61,6 +76,7 @@ bool GooseRotApp::Initialize(std::wstring& error) {
     geese_.emplace_back(bounds.Center());
   }
   auraReferenceCursor_ = desktop_->CursorPosition();
+  leftMouseWasDown_ = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
   ApplyBaseline(logicalTime_);
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
   overlay_.Render(BuildRenderState());
@@ -145,49 +161,72 @@ int GooseRotApp::Run() {
 }
 
 void GooseRotApp::ApplyBaseline(double logicalTime) {
-  if (logicalTime >= 15.0) aura_ = -10000;
-  if (logicalTime > 120.0) aura_ += 10000;
-  if (logicalTime >= 203.0) aura_ -= 999998;
+  if (logicalTime >= phase::kAuraPrompt) aura_ = -10000;
+  if (logicalTime > phase::kClipboard) aura_ += 10000;
+  if (logicalTime >= phase::kSigma + 8.0) aura_ -= 999998;
   EnsureGooseCount();
 
   if (logicalTime > 0.0 && logicalTime < 7.0) {
     SetBubble(L"Mewing in progress... DO NOT DISTURB.", 7.0 - logicalTime);
   }
-  if (logicalTime >= 40.0 && logicalTime < 298.0) {
+  // Resuming inside the walk-out window has to leave the stage empty, or the
+  // beat where the desktop is alone with its own Notepad never happens.
+  if (logicalTime >= phase::kGooseExit && logicalTime < phase::kGooseReturn) {
+    SendFlockOffstage();
+    // Resuming here means the walk-out already happened: start them outside.
+    for (GooseEntity& goose : geese_) {
+      goose.SetOffstage(true);
+      goose.SetPosition(goose.Target());
+    }
+  }
+  if (logicalTime >= phase::kNotepad && logicalTime < phase::kCompanionCutoff) {
     notepad_.Show(instance_);
     lastTypedAt_ = logicalTime;
   }
-  if (logicalTime >= 15.0 && logicalTime < 23.0) {
+  if (logicalTime >= phase::kAuraPrompt && logicalTime < phase::kAuraPrompt + 8.0) {
     auraPromptPending_ = true;
-    auraPromptArmedAt_ = std::min(logicalTime, 15.0);
+    auraPromptArmedAt_ = std::min(logicalTime, phase::kAuraPrompt);
     auraReferenceCursor_ = desktop_->CursorPosition();
   }
-  if (logicalTime >= 195.0 && logicalTime < 203.0) {
+  if (logicalTime >= phase::kSigma && logicalTime < phase::kSigma + 8.0) {
     sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
                       L"SIGMA CHAD", L"NPC", true, logicalTime);
   }
-  if (logicalTime >= 135.0) {
-    const int baselinePopups = std::clamp(
-        1 + static_cast<int>((logicalTime - 135.0) / 2.5), 1, PopupSwarm::kMaximumPopups);
+  const int baselinePopups = DesiredPopupCount(logicalTime, PopupSwarm::kMaximumPopups);
+  popups_.SetCeiling(baselinePopups);
+  if (baselinePopups > 0) {
     popups_.Spawn(instance_, random_, baselinePopups);
     nextPopupAt_ = logicalTime + 0.8;
   }
-  if (logicalTime >= 45.0) {
-    const std::size_t baselineSprites = std::min<std::size_t>(
-        config_.mode == RunMode::Lab ? 48U : 36U,
-        1U + static_cast<std::size_t>((logicalTime - 45.0) / 7.0));
-    while (sprites_.size() < baselineSprites) SpawnSprite();
+  if (logicalTime >= phase::kGooseReturn) {
+    const std::size_t baselineProps = std::min<std::size_t>(
+        PropLimit(config_.mode),
+        1U + static_cast<std::size_t>((logicalTime - phase::kGooseReturn) / 7.0));
+    // Nothing was carried in before the resume point: these are already pinned,
+    // and the goose that would have fetched them never left.
+    while (sprites_.size() < baselineProps) {
+      if (!SpawnSprite()) break;
+      VisualSprite& placed = sprites_.back();
+      placed.stage = PropStage::Placed;
+      placed.stageChangedAt = logicalTime;
+      placed.center = placed.targetCenter;
+      placed.everPlaced = true;
+      if (placed.carrierIndex < geese_.size()) geese_[placed.carrierIndex].SetOffstage(false);
+    }
   }
-  if (config_.desktopEffects && !config_.preview && logicalTime >= 75.0 && logicalTime < 298.0) {
-    const int baselineApps = std::clamp(1 + static_cast<int>((logicalTime - 75.0) / 42.0),
-                                        1, OwnedWindowsApps::kMaximumApps);
+  if (config_.desktopEffects && !config_.preview && logicalTime >= phase::kOwnedApps &&
+      logicalTime < phase::kCompanionCutoff) {
+    const int baselineApps = std::clamp(
+        1 + static_cast<int>((logicalTime - phase::kOwnedApps) / 45.0), 1,
+        OwnedWindowsApps::kMaximumApps);
     while (ownedWindowsApps_.Count() < baselineApps &&
            ownedWindowsApps_.LaunchRandom(random_, logicalTime)) {
     }
   }
-  nextWindowAction_ = std::max(60.0, logicalTime + 2.0);
-  nextCursorAction_ = std::max(70.0, logicalTime + 4.0);
-  nextSpriteAt_ = std::max(45.0, logicalTime + 1.0);
+  nextWindowAction_ = std::max(phase::kCursorAndWindows, logicalTime + 2.0);
+  nextCursorAction_ = std::max(phase::kCursorAndWindows + 10.0, logicalTime + 4.0);
+  nextSpriteAt_ = std::max(phase::kGooseReturn, logicalTime + 1.0);
+  nextOwnedAppAt_ = std::max(phase::kOwnedApps, logicalTime + 6.0);
 }
 
 void GooseRotApp::Tick() {
@@ -224,11 +263,13 @@ void GooseRotApp::Tick() {
 
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
   if (!shutdownStarted_) {
+    PollMouseButton();
     EnsureGooseCount();
     UpdatePrompts();
     UpdateNotepad();
     UpdatePopups();
     UpdateOwnedWindowsApps();
+    UpdateTaskbarGuard();
     UpdateToasts();
     double movementRemaining = logicalDelta;
     while (movementRemaining > 0.0) {
@@ -236,6 +277,9 @@ void GooseRotApp::Tick() {
       UpdateGooseTargets(step);
       movementRemaining -= step;
     }
+    // A click on a photo's [x] is answered first; whatever is left of the press
+    // then feeds the cursor hunt.
+    UpdatePropInteractions();
     UpdateDesktopActions();
     UpdateCursorGrab(logicalDelta);
     UpdateCursorChaos();
@@ -280,14 +324,23 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       SetBubble(L"I can feel your aura moving...", 5.0);
       PushToast(L"Windows Security", L"Threat detected: negative rizz.\nNo action is available. Or useful.");
       break;
+    case TimelineEventId::GooseExit:
+      SetBubble(L"FINE. THIS DESKTOP HAS NO AURA.\nI AM GETTING REINFORCEMENTS.", 6.0);
+      geese_.front().Honk(0.8f);
+      SendFlockOffstage();
+      PushToast(L"GooseRot", L"The goose has left the desktop.\nThat is not the good news it sounds like.");
+      break;
     case TimelineEventId::NotepadStart:
       notepadText_.clear();
       typedWordCount_ = 0;
       lastTypedAt_ = logicalTime_;
       notepad_.Show(instance_);
-      geese_.front().SetTarget({overlay_.CanvasBounds().right * 0.58f,
-                                overlay_.CanvasBounds().bottom * 0.56f}, SpeedTier::Run, true);
-      SetBubble(L"Jawline protocol activated.", 5.0);
+      // The window opens with nobody on screen: that is the whole joke here.
+      PushToast(L"Notepad", L"Untitled - Grindset opened itself.\nNo goose was present. Allegedly.");
+      KickGlitch(0.18f);
+      break;
+    case TimelineEventId::GooseReturn:
+      BringFlockBack();
       break;
     case TimelineEventId::CursorAndWindows:
       if (notepad_.IsOpen()) {
@@ -298,6 +351,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       nextWindowAction_ = logicalTime_ + 2.0;
       nextCursorAction_ = logicalTime_ + 8.0;
       leftMouseWasDown_ = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+      leftMousePressed_ = false;
       break;
     case TimelineEventId::MemeSubtitles:
       SpawnSprite();
@@ -320,15 +374,18 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       break;
     }
     case TimelineEventId::Graffiti:
-      SetBubble(L"67 PIXELS. PERFECTLY CALCULATED.", 6.0);
+      SetBubble(L"MOVE. I AM PAINTING HERE.", 6.0);
       PushToast(L"Windows Update", L"Installing 67 aura updates...\nDo not restart. This is extremely fake.");
+      // The wall has to be bare before the tag goes up, so anything hanging on
+      // it is picked up and carried out of the way first.
+      ClearPropsFromTagZone();
       break;
     case TimelineEventId::SigmaPrompt:
       sigmaPrompt_.Show(instance_, L"The Sigma Trap", L"Are you a Sigma Chad or a NPC?",
                         L"SIGMA CHAD", L"NPC", true, logicalTime_);
       break;
     case TimelineEventId::ScreenShake:
-      SetBubble(L"Visual instability detected.", 4.0);
+      SetBubble(L"CURSOR SEIZURES INCOMING.\nYou get it back between waves.", 5.0);
       KickGlitch(0.5f);
       PushToast(L"File Explorer", L"explorer.exe is not responding.\n(It is fine. The geese are lying.)");
       break;
@@ -340,6 +397,8 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       for (GooseEntity& goose : geese_) goose.Honk(1.4f);
       SetBubble(L"CRITICAL ERROR:\nMAXIMUM BRAINROT REACHED.", 8.0);
       KickGlitch(0.7f);
+      // From here the windows stop being the effect and the display takes over.
+      PushToast(L"System", L"Window subsystem surrendered.\nRendering the rest as damage.");
       break;
     case TimelineEventId::Countdown:
       SetBubble(L"THIRTY SECONDS UNTIL TOTAL COLLAPSE.", 5.0);
@@ -380,6 +439,67 @@ bool GooseRotApp::UpdateEmergencyExit(double realDeltaSeconds) {
     return true;
   }
   return false;
+}
+
+void GooseRotApp::PollMouseButton() {
+  const bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+  leftMousePressed_ = down && !leftMouseWasDown_;
+  leftMouseWasDown_ = down;
+}
+
+// A point just outside the canvas, past whichever edge is actually nearest, so
+// leaving looks like walking out rather than fading away — and so a wide desktop
+// does not turn every errand into a hike across the whole screen.
+Vec2 GooseRotApp::OffstagePointNear(Vec2 origin) const {
+  const RectF bounds = overlay_.CanvasBounds();
+  constexpr float kClearance = 150.0f;
+  const float toLeft = origin.x - bounds.left;
+  const float toRight = bounds.right - origin.x;
+  const float toTop = origin.y - bounds.top;
+  const float toBottom = bounds.bottom - origin.y;
+  const float nearest = std::min({toLeft, toRight, toTop, toBottom});
+  if (nearest == toLeft) return {bounds.left - kClearance, origin.y};
+  if (nearest == toRight) return {bounds.right + kClearance, origin.y};
+  if (nearest == toTop) return {origin.x, bounds.top - kClearance};
+  return {origin.x, bounds.bottom + kClearance};
+}
+
+// The staged walk-out, as opposed to a prop errand: the flock always leaves
+// sideways, matching the way it entered, and far enough out to be gone.
+void GooseRotApp::SendFlockOffstage() {
+  const RectF bounds = overlay_.CanvasBounds();
+  flockOffstage_ = true;
+  for (GooseEntity& goose : geese_) {
+    const bool exitLeft = goose.Position().x < bounds.Center().x;
+    const float x = exitLeft ? bounds.left - 220.0f : bounds.right + 220.0f;
+    goose.SetOffstage(true);
+    goose.SetTarget({x, goose.Position().y}, SpeedTier::Run, false);
+  }
+}
+
+// The comeback: the flock re-enters from the far side, and the lead goose is
+// carrying the first brainrot photo of the run in its beak.
+void GooseRotApp::BringFlockBack() {
+  const RectF bounds = overlay_.CanvasBounds();
+  flockOffstage_ = false;
+  for (std::size_t index = 0; index < geese_.size(); ++index) {
+    GooseEntity& goose = geese_[index];
+    // Re-enter from the opposite side of wherever the walk-out ended. The
+    // reposition happens entirely off screen, so nothing visibly teleports.
+    const float rank = static_cast<float>(index);
+    const bool fromLeft = goose.Position().x > bounds.Center().x;
+    const float entranceX = fromLeft ? bounds.left - 90.0f - rank * 70.0f
+                                     : bounds.right + 90.0f + rank * 70.0f;
+    goose.SetPosition({entranceX, bounds.top + bounds.Height() * (0.42f + 0.1f * rank)});
+    goose.SetTarget({bounds.left + bounds.Width() * (fromLeft ? 0.34f : 0.66f),
+                     bounds.top + bounds.Height() * 0.56f},
+                    SpeedTier::Run, true);
+    goose.Honk(0.7f);
+  }
+  SetBubble(L"I WENT TO GET SUPPLIES.\nLOOK WHAT I FOUND.", 6.0);
+  SpawnSprite(0U);
+  nextSpriteAt_ = logicalTime_ + 6.0;
+  KickGlitch(0.2f);
 }
 
 void GooseRotApp::UpdatePrompts() {
@@ -444,29 +564,57 @@ void GooseRotApp::UpdateToasts() {
 }
 
 // The display degrades along the timeline; events add a decaying spike on top.
+// The finale leans on this instead of on more windows: past the monologue the
+// baseline climbs hard while the swarm is being taken apart.
 void GooseRotApp::UpdateGlitch(double logicalDelta) {
   float baseline = 0.0f;
-  if (logicalTime_ >= 90.0) baseline = 0.06f;
-  if (logicalTime_ >= 135.0) baseline = 0.16f;
-  if (logicalTime_ >= 165.0) baseline = 0.24f;
-  if (logicalTime_ >= 210.0) baseline = 0.40f;
-  if (logicalTime_ >= 240.0) baseline = 0.58f;
-  if (logicalTime_ >= 270.0) baseline = 0.74f;
-  if (logicalTime_ >= 292.0) baseline = 0.92f;
+  if (logicalTime_ >= phase::kNotepad) baseline = 0.04f;
+  if (logicalTime_ >= phase::kSubtitles) baseline = 0.08f;
+  if (logicalTime_ >= phase::kDuplicate) baseline = 0.18f;
+  if (logicalTime_ >= phase::kGraffiti) baseline = 0.26f;
+  if (logicalTime_ >= phase::kScreenShake) baseline = 0.42f;
+  if (logicalTime_ >= phase::kColorFilter) baseline = 0.58f;
+  if (logicalTime_ >= phase::kFinalMonologue) {
+    // From the monologue to the end the damage climbs continuously rather than
+    // in steps, so the last minute reads as one long collapse.
+    const double progress = std::clamp(
+        (logicalTime_ - phase::kFinalMonologue) / (phase::kEnd - phase::kFinalMonologue), 0.0, 1.0);
+    baseline = 0.70f + 0.30f * static_cast<float>(progress);
+  }
   glitchBoost_ = std::max(0.0f, glitchBoost_ - static_cast<float>(logicalDelta) * 0.55f);
   glitch_ = std::min(1.0f, baseline + glitchBoost_);
 }
 
 float GooseRotApp::GraffitiProgress() const {
-  constexpr double kTagStart = 165.0;
-  constexpr double kTagDuration = 15.0;
-  if (logicalTime_ < kTagStart) return 0.0f;
-  return static_cast<float>(std::clamp((logicalTime_ - kTagStart) / kTagDuration, 0.0, 1.0));
+  if (logicalTime_ < phase::kGraffiti) return 0.0f;
+  return static_cast<float>(
+      std::clamp((logicalTime_ - phase::kGraffiti) / phase::kGraffitiDuration, 0.0, 1.0));
 }
 
 void GooseRotApp::UpdatePopups() {
-  if (nextPopupAt_ < 1e8 && logicalTime_ >= nextPopupAt_ && !popups_.AtCap()) {
-    const int burst = logicalTime_ >= 270.0 ? 4 : logicalTime_ >= 210.0 ? 3 : logicalTime_ >= 165.0 ? 2 : 1;
+  // Until the monologue the swarm grows freely up to its protective maximum, so
+  // "close one, get two" keeps working. After it, the budget shrinks and the
+  // swarm is consumed instead of refilled.
+  const bool consuming = logicalTime_ >= phase::kFinalMonologue;
+  const int budget = DesiredPopupCount(logicalTime_, PopupSwarm::kMaximumPopups);
+  popups_.SetCeiling(consuming ? budget : PopupSwarm::kMaximumPopups);
+
+  if (consuming) {
+    // The finale eats the swarm a few windows at a time, each one a small tear
+    // in the display: fewer dialogs, more damage.
+    if (popups_.Count() > budget && logicalTime_ >= nextPopupDissolveAt_) {
+      const int eaten = popups_.Dissolve(std::min(3, popups_.Count() - budget));
+      if (eaten > 0) {
+        KickGlitch(0.10f * static_cast<float>(eaten));
+        nextPopupDissolveAt_ = logicalTime_ + 0.5;
+        if (popups_.Count() == 0) SetBubble(L"NO MORE WINDOWS.\nONLY DAMAGE.", 5.0);
+      }
+    }
+  } else if (nextPopupAt_ < 1e8 && logicalTime_ >= nextPopupAt_ && !popups_.AtCap()) {
+    const int burst = logicalTime_ >= phase::kColorFilter  ? 4
+                      : logicalTime_ >= phase::kScreenShake ? 3
+                      : logicalTime_ >= phase::kGraffiti     ? 2
+                                                             : 1;
     popups_.Spawn(instance_, random_, burst);
     std::uniform_real_distribution<double> delay(config_.mode == RunMode::Lab ? 0.8 : 1.4,
                                                  config_.mode == RunMode::Lab ? 1.8 : 3.0);
@@ -482,7 +630,7 @@ void GooseRotApp::UpdatePopups() {
         L"I DUPLICATED YOUR DECISION.",
         L"EVERY CLICK FUNDS ANOTHER GOOSE."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
-    SetBubble(popups_.AtCap() ? L"67 WINDOWS. CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
+    SetBubble(popups_.AtCap() ? L"CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
     if (!geese_.empty()) geese_.front().Honk(0.45f);
     KickGlitch(0.18f);
   }
@@ -503,8 +651,19 @@ void GooseRotApp::UpdateNotepad() {
     if (!geese_.empty()) geese_.front().Honk(0.4f);
     KickGlitch(0.22f);
   }
+  if (notepad_.ConsumeMinimiseRefusal()) {
+    constexpr std::array<const wchar_t*, 4> lines = {
+        L"IT DOES NOT GO IN THE TASKBAR.",
+        L"MINIMISE IS NOT A FEATURE HERE.",
+        L"YOU WILL READ WHAT I TYPED.",
+        L"THE TASKBAR IS ALSO MINE NOW."};
+    std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
+    SetBubble(lines[pick(random_)], 4.0);
+    if (!geese_.empty()) geese_.front().Honk(0.35f);
+    KickGlitch(0.16f);
+  }
   notepad_.Tick(logicalTime_);
-  if (logicalTime_ < 40.0 || logicalTime_ >= 298.0) return;
+  if (logicalTime_ < phase::kNotepad || logicalTime_ >= phase::kCompanionCutoff) return;
   if (!notepad_.IsOpen()) {
     notepad_.Show(instance_);
     lastTypedAt_ = logicalTime_;
@@ -518,7 +677,9 @@ void GooseRotApp::UpdateNotepad() {
       L"q", L"x", L"AAAA", L"hjkl", L"goose.exe", L"NO_ESCAPE", L"67-67-67",
       L"typing...", L"wrong-window", L"HONK_INPUT"};
   std::uniform_int_distribution<std::size_t> word(0, words.size() - 1);
-  const double interval = logicalTime_ >= 210.0 ? 0.20 : logicalTime_ >= 60.0 ? 0.72 : 0.18;
+  const double interval = logicalTime_ >= phase::kScreenShake        ? 0.20
+                          : logicalTime_ >= phase::kCursorAndWindows ? 0.72
+                                                                     : 0.18;
   int additions = 0;
   while (lastTypedAt_ + interval <= logicalTime_ && additions < 80) {
     lastTypedAt_ += interval;
@@ -538,35 +699,61 @@ void GooseRotApp::UpdateNotepad() {
 
 void GooseRotApp::UpdateOwnedWindowsApps() {
   ownedWindowsApps_.Tick(random_, logicalTime_);
-  if (!config_.desktopEffects || config_.preview || logicalTime_ < 75.0 ||
-      logicalTime_ >= 298.0 || logicalTime_ < nextOwnedAppAt_ ||
+  // Real utilities belong to the middle of the run. The finale is glitch, not
+  // more windows, so nothing new is launched once the monologue lands.
+  if (!config_.desktopEffects || config_.preview || logicalTime_ < phase::kOwnedApps ||
+      logicalTime_ >= phase::kFinalMonologue || logicalTime_ < nextOwnedAppAt_ ||
       ownedWindowsApps_.Count() >= OwnedWindowsApps::kMaximumApps) {
     return;
   }
   if (ownedWindowsApps_.LaunchRandom(random_, logicalTime_)) {
     SetBubble(L"WINDOWS BROUGHT REINFORCEMENTS.", 3.5);
   }
-  std::uniform_real_distribution<double> delay(24.0, 39.0);
+  std::uniform_real_distribution<double> delay(26.0, 42.0);
   nextOwnedAppAt_ = logicalTime_ + delay(random_);
 }
 
+// The Start button is covered from the first gag onwards: a Start menu opening
+// mid-scene hides everything the run is building.
+void GooseRotApp::UpdateTaskbarGuard() {
+  if (!config_.desktopEffects || config_.preview) return;
+  if (logicalTime_ < phase::kAuraPrompt || logicalTime_ >= phase::kCompanionCutoff) return;
+  if (!taskbarGuard_.IsOpen() && !taskbarGuard_.Show(instance_)) return;
+  taskbarGuard_.Tick();
+
+  if (taskbarGuard_.ConsumePressAttempt() && logicalTime_ - lastTaskbarGuardPokeAt_ > 2.5) {
+    lastTaskbarGuardPokeAt_ = logicalTime_;
+    constexpr std::array<const wchar_t*, 4> lines = {
+        L"START MENU: REVOKED.\nThere is a goose standing on it.",
+        L"THAT BUTTON BELONGS TO ME NOW.",
+        L"NO MENU. ONLY 67.",
+        L"I AM STANDING ON THE START BUTTON.\nIt was load-bearing."};
+    std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
+    SetBubble(lines[pick(random_)], 4.5);
+    AddAura(-67);
+    if (!geese_.empty()) geese_.front().Honk(0.4f);
+    KickGlitch(0.2f);
+  }
+}
+
 void GooseRotApp::UpdateDesktopActions() {
-  // Window moves stay inside the 1:00-2:15 phase; the cursor hunt keeps running
+  // Window moves stay inside the hijack phase; the cursor hunt keeps running
   // until the closing choreography takes the flock over.
-  const bool windowPhase = logicalTime_ >= 60.0 && logicalTime_ < 135.0;
-  const bool cursorPhase = logicalTime_ >= 60.0 && logicalTime_ < 255.0;
-  if (shutdownStarted_ || !cursorPhase) {
+  const bool windowPhase = logicalTime_ >= phase::kCursorAndWindows &&
+                           logicalTime_ < phase::kWindowHijackEnd;
+  const bool cursorPhase = logicalTime_ >= phase::kCursorAndWindows &&
+                           logicalTime_ < phase::kCursorHuntEnd;
+  if (shutdownStarted_ || !cursorPhase || flockOffstage_) {
     if (cursorLatched_) EndCursorGrab(false);
     pendingAction_ = {};
     return;
   }
   if (cursorLatched_) return;
 
-  const bool leftDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-  if (leftDown && !leftMouseWasDown_ && pendingAction_.kind == PendingActionKind::None) {
+  if (leftMousePressed_ && pendingAction_.kind == PendingActionKind::None) {
+    leftMousePressed_ = false;
     ScheduleCursorAction(true);
   }
-  leftMouseWasDown_ = leftDown;
 
   if (windowPhase && pendingAction_.kind == PendingActionKind::None &&
       logicalTime_ >= nextWindowAction_) {
@@ -687,26 +874,35 @@ void GooseRotApp::UpdateCursorGrab(double logicalDelta) {
   if (logicalTime_ >= grabDeadline_) EndCursorGrab(grabRemainingPixels_ < 34);
 }
 
+// The storm comes in waves. Inside a wave the pointer is dragged hard; between
+// waves the flock lets go completely and the pointer is the user's again, so
+// there is a usable middle ground instead of one long unusable stretch.
 void GooseRotApp::UpdateCursorChaos() {
-  if (!desktop_ || shutdownStarted_ || logicalTime_ < 210.0 || cursorLatched_) {
+  if (!desktop_ || shutdownStarted_ || cursorLatched_ || flockOffstage_) {
     cursorChaos_ = 0.0f;
     return;
   }
 
-  cursorChaos_ = static_cast<float>(std::clamp((logicalTime_ - 210.0) / 75.0, 0.0, 1.0));
+  cursorChaos_ = CursorStormEnvelope(logicalTime_);
+  if (cursorChaos_ <= 0.02f) {
+    // Released: not a single pixel is taken from the pointer this frame.
+    cursorChaos_ = 0.0f;
+    return;
+  }
+
   const RectF bounds = overlay_.CanvasBounds();
   const Vec2 center = bounds.Center();
-  const float phase = static_cast<float>(logicalTime_);
+  const float beat = static_cast<float>(logicalTime_);
   const Vec2 attractor{
-      center.x + std::sin(phase * (2.1f + cursorChaos_ * 3.7f)) * bounds.Width() * 0.38f,
-      center.y + std::cos(phase * (2.7f + cursorChaos_ * 4.9f)) * bounds.Height() * 0.34f};
+      center.x + std::sin(beat * (2.1f + cursorChaos_ * 3.7f)) * bounds.Width() * 0.38f,
+      center.y + std::cos(beat * (2.7f + cursorChaos_ * 4.9f)) * bounds.Height() * 0.34f};
   const Vec2 cursor = overlay_.ScreenToCanvas(desktop_->CursorPosition());
-  const Vec2 pull = (attractor - cursor) * (0.08f + cursorChaos_ * 0.58f);
-  const float jitterAmplitude = 3.0f + cursorChaos_ * 38.0f;
+  const Vec2 pull = (attractor - cursor) * (cursorChaos_ * 0.46f);
+  const float jitterAmplitude = cursorChaos_ * 26.0f;
   const Vec2 jitter{
-      std::sin(phase * 41.0f) * jitterAmplitude + std::cos(phase * 67.0f) * jitterAmplitude * 0.55f,
-      std::cos(phase * 47.0f) * jitterAmplitude + std::sin(phase * 71.0f) * jitterAmplitude * 0.55f};
-  const float maximumStep = 8.0f + cursorChaos_ * 62.0f;
+      std::sin(beat * 41.0f) * jitterAmplitude + std::cos(beat * 67.0f) * jitterAmplitude * 0.55f,
+      std::cos(beat * 47.0f) * jitterAmplitude + std::sin(beat * 71.0f) * jitterAmplitude * 0.55f};
+  const float maximumStep = 4.0f + cursorChaos_ * 44.0f;
   const Vec2 step = ClampMagnitude(pull + jitter, maximumStep);
   desktop_->DragCursorBy(static_cast<int>(std::round(step.x)),
                          static_cast<int>(std::round(step.y)));
@@ -756,19 +952,69 @@ void GooseRotApp::ExecutePendingAction() {
   pendingAction_ = {};
 }
 
+bool GooseRotApp::IsGooseBusy(std::size_t index) const {
+  if (index >= geese_.size()) return true;
+  if (geese_[index].IsOffstage()) return true;
+  if (index == 0 && (cursorLatched_ || pendingAction_.kind != PendingActionKind::None)) return true;
+  for (const VisualSprite& sprite : sprites_) {
+    if (sprite.HasCarrier() && sprite.carrierIndex == index) return true;
+  }
+  return false;
+}
+
+// Idle geese circle whatever the scene currently cares about — the pointer —
+// instead of teleporting their target to a random pixel. The walk then reads as
+// a patrol closing in rather than as noise.
+Vec2 GooseRotApp::NextPatrolPoint(std::size_t index) {
+  const RectF bounds = overlay_.CanvasBounds();
+  const float radius = std::min(bounds.Width(), bounds.Height()) * 0.30f;
+  ++patrolStep_;
+  const float angle = static_cast<float>(patrolStep_) * 0.9f + static_cast<float>(index) * 2.1f;
+  const Vec2 point{patrolFocus_.x + std::cos(angle) * radius,
+                   patrolFocus_.y + std::sin(angle) * radius * 0.62f};
+  const float horizontal = std::min(70.0f, bounds.Width() * 0.5f);
+  const float vertical = std::min(70.0f, bounds.Height() * 0.5f);
+  return {std::clamp(point.x, bounds.left + horizontal, bounds.right - horizontal),
+          std::clamp(point.y, bounds.top + vertical, bounds.bottom - vertical)};
+}
+
 void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
   if (geese_.empty()) return;
   const RectF bounds = overlay_.CanvasBounds();
   const Vec2 center = bounds.Center();
   const POINT cursorScreen = desktop_->CursorPosition();
   const Vec2 cursor = overlay_.ScreenToCanvas(cursorScreen);
+  // The patrol focus trails the pointer instead of snapping to it, so the flock
+  // drifts toward the user rather than tracking every twitch.
+  patrolFocus_ = Lerp(patrolFocus_, cursor, std::min(1.0f, deltaSeconds * 0.55f));
 
   // While the lead goose is hauling the pointer or stalking a title bar, the
   // choreography leaves it alone.
   const bool leadBusy = cursorLatched_ || pendingAction_.kind != PendingActionKind::None;
 
-  if (!shutdownStarted_) {
-    if (logicalTime_ >= 285.0 && geese_.size() >= 3) {
+  // A goose that walked out keeps its exit target; one that has made it back on
+  // to the canvas rejoins the choreography. A goose still on its way out to
+  // collect a photo keeps the flag, or it would be clamped back inside before it
+  // ever reaches the edge and the photo would appear out of nowhere.
+  std::vector<bool> leaving(geese_.size(), false);
+  for (const VisualSprite& sprite : sprites_) {
+    if (sprite.stage == PropStage::Fetching && sprite.carrierIndex < leaving.size()) {
+      leaving[sprite.carrierIndex] = true;
+    }
+  }
+  for (std::size_t index = 0; index < geese_.size(); ++index) {
+    GooseEntity& goose = geese_[index];
+    if (!goose.IsOffstage() || leaving[index] || flockOffstage_) continue;
+    const Vec2 position = goose.Position();
+    const bool inside = position.x > bounds.left + GooseEntity::kBoundsMargin &&
+                        position.x < bounds.right - GooseEntity::kBoundsMargin &&
+                        position.y > bounds.top + GooseEntity::kBoundsMargin &&
+                        position.y < bounds.bottom - GooseEntity::kBoundsMargin;
+    if (inside) goose.SetOffstage(false);
+  }
+
+  if (!shutdownStarted_ && !flockOffstage_) {
+    if (logicalTime_ >= phase::kCircleDance && geese_.size() >= 3) {
       const float aspect = std::max(0.5f, bounds.Width() / std::max(1.0f, bounds.Height()));
       const int columns = std::max(1, static_cast<int>(std::ceil(
           std::sqrt(static_cast<float>(geese_.size()) * aspect))));
@@ -787,10 +1033,10 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
              bounds.top + (row + 0.5f) * cellHeight + wobbleY},
             SpeedTier::Charge, true);
       }
-      if (logicalTime_ >= 299.0) {
+      if (logicalTime_ >= phase::kResetAura) {
         geese_.front().SetTarget({center.x, bounds.bottom - 98.0f}, SpeedTier::Charge, true);
       }
-    } else if (logicalTime_ >= 255.0 && geese_.size() >= 3) {
+    } else if (logicalTime_ >= phase::kFinalMonologue && geese_.size() >= 3) {
       constexpr float kGoldenAngle = 2.39996323f;
       const float maximumRadius = std::min(bounds.Width(), bounds.Height()) * 0.44f;
       for (std::size_t index = 0; index < geese_.size(); ++index) {
@@ -799,8 +1045,10 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
         geese_[index].SetTarget(cursor + Vec2{std::cos(angle) * radius, std::sin(angle) * radius},
                                 SpeedTier::Charge, true);
       }
-    } else if (logicalTime_ >= 165.0 && logicalTime_ < 210.0 && geese_.size() >= 3) {
+    } else if (logicalTime_ >= phase::kGraffiti && logicalTime_ < phase::kScreenShake &&
+               geese_.size() >= 3) {
       const float progress = GraffitiProgress();
+      const RectF tag = TagZone(bounds);
       if (!leadBusy) {
         if (progress < 1.0f) {
           // Goose 1 walks the tag while it is being sprayed: the paint follows
@@ -808,36 +1056,61 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
           const Vec2 nozzle = overlay_.GraffitiPaintHead(progress);
           geese_[0].SetTarget(nozzle - Vec2{26.0f, 0.0f}, SpeedTier::Run, true);
         } else {
-          geese_[0].SetTarget(center + Vec2{-155.0f, 35.0f}, SpeedTier::Run, true);
+          geese_[0].SetTarget({tag.left - 46.0f, tag.bottom - 30.0f}, SpeedTier::Run, true);
         }
       }
+      // The rest of the flock lines up either side of the wall and bobs at it,
+      // rather than orbiting through the middle of the tag being painted.
       for (std::size_t index = 1; index < geese_.size(); ++index) {
-        const float angle = static_cast<float>(logicalTime_ * 2.0 + index * 3.14159265);
-        geese_[index].SetTarget(center + Vec2{std::cos(angle) * 175.0f, std::sin(angle) * 95.0f},
-                                SpeedTier::Run, false);
+        if (IsGooseBusy(index)) continue;
+        const float sway = std::sin(static_cast<float>(logicalTime_ * 2.4) +
+                                    static_cast<float>(index) * 1.9f) * 30.0f;
+        const bool leftSide = index % 2 == 1;
+        const float lane = 52.0f + static_cast<float>(index / 2) * 48.0f;
+        const float x = leftSide ? tag.left - lane : tag.right + lane;
+        geese_[index].SetTarget(
+            {std::clamp(x, bounds.left + 60.0f, bounds.right - 60.0f),
+             std::clamp(tag.Center().y + sway, bounds.top + 60.0f, bounds.bottom - 60.0f)},
+            SpeedTier::Run, false);
       }
-    } else if (logicalTime_ >= 135.0 && logicalTime_ < 165.0 && geese_.size() >= 3) {
-      if (!leadBusy) geese_[0].SetTarget(center + Vec2{-120.0f, 0.0f}, SpeedTier::Run);
-      geese_[1].SetTarget(center + Vec2{0.0f, -85.0f}, SpeedTier::Run);
-      geese_[2].SetTarget(center + Vec2{120.0f, 20.0f}, SpeedTier::Run);
-    } else if (!leadBusy) {
-      for (GooseEntity& goose : geese_) {
-        if (goose.DistanceToTarget() < 18.0f) goose.SetTarget(RandomCanvasPoint(65.0f), SpeedTier::Walk);
+    } else if (logicalTime_ >= phase::kDuplicate && logicalTime_ < phase::kGraffiti &&
+               geese_.size() >= 3) {
+      // A wedge behind the leader: the trio moves as one unit toward the
+      // pointer instead of standing on three fixed marks.
+      const Vec2 head = Lerp(center, patrolFocus_, 0.55f);
+      if (!leadBusy) geese_[0].SetTarget(head, SpeedTier::Run, true);
+      for (std::size_t index = 1; index < geese_.size(); ++index) {
+        if (IsGooseBusy(index)) continue;
+        const float sign = index % 2 == 1 ? -1.0f : 1.0f;
+        const float rank = static_cast<float>((index + 1) / 2);
+        geese_[index].SetTarget(head + Vec2{sign * 86.0f * rank, 62.0f * rank}, SpeedTier::Run);
+      }
+    } else {
+      for (std::size_t index = 0; index < geese_.size(); ++index) {
+        if (IsGooseBusy(index)) continue;
+        if (geese_[index].DistanceToTarget() < 18.0f) {
+          geese_[index].SetTarget(NextPatrolPoint(index), SpeedTier::Walk);
+        }
       }
     }
 
-    // A carried brainrot image temporarily overrides that goose's choreography
-    // so the prop visibly travels across the desktop before being abandoned.
+    // A goose fetching or carrying a photo overrides that goose's choreography
+    // so the prop visibly travels across the desktop before being put down.
     // Only the first prop per carrier may steer it; without this guard several
     // in-flight props reassign the same goose's target every frame and it jitters.
     std::vector<bool> carrierSteered(geese_.size(), false);
     for (const VisualSprite& sprite : sprites_) {
-      if (!sprite.carried || sprite.carrierIndex >= geese_.size()) continue;
+      if (!sprite.HasCarrier() || sprite.carrierIndex >= geese_.size()) continue;
       if (carrierSteered[sprite.carrierIndex]) continue;
       if (sprite.carrierIndex == 0 && leadBusy) continue;
       carrierSteered[sprite.carrierIndex] = true;
       GooseEntity& carrier = geese_[sprite.carrierIndex];
-      carrier.SetTarget(carrier.BodyTargetForBeak(sprite.targetCenter), SpeedTier::Run, true);
+      // Hurrying out to collect it, then walking it back in so the photo in the
+      // beak is actually readable on the way.
+      const bool fetching = sprite.stage == PropStage::Fetching;
+      const Vec2 destination = fetching ? sprite.fetchPoint : sprite.targetCenter;
+      carrier.SetTarget(carrier.BodyTargetForBeak(destination),
+                        fetching ? SpeedTier::Charge : SpeedTier::Run, true);
     }
   }
 
@@ -845,29 +1118,102 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
 }
 
 void GooseRotApp::UpdateSprites() {
+  const RectF bounds = overlay_.CanvasBounds();
   for (VisualSprite& sprite : sprites_) {
-    if (!sprite.carried || sprite.carrierIndex >= geese_.size()) continue;
-    const GooseEntity& carrier = geese_[sprite.carrierIndex];
-    sprite.center = carrier.Rig().beakTip;
-    if (carrier.BeakDistanceTo(sprite.targetCenter) < 28.0f ||
-        logicalTime_ >= sprite.deliveryDeadline) {
-      sprite.carried = false;
+    if (sprite.HasCarrier() && sprite.carrierIndex >= geese_.size()) {
+      // The carrier disappeared under us: put the photo down where it stands.
+      sprite.stage = PropStage::Placed;
+      sprite.stageChangedAt = logicalTime_;
       sprite.center = sprite.targetCenter;
+      sprite.everPlaced = true;
+      continue;
+    }
+    switch (sprite.stage) {
+      case PropStage::Fetching: {
+        GooseEntity& carrier = geese_[sprite.carrierIndex];
+        const Vec2 position = carrier.Position();
+        // One rule covers both errands: the beak has arrived at whatever it was
+        // sent to pick up. For a new photo that point is outside the canvas, so
+        // being off screen counts too and the photo can appear unseen.
+        const bool offCanvas = position.x < bounds.left || position.x > bounds.right ||
+                               position.y < bounds.top || position.y > bounds.bottom;
+        const bool reached = carrier.BeakDistanceTo(sprite.fetchPoint) < 34.0f;
+        if (reached || (offCanvas && !sprite.everPlaced) ||
+            logicalTime_ >= sprite.stageDeadline) {
+          sprite.stage = PropStage::Carried;
+          sprite.stageChangedAt = logicalTime_;
+          sprite.stageDeadline =
+              logicalTime_ + DeliveryDeadline(carrier.Position(), sprite.targetCenter);
+          sprite.center = carrier.Rig().beakTip;
+          carrier.Honk(0.3f);
+        }
+        break;
+      }
+      case PropStage::Carried: {
+        const GooseEntity& carrier = geese_[sprite.carrierIndex];
+        sprite.center = carrier.Rig().beakTip;
+        if (carrier.BeakDistanceTo(sprite.targetCenter) < 28.0f ||
+            logicalTime_ >= sprite.stageDeadline) {
+          sprite.stage = PropStage::Placed;
+          sprite.stageChangedAt = logicalTime_;
+          sprite.center = sprite.targetCenter;
+          sprite.everPlaced = true;
+        }
+        break;
+      }
+      case PropStage::Placed:
+      case PropStage::Tearing:
+        break;
     }
   }
 
-  if (logicalTime_ >= 45.0 && logicalTime_ < 298.0 && logicalTime_ >= nextSpriteAt_) {
-    const std::size_t limit = config_.mode == RunMode::Lab ? 48U : 36U;
-    if (sprites_.size() < limit) SpawnSprite();
-    const bool late = logicalTime_ >= 210.0;
-    std::uniform_real_distribution<double> delay(
-        late ? (config_.mode == RunMode::Lab ? 0.7 : 1.2) : 3.0,
-        late ? (config_.mode == RunMode::Lab ? 1.5 : 2.6) : 6.0);
-    nextSpriteAt_ = logicalTime_ + delay(random_);
+  // A torn photo plays its rip and then leaves for good.
+  sprites_.erase(std::remove_if(sprites_.begin(), sprites_.end(),
+                                [this](const VisualSprite& sprite) {
+                                  return sprite.stage == PropStage::Tearing &&
+                                         logicalTime_ - sprite.stageChangedAt > 0.45;
+                                }),
+                 sprites_.end());
+  // Erasing shifts every later index, and carrier indices point into `geese_`,
+  // not into `sprites_`, so nothing needs remapping here.
+
+  if (logicalTime_ < phase::kGooseReturn || logicalTime_ >= phase::kCompanionCutoff) return;
+  const bool owed = pendingPropOrders_ > 0;
+  if (!owed && logicalTime_ < nextSpriteAt_) return;
+  if (sprites_.size() >= PropLimit(config_.mode)) {
+    // The wall is already full, so a replacement owed for a torn photo has
+    // nowhere to go; forgetting it here is what stops the debt growing forever.
+    pendingPropOrders_ = 0;
+    nextSpriteAt_ = logicalTime_ + 2.0;
+    return;
   }
+  if (SpawnSprite() && owed) --pendingPropOrders_;
+  const bool late = logicalTime_ >= phase::kScreenShake;
+  std::uniform_real_distribution<double> delay(
+      late ? (config_.mode == RunMode::Lab ? 0.8 : 1.3) : 3.0,
+      late ? (config_.mode == RunMode::Lab ? 1.6 : 2.8) : 6.0);
+  nextSpriteAt_ = logicalTime_ + (owed ? 0.6 : delay(random_));
 }
 
-void GooseRotApp::SpawnSprite() {
+// Every photo arrives in a beak. A free goose walks off the nearest edge, comes
+// back with it and pins it down; if no goose is free the spawn is simply
+// deferred, because a picture that materialises on its own has no author.
+bool GooseRotApp::SpawnSprite(std::size_t forcedCarrier) {
+  // Hand the prop to a goose that is not already ferrying one. Capping carried
+  // props to one per goose is what keeps the carriers from thrashing.
+  std::vector<unsigned char> carrierBusy(geese_.size(), 0U);
+  for (const VisualSprite& existing : sprites_) {
+    if (existing.HasCarrier() && existing.carrierIndex < carrierBusy.size()) {
+      carrierBusy[existing.carrierIndex] = 1U;
+    }
+  }
+  const bool leadBusy = cursorLatched_ || pendingAction_.kind != PendingActionKind::None;
+  std::size_t carrier = forcedCarrier;
+  if (carrier == kNoCarrier || carrier >= geese_.size() || carrierBusy[carrier]) {
+    carrier = PickFreeCarrier(carrierBusy, leadBusy);
+  }
+  if (carrier == kNoCarrier) return false;
+
   constexpr std::array<int, 7> resources = {
       IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
       IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS};
@@ -879,61 +1225,158 @@ void GooseRotApp::SpawnSprite() {
   sprite.size = size(random_);
   sprite.angleDegrees = angle(random_);
   sprite.createdAt = logicalTime_;
-  sprite.lifetime = std::max(12.0, 310.0 - logicalTime_);
+  sprite.lifetime = std::max(12.0, phase::kEnd + 10.0 - logicalTime_);
   sprite.targetCenter = FindSpriteLandingPoint(sprite.size);
+  sprite.carrierIndex = carrier;
+  sprite.stageChangedAt = logicalTime_;
 
-  // Hand the prop to a goose that is not already ferrying one. Capping carried
-  // props to one per goose is what keeps the carriers from thrashing; any prop
-  // that can't get a free carrier simply appears already resting at its spot.
+  GooseEntity& goose = geese_[carrier];
+  if (goose.IsOffstage()) {
+    // Already outside the frame — it walks straight back in holding the photo.
+    sprite.stage = PropStage::Carried;
+    sprite.stageDeadline =
+        logicalTime_ + DeliveryDeadline(goose.Position(), sprite.targetCenter);
+    sprite.center = goose.Rig().beakTip;
+  } else {
+    sprite.stage = PropStage::Fetching;
+    sprite.fetchPoint = OffstagePointNear(goose.Position());
+    sprite.stageDeadline = logicalTime_ + DeliveryDeadline(goose.Position(), sprite.fetchPoint);
+    sprite.center = sprite.fetchPoint;
+    goose.SetOffstage(true);
+  }
+  sprites_.push_back(sprite);
+  return true;
+}
+
+// Tearing a photo off the desktop works, and it is always answered: the aura
+// drops, the display tears, two replacements are ordered and the flock grows.
+void GooseRotApp::ClosePropAt(std::size_t index) {
+  if (index >= sprites_.size()) return;
+  VisualSprite& sprite = sprites_[index];
+  sprite.stage = PropStage::Tearing;
+  sprite.stageChangedAt = logicalTime_;
+  ++propsClosed_;
+
+  AddAura(-6700);
+  KickGlitch(0.24f + 0.04f * static_cast<float>(std::min(6, propsClosed_)));
+  pendingPropOrders_ += 2;
+  nextSpriteAt_ = std::min(nextSpriteAt_, logicalTime_ + 0.4);
+
+  constexpr std::array<const wchar_t*, 5> lines = {
+      L"YOU CLOSED ONE PHOTO.\nI AM FETCHING TWO.",
+      L"THAT WAS A GIFT.\n-6,700 AURA.",
+      L"THE WALL DECIDES. NOT YOU.",
+      L"I WALKED OFF SCREEN FOR THAT.",
+      L"EVERY [X] COSTS AURA. THIS ONE COST A LOT."};
+  std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
+  SetBubble(lines[pick(random_)], 5.0);
+  if (!geese_.empty()) geese_.front().Honk(0.55f);
+  PushToast(L"GooseRot", L"Brainrot asset removed by user.\nTwo replacements dispatched.");
+
+  // Escalation: at three the swarm answers, at five the flock does.
+  if (propsClosed_ % 3 == 0 && logicalTime_ >= phase::kDuplicate) {
+    popups_.Spawn(instance_, random_, 2);
+  }
+  if (propsClosed_ >= 5 && extraGeese_ < 6) ++extraGeese_;
+}
+
+// The tag needs a bare wall. Anything already hanging where the 67 is about to
+// go is picked back up and re-hung somewhere else instead of being painted over.
+void GooseRotApp::ClearPropsFromTagZone() {
+  if (tagZoneCleared_) return;
+  tagZoneCleared_ = true;
+  const RectF zone = TagZone(overlay_.CanvasBounds());
   std::vector<unsigned char> carrierBusy(geese_.size(), 0U);
   for (const VisualSprite& existing : sprites_) {
-    if (existing.carried && existing.carrierIndex < carrierBusy.size()) {
+    if (existing.HasCarrier() && existing.carrierIndex < carrierBusy.size()) {
       carrierBusy[existing.carrierIndex] = 1U;
     }
   }
-  const bool leadBusy = cursorLatched_ || pendingAction_.kind != PendingActionKind::None;
-  const std::size_t carrier = PickFreeCarrier(carrierBusy, leadBusy);
-  sprite.carried = carrier != kNoCarrier;
-  sprite.carrierIndex = sprite.carried ? carrier : 0U;
-  sprite.deliveryDeadline = logicalTime_ + 5.0;
-  sprite.center = sprite.carried ? geese_[carrier].Rig().beakTip : sprite.targetCenter;
-  sprites_.push_back(sprite);
+
+  for (VisualSprite& sprite : sprites_) {
+    if (sprite.stage != PropStage::Placed) continue;
+    const float reach = sprite.size * 0.5f;
+    if (sprite.center.x + reach < zone.left || sprite.center.x - reach > zone.right ||
+        sprite.center.y + reach < zone.top || sprite.center.y - reach > zone.bottom) {
+      continue;
+    }
+    // Whichever goose is still free takes it. Without one the photo has nobody
+    // to move it, so it stays where it is and the tag is simply painted over it.
+    const std::size_t carrier = PickFreeCarrier(carrierBusy, true);
+    if (carrier == kNoCarrier) continue;
+    carrierBusy[carrier] = 1U;
+    sprite.carrierIndex = carrier;
+    sprite.targetCenter = FindSpriteLandingPoint(sprite.size);
+    // The goose walks over to the photo and takes it off the wall; it stays
+    // hanging where it is until a beak actually reaches it.
+    sprite.fetchPoint = sprite.center;
+    sprite.stage = PropStage::Fetching;
+    sprite.stageChangedAt = logicalTime_;
+    sprite.stageDeadline =
+        logicalTime_ + DeliveryDeadline(geese_[carrier].Position(), sprite.fetchPoint);
+  }
+}
+
+// The overlay is click-through, so photo clicks are read from the pointer
+// itself: no hook is installed and no input is captured or synthesised.
+void GooseRotApp::UpdatePropInteractions() {
+  if (!leftMousePressed_ || sprites_.empty() || !desktop_) return;
+  const Vec2 cursor = overlay_.ScreenToCanvas(desktop_->CursorPosition());
+  // Topmost first: the badges are drawn in spawn order, so the last match wins.
+  for (std::size_t index = sprites_.size(); index-- > 0;) {
+    const VisualSprite& sprite = sprites_[index];
+    if (!sprite.IsClosable(logicalTime_)) continue;
+    if (!PropCloseBoxHit(sprite.center, sprite.size, cursor)) continue;
+    leftMousePressed_ = false;
+    ClosePropAt(index);
+    return;
+  }
 }
 
 Vec2 GooseRotApp::FindSpriteLandingPoint(float size) {
   const RectF bounds = overlay_.CanvasBounds();
+  const RectF tag = TagZone(bounds);
   const float margin = std::max(58.0f, size * 0.55f);
+  const float reach = size * 0.5f;
   Vec2 fallback = RandomCanvasPoint(margin);
+  float bestClearance = -1.0f;
   for (int attempt = 0; attempt < 48; ++attempt) {
     const Vec2 candidate = RandomCanvasPoint(margin);
-    fallback = candidate;
     const bool auraHud = candidate.x > bounds.right - 340.0f && candidate.y < bounds.top + 160.0f;
     const bool clipboardZone = candidate.x < bounds.left + 480.0f &&
                                candidate.y > bounds.bottom - 230.0f;
-    const bool graffitiCore = candidate.x > bounds.left + bounds.Width() * 0.28f &&
-                               candidate.x < bounds.left + bounds.Width() * 0.72f &&
-                               candidate.y > bounds.top + bounds.Height() * 0.17f &&
-                               candidate.y < bounds.top + bounds.Height() * 0.78f;
-    if (auraHud || clipboardZone || (logicalTime_ >= 135.0 && graffitiCore)) continue;
+    // The tag's footprint is off limits for the whole run, not only once the
+    // paint starts: a photo dropped there early would still be covering the 67
+    // an hour later, and on a small screen that hides the tag completely.
+    const bool tagZone = candidate.x + reach > tag.left && candidate.x - reach < tag.right &&
+                         candidate.y + reach > tag.top && candidate.y - reach < tag.bottom;
+    if (auraHud || clipboardZone || tagZone) continue;
 
-    bool overlaps = false;
+    // Keep the least crowded spot seen so far, so a busy desktop still spreads
+    // its photos instead of stacking them on the last candidate drawn.
+    float clearance = std::numeric_limits<float>::max();
     for (const VisualSprite& existing : sprites_) {
-      const float minimum = (size + existing.size) * 0.34f;
-      if (Distance(candidate, existing.targetCenter) < minimum) {
-        overlaps = true;
-        break;
-      }
+      clearance = std::min(clearance, Distance(candidate, existing.targetCenter) -
+                                          (size + existing.size) * 0.34f);
     }
-    if (!overlaps) return candidate;
+    if (clearance >= 0.0f) return candidate;
+    if (clearance > bestClearance) {
+      bestClearance = clearance;
+      fallback = candidate;
+    }
   }
   return fallback;
 }
 
 std::size_t GooseRotApp::DesiredGooseCount() const {
-  if (logicalTime_ < 135.0) return 1;
-  if (logicalTime_ < 210.0) return 3;
-  const double progress = std::clamp((logicalTime_ - 210.0) / 89.0, 0.0, 1.0);
-  return static_cast<std::size_t>(3 + std::floor(std::pow(progress, 0.72) * 64.0));
+  const std::size_t bonus = static_cast<std::size_t>(std::clamp(extraGeese_, 0, 6));
+  if (logicalTime_ < phase::kDuplicate) return 1;
+  if (logicalTime_ < phase::kScreenShake) return 3 + bonus;
+  const double progress = std::clamp(
+      (logicalTime_ - phase::kScreenShake) / (phase::kResetAura - phase::kScreenShake), 0.0, 1.0);
+  const std::size_t flock =
+      static_cast<std::size_t>(3 + std::floor(std::pow(progress, 0.72) * 64.0)) + bonus;
+  return std::min(flock, kMaximumGeese);
 }
 
 void GooseRotApp::EnsureGooseCount() {
@@ -977,9 +1420,11 @@ bool GooseRotApp::Cleanup() {
   sigmaPrompt_.Close();
   notepad_.Close();
   // Whatever the swarm was refusing, it goes away here: cleanup and the
-  // emergency exit always win.
+  // emergency exit always win. The Start button is handed back the moment the
+  // guard window is destroyed.
   popups_.CloseAll();
   ownedWindowsApps_.CloseAll();
+  taskbarGuard_.Close();
   nextPopupAt_ = 1e9;
   cursorLatched_ = false;
   cursorChaos_ = 0.0f;
@@ -1036,17 +1481,27 @@ RenderState GooseRotApp::BuildRenderState() const {
   state.cursorChaos = cursorChaos_;
   state.graffitiProgress = GraffitiProgress();
   state.popupCount = popups_.Count();
+  state.propsClosed = propsClosed_;
+  state.cursorStormPhase = logicalTime_ >= phase::kScreenShake &&
+                           logicalTime_ < phase::kEnd && !shutdownStarted_;
   state.cursorLatched = cursorLatched_;
-  state.clipboardBadge = logicalTime_ >= 120.0 && logicalTime_ < 165.0;
-  state.graffiti = logicalTime_ >= 165.0 && logicalTime_ < 299.0;
-  state.colorFilter = logicalTime_ >= 240.0 && logicalTime_ < 300.0;
-  state.finalMonologue = logicalTime_ >= 255.0 && logicalTime_ < 300.0;
-  state.countdown = logicalTime_ >= 270.0 && logicalTime_ < 300.0;
-  state.resetButton = logicalTime_ >= 298.4 && logicalTime_ < 300.0;
-  state.fakeShutdown = shutdownStarted_ || logicalTime_ >= 300.0;
+  state.clipboardBadge = logicalTime_ >= phase::kClipboard && logicalTime_ < phase::kGraffiti;
+  state.graffiti = logicalTime_ >= phase::kGraffiti && logicalTime_ < phase::kEnd - 1.0;
+  state.colorFilter = logicalTime_ >= phase::kColorFilter && logicalTime_ < phase::kEnd;
+  state.finalMonologue = logicalTime_ >= phase::kFinalMonologue && logicalTime_ < phase::kEnd;
+  state.countdown = logicalTime_ >= phase::kCountdown && logicalTime_ < phase::kEnd;
+  state.resetButton = logicalTime_ >= phase::kResetAura && logicalTime_ < phase::kEnd;
+  state.fakeShutdown = shutdownStarted_ || logicalTime_ >= phase::kEnd;
   if (logicalTime_ <= bubbleUntil_ && !geese_.empty()) {
-    state.bubbleText = bubbleText_;
-    state.bubbleAnchor = geese_.front().Position();
+    // A goose that is off screen has nothing to attach a balloon to; those
+    // moments are carried by the fake notifications instead.
+    const Vec2 anchor = geese_.front().Position();
+    const RectF bounds = overlay_.CanvasBounds();
+    if (anchor.x >= bounds.left && anchor.x <= bounds.right && anchor.y >= bounds.top &&
+        anchor.y <= bounds.bottom) {
+      state.bubbleText = bubbleText_;
+      state.bubbleAnchor = anchor;
+    }
   }
   return state;
 }
