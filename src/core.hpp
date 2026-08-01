@@ -74,6 +74,9 @@ struct AppConfig {
   bool muted = false;
   bool flashesEnabled = true;
   bool reducedMotion = false;
+  // Enabled only by explicit consent to the full desktop experience. This is
+  // session-local: no registry or shell setting is changed.
+  bool blockWindowsKey = false;
   bool showHelp = false;
 };
 
@@ -129,6 +132,18 @@ struct ChaosVisualCue {
 
 ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
                                       std::uint32_t seed, bool flashesEnabled);
+
+struct FrameAdvance {
+  double wallDelta = 0.0;
+  double simulationDelta = 0.0;
+  double logicalDelta = 0.0;
+  double simulationLogicalDelta = 0.0;
+};
+
+// Separates real elapsed time from a bounded physical simulation step. This is
+// what keeps Esc, process cadence and the six-minute timeline honest even
+// when a rendered frame takes substantially longer than 250 ms.
+FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale);
 
 enum class TimelineEventId {
   PassiveEntrance,

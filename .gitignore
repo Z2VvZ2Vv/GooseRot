@@ -2,9 +2,9 @@
 /build-*/
 /dist/
 /DesktopGoose v0.31/
+/MEMZ-Clean.exe
 /boot-game-handoff.json
 *.user
 *.suo
 *.VC.db
 *.pdb
-

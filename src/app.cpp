@@ -15,7 +15,6 @@
 namespace gooserot {
 namespace {
 
-constexpr double kTimelineEnd = phase::kEnd;
 constexpr double kShutdownVisualDuration = 7.5;
 // The scenario's own ceiling: sixty-seven geese, never one more.
 constexpr std::size_t kMaximumGeese = 67U;
@@ -60,6 +59,10 @@ bool GooseRotApp::Initialize(std::wstring& error) {
     return false;
   }
   const bool desktopEffects = config_.desktopEffects && !config_.preview;
+  if (desktopEffects && config_.blockWindowsKey && !windowsKeyGuard_.Install(instance_)) {
+    error = L"The temporary Windows-key guard could not be installed.";
+    return false;
+  }
   if (desktopEffects && !watchdog_.Start(error)) return false;
   desktop_ = std::make_unique<DesktopDirector>(desktopEffects, config_.primaryMonitorOnly,
                                                desktopEffects ? &watchdog_ : nullptr);
@@ -85,6 +88,12 @@ bool GooseRotApp::Initialize(std::wstring& error) {
   ApplyBaseline(logicalTime_);
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
   overlay_.Render(BuildRenderState());
+  // Loading resources, creating the watchdog and the initial render are setup,
+  // not part of the user's six-minute clock or the Esc hold duration.
+  if (!QueryPerformanceCounter(&lastCounter_)) {
+    error = L"The high-resolution monotonic clock stopped during initialization.";
+    return false;
+  }
   return true;
 }
 
@@ -155,6 +164,9 @@ int GooseRotApp::Run() {
   }
 
   if (raisedTimer) timeEndPeriod(1);
+  // In the completed run the desktop is restored before the farewell visuals,
+  // but the Windows keys remain guarded until those visuals actually end.
+  windowsKeyGuard_.Close();
   Cleanup();
   if (bootPreviewLaunchFailed_) {
     MessageBoxW(nullptr,
@@ -201,7 +213,6 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
   popups_.SetCeiling(baselinePopups);
   if (baselinePopups > 0) {
     popups_.Spawn(instance_, random_, baselinePopups);
-    nextPopupAt_ = logicalTime + 0.8;
   }
   if (logicalTime >= phase::kGooseReturn) {
     const std::size_t baselineProps = std::min<std::size_t>(
@@ -220,18 +231,18 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
     }
   }
   if (config_.desktopEffects && !config_.preview && logicalTime >= phase::kOwnedApps &&
-      logicalTime < phase::kCompanionCutoff) {
+      logicalTime < phase::kFinalMonologue) {
     const int baselineApps = std::clamp(
         1 + static_cast<int>((logicalTime - phase::kOwnedApps) / 45.0), 1,
         OwnedWindowsApps::kMaximumApps);
     while (ownedWindowsApps_.Count() < baselineApps &&
-           ownedWindowsApps_.LaunchRandom(random_, logicalTime)) {
+           ownedWindowsApps_.LaunchRandom(random_, realTime_, false)) {
     }
   }
   nextWindowAction_ = std::max(phase::kCursorAndWindows, logicalTime + 2.0);
   nextCursorAction_ = std::max(phase::kCursorAndWindows + 10.0, logicalTime + 4.0);
   nextSpriteAt_ = std::max(phase::kGooseReturn, logicalTime + 1.0);
-  nextOwnedAppAt_ = std::max(phase::kOwnedApps, logicalTime + 6.0);
+  nextOwnedAppAtReal_ = realTime_ + 6.0;
 }
 
 void GooseRotApp::Tick() {
@@ -247,13 +258,16 @@ void GooseRotApp::Tick() {
   const double previous = CounterSeconds(lastCounter_, performanceFrequency_);
   const double current = CounterSeconds(counter, performanceFrequency_);
   lastCounter_ = counter;
-  const double realDelta = std::clamp(current - previous, 0.0, 0.25);
-  const double logicalDelta = realDelta / config_.durationScale;
-  realTime_ += realDelta;
-  logicalTime_ += logicalDelta;
+  // Wall-clock deadlines (Esc, utility rotation and the conclusion) must not
+  // slow down when rendering drops frames. Only physical simulation steps are
+  // capped; elapsed QPC time and the six-minute timeline are not.
+  const FrameAdvance advance = EvaluateFrameAdvance(current - previous,
+                                                     config_.durationScale);
+  realTime_ += advance.wallDelta;
+  logicalTime_ += advance.logicalDelta;
 
   if (desktop_) desktop_->PollPendingMutations();
-  if (UpdateEmergencyExit(realDelta) || !overlay_.Handle()) return;
+  if (UpdateEmergencyExit(advance.wallDelta) || !overlay_.Handle()) return;
   if (recoveryFailure_ || (desktop_ && !desktop_->RecoveryHealthy())) {
     recoveryFailure_ = true;
     exitCode_ = 4;
@@ -268,7 +282,7 @@ void GooseRotApp::Tick() {
   }
 
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
-  if (!shutdownStarted_) {
+  if (!shutdownRequested_) {
     PollMouseButton();
     EnsureGooseCount();
     UpdatePrompts();
@@ -278,7 +292,7 @@ void GooseRotApp::Tick() {
     UpdateOwnedWindowsApps();
     UpdateTaskbarGuard();
     UpdateToasts();
-    double movementRemaining = logicalDelta;
+    double movementRemaining = advance.simulationLogicalDelta;
     while (movementRemaining > 0.0) {
       const float step = static_cast<float>(std::min(0.05, movementRemaining));
       UpdateGooseTargets(step);
@@ -288,15 +302,16 @@ void GooseRotApp::Tick() {
     // then feeds the cursor hunt.
     UpdatePropInteractions();
     UpdateDesktopActions();
-    UpdateCursorGrab(logicalDelta);
+    UpdateCursorGrab(advance.simulationLogicalDelta);
     UpdateCursorChaos();
     UpdateSprites();
-    UpdateGlitch(logicalDelta);
-  } else if (!cleanupDone_) {
-    Cleanup();
+    UpdateGlitch(advance.simulationLogicalDelta);
+  } else if (!shutdownStarted_ && Cleanup()) {
+    StartShutdownVisuals();
   }
 
-  if (shutdownStarted_ && logicalTime_ >= kTimelineEnd + kShutdownVisualDuration &&
+  if (shutdownStarted_ && shutdownStartedRealTime_ >= 0.0 &&
+      realTime_ - shutdownStartedRealTime_ >= kShutdownVisualDuration &&
       !conclusionHandled_) {
     conclusionHandled_ = true;
     const bool restored = Cleanup();
@@ -377,7 +392,6 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       SetBubble(L"ONE GOOSE WAS NOT ENOUGH.", 6.0);
       KickGlitch(0.55f);
       // The flock starts opening windows the user cannot simply dismiss.
-      nextPopupAt_ = logicalTime_ + 1.5;
       break;
     }
     case TimelineEventId::Graffiti:
@@ -599,9 +613,9 @@ float GooseRotApp::GraffitiProgress() const {
 }
 
 void GooseRotApp::UpdatePopups() {
-  // Until the monologue the swarm grows freely up to its protective maximum, so
-  // "close one, get two" keeps working. After it, the budget shrinks and the
-  // swarm is consumed instead of refilled.
+  // The logical wall may contain 267 frames, but PopupSwarm materialises only
+  // 67 native windows. During the finale, the budget shrinks and the display
+  // consumes the surplus instead of refilling it.
   const bool consuming = logicalTime_ >= phase::kFinalMonologue;
   const int budget = DesiredPopupCount(logicalTime_, PopupSwarm::kMaximumPopups);
   popups_.SetCeiling(consuming ? budget : PopupSwarm::kMaximumPopups);
@@ -617,17 +631,13 @@ void GooseRotApp::UpdatePopups() {
         if (popups_.Count() == 0) SetBubble(L"NO MORE WINDOWS.\nONLY DAMAGE.", 5.0);
       }
     }
-  } else if (nextPopupAt_ < 1e8 && logicalTime_ >= nextPopupAt_ && !popups_.AtCap()) {
-    const int burst = logicalTime_ >= phase::kColorFilter  ? 4
-                      : logicalTime_ >= phase::kScreenShake ? 3
-                      : logicalTime_ >= phase::kGraffiti     ? 2
-                                                             : 1;
-    popups_.Spawn(instance_, random_, burst);
-    std::uniform_real_distribution<double> delay(config_.mode == RunMode::Lab ? 0.8 : 1.4,
-                                                 config_.mode == RunMode::Lab ? 1.8 : 3.0);
-    nextPopupAt_ = logicalTime_ + delay(random_);
+  } else if (budget > popups_.Count()) {
+    popups_.Spawn(instance_, random_, budget - popups_.Count());
   }
-  popups_.Tick(instance_, random_, logicalTime_);
+
+  // Preview renders the full logical wall inside its canvas without creating
+  // any native popup windows outside the preview frame.
+  if (!config_.preview) popups_.Tick(instance_, random_, logicalTime_);
 
   if (popups_.ConsumeCloseAttempt()) {
     constexpr std::array<const wchar_t*, 5> lines = {
@@ -637,7 +647,7 @@ void GooseRotApp::UpdatePopups() {
         L"I DUPLICATED YOUR DECISION.",
         L"EVERY CLICK FUNDS ANOTHER GOOSE."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1);
-    SetBubble(popups_.AtCap() ? L"CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
+    SetBubble(popups_.AtCap() ? L"267 WINDOWS. CLOSE PRIVILEGES REVOKED." : lines[pick(random_)], 4.5);
     if (!geese_.empty()) geese_.front().Honk(0.45f);
     KickGlitch(0.18f);
   }
@@ -759,19 +769,28 @@ void GooseRotApp::UpdateErrorSounds() {
 }
 
 void GooseRotApp::UpdateOwnedWindowsApps() {
-  ownedWindowsApps_.Tick(random_, logicalTime_);
+  ownedWindowsApps_.Tick(random_, realTime_);
   // Real utilities belong to the middle of the run. The finale is glitch, not
   // more windows, so nothing new is launched once the monologue lands.
+  ownedWindowsApps_.RequestCloseOlderThan(
+      realTime_, logicalTime_ >= phase::kFinalMonologue ? 0.0 : 60.0);
   if (!config_.desktopEffects || config_.preview || logicalTime_ < phase::kOwnedApps ||
-      logicalTime_ >= phase::kFinalMonologue || logicalTime_ < nextOwnedAppAt_ ||
+      logicalTime_ >= phase::kFinalMonologue || realTime_ < nextOwnedAppAtReal_ ||
       ownedWindowsApps_.Count() >= OwnedWindowsApps::kMaximumApps) {
     return;
   }
-  if (ownedWindowsApps_.LaunchRandom(random_, logicalTime_)) {
+  const bool launched = ownedWindowsApps_.LaunchRandom(random_, realTime_, false);
+  if (launched) {
     SetBubble(L"WINDOWS BROUGHT REINFORCEMENTS.", 3.5);
   }
+  if (!launched) {
+    // Missing optional utilities or a transient CreateProcess failure should
+    // not consume an entire cadence slot.
+    nextOwnedAppAtReal_ = realTime_ + 0.5;
+    return;
+  }
   std::uniform_real_distribution<double> delay(26.0, 42.0);
-  nextOwnedAppAt_ = logicalTime_ + delay(random_);
+  nextOwnedAppAtReal_ = realTime_ + delay(random_);
 }
 
 // The Start button is covered from the first gag onwards: a Start menu opening
@@ -1276,9 +1295,12 @@ bool GooseRotApp::SpawnSprite(std::size_t forcedCarrier) {
   }
   if (carrier == kNoCarrier) return false;
 
-  constexpr std::array<int, 7> resources = {
+  constexpr std::array<int, 14> resources = {
       IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
-      IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS};
+      IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS,
+      IDR_USER_GOOSE_ICE_CREAM, IDR_USER_GOOSE_WORKER, IDR_USER_GOOSE_CALL,
+      IDR_USER_GOOSE_STORE, IDR_USER_GOOSE_PUNCHY, IDR_USER_GOOSE_GANGSTER,
+      IDR_USER_GOOSE_JET};
   std::uniform_int_distribution<std::size_t> resource(0, resources.size() - 1);
   std::uniform_real_distribution<float> size(108.0f, 176.0f);
   std::uniform_real_distribution<float> angle(-12.0f, 12.0f);
@@ -1470,10 +1492,21 @@ void GooseRotApp::AimLeadGooseBeakAt(Vec2 target, SpeedTier tier) {
 }
 
 void GooseRotApp::BeginShutdown() {
-  if (shutdownStarted_) return;
-  shutdownStarted_ = true;
+  if (shutdownRequested_) return;
+  shutdownRequested_ = true;
   completedTimeline_ = true;
-  Cleanup();
+  if (Cleanup()) StartShutdownVisuals();
+}
+
+void GooseRotApp::StartShutdownVisuals() {
+  if (shutdownStarted_) return;
+  // Cleanup may spend up to a little over one second waiting for child apps.
+  // Restart the frame clock here so that wait is not charged against the 7.5
+  // seconds of explosion/farewell visuals that begin only after restoration.
+  LARGE_INTEGER afterCleanup{};
+  if (QueryPerformanceCounter(&afterCleanup)) lastCounter_ = afterCleanup;
+  shutdownStarted_ = true;
+  shutdownStartedRealTime_ = realTime_;
 }
 
 bool GooseRotApp::Cleanup() {
@@ -1486,12 +1519,13 @@ bool GooseRotApp::Cleanup() {
   sigmaPrompt_.Close();
   notepad_.Close();
   // Whatever the swarm was refusing, it goes away here: cleanup and the
-  // emergency exit always win. The Start button is handed back the moment the
-  // guard window is destroyed.
+  // Emergency/error exits hand the Windows keys back immediately. A completed
+  // run keeps them guarded through its short farewell visual; Run() releases
+  // them the instant that final frame loop ends.
+  if (!shutdownRequested_ || !completedTimeline_) windowsKeyGuard_.Close();
+  taskbarGuard_.Close();
   popups_.CloseAll();
   ownedWindowsApps_.CloseAll();
-  taskbarGuard_.Close();
-  nextPopupAt_ = 1e9;
   cursorLatched_ = false;
   cursorChaos_ = 0.0f;
   if (!geese_.empty()) geese_.front().SetLatched(false);
@@ -1534,7 +1568,11 @@ bool GooseRotApp::LaunchBootPreview() {
 RenderState GooseRotApp::BuildRenderState() const {
   RenderState state;
   state.logicalTime = logicalTime_;
+  state.shutdownAge = shutdownStartedRealTime_ >= 0.0
+                          ? std::max(0.0, realTime_ - shutdownStartedRealTime_)
+                          : -1.0;
   state.mode = config_.mode;
+  state.seed = config_.seed;
   state.geese = &geese_;
   state.sprites = &sprites_;
   state.toasts = &toasts_;
@@ -1551,10 +1589,14 @@ RenderState GooseRotApp::BuildRenderState() const {
   if (config_.reducedMotion) cue.faultRibbonIntensity *= 0.24f;
   state.screenFlash = cue.flashIntensity;
   state.faultRibbon = cue.faultRibbonIntensity;
+  const float irisProgress = static_cast<float>(
+      std::clamp((logicalTime_ - (phase::kEnd - 1.0)) / 1.0, 0.0, 1.0));
+  state.finalIris = irisProgress * irisProgress * (3.0f - 2.0f * irisProgress);
   state.effectPattern = cue.pattern;
   state.reducedMotion = config_.reducedMotion;
   state.graffitiProgress = GraffitiProgress();
   state.popupCount = popups_.Count();
+  state.nativePopupCount = popups_.NativeCount();
   state.propsClosed = propsClosed_;
   state.cursorStormPhase = logicalTime_ >= phase::kScreenShake &&
                            logicalTime_ < phase::kEnd && !shutdownStarted_;
@@ -1565,7 +1607,10 @@ RenderState GooseRotApp::BuildRenderState() const {
   state.finalMonologue = logicalTime_ >= phase::kFinalMonologue && logicalTime_ < phase::kEnd;
   state.countdown = logicalTime_ >= phase::kCountdown && logicalTime_ < phase::kEnd;
   state.resetButton = logicalTime_ >= phase::kResetAura && logicalTime_ < phase::kEnd;
-  state.fakeShutdown = shutdownStarted_ || logicalTime_ >= phase::kEnd;
+  // BeginShutdown performs cleanup before this branch becomes visible.  In
+  // particular, --start-at 360 must not flash the explosion one frame before
+  // the first tick has restored the desktop.
+  state.fakeShutdown = shutdownStarted_;
   state.flashesEnabled = config_.flashesEnabled && !config_.reducedMotion;
   if (logicalTime_ <= bubbleUntil_ && !geese_.empty()) {
     // A goose that is off screen has nothing to attach a balloon to; those

@@ -112,23 +112,27 @@ La réduction est refusée par trois chemins complémentaires, pour que le flux 
 
 ### `OwnedWindowsApps`
 
-Lance au maximum six vrais utilitaires intégrés à Windows : Notepad, Paint, Task Manager, Character Map, Command Prompt ou Explorer avec `/separate`. Chaque cible est un chemin Windows construit par le programme, sans URL ni argument utilisateur. Chaque entrée conserve uniquement le handle de processus et le PID renvoyés par `CreateProcessW`. L’énumération ne positionne et ne ferme que les fenêtres appartenant à ces PID ; elle ne revendique jamais une instance préexistante et ne force pas la terminaison d’un processus qui refuserait `WM_CLOSE`.
+Maintient au maximum six vrais utilitaires intégrés à Windows simultanés : Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer avec `/separate`. Chaque cible est un chemin Windows construit par le programme, sans URL ni argument utilisateur ; la sélection filtre d’abord les exécutables réellement présents. Chaque processus est créé suspendu et ne démarre qu’après son assignation réussie au Job Object privé `KILL_ON_JOB_CLOSE` ; sinon le lancement est annulé. Chaque entrée conserve le handle de processus et le PID renvoyés par `CreateProcessW`. Le groupe d’énumérations par PID est limité à une fois toutes les 150 ms. Les lancements commencent à `1:35`, suivent une cadence réelle de 26 à 42 secondes et cessent au monologue final ; les plus anciens reçoivent `WM_CLOSE`, puis seul le handle exact créé par GooseRot peut être terminé après son délai de grâce. Aucun PID découvert ou préexistant n’est visé. Une accélération de timeline ne peut pas créer une rafale de processus.
 
 ### `TaskbarGuard`
 
 Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED` est posée exactement sur le bouton Démarrer et absorbe les clics qui l’atteignent, parce qu’un menu Démarrer ouvert recouvre toute la scène. Le rectangle vient du bouton réel quand il est identifiable — sous Windows 10, l’enfant de classe `Start` de `Shell_TrayWnd` — et d’une heuristique sur la géométrie de la barre sinon, la barre XAML de Windows 11 n’exposant pas ce bouton ; la position est réévaluée à chaque tick pour suivre une barre déplacée ou masquée automatiquement.
 
-`WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est reçu et compté sans jamais voler le focus. `MA_NOACTIVATEANDEAT` conviendrait au blocage mais supprimerait aussi le message de bouton, donc le garde ne pourrait plus signaler la tentative. Aucun hook n’est installé, aucune touche n’est synthétisée, aucune fenêtre du shell n’est sous-classée, déplacée ou détruite : détruire le garde rend le bouton à Windows. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie `Échap` ne sont jamais concernés.
+`WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est reçu et compté sans jamais voler le focus. `MA_NOACTIVATEANDEAT` conviendrait au blocage mais supprimerait aussi le message de bouton, donc le garde ne pourrait plus signaler la tentative. Aucune fenêtre du shell n’est sous-classée, déplacée ou détruite : détruire le garde rend le bouton à Windows.
+
+### `WindowsKeyGuard`
+
+Après consentement à l’expérience complète uniquement, un hook bas niveau `WH_KEYBOARD_LL` absorbe strictement les messages de `VK_LWIN` et `VK_RWIN`. Il n’enregistre ni ne synthétise aucune saisie et ne modifie ni Registre ni stratégie système. Il reste actif pendant les visuels de conclusion, puis est retiré dès que la boucle d’expérience se termine ; un arrêt d’urgence ou une erreur le retire immédiatement. Le mode réduit et la Preview ne l’installent jamais. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie `Échap` restent disponibles.
 
 ### `PopupSwarm`
 
-Gère un ensemble borné de popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que le plafond courant n’est pas atteint. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` reste le chemin privilégié du nettoyage de fin et de l’arrêt d’urgence.
+Gère un mur logique borné à 267 popups GooseRot qui imitent plusieurs outils Windows. Fermer une popup en programme deux autres tant que ce plafond n’est pas atteint. Au maximum 67 entrées possèdent des HWND interactifs ; le reste est composé de cadres virtuels opaques écrits directement dans le DIB de l’overlay, sans cache plein écran. Deux HWND au maximum sont matérialisés par tick, avec une police partagée, sans `UpdateWindow` synchrone et avec un backoff réel de 500 ms en cas d’échec de création. Le renderer soustrait le nombre natif réellement créé : le total visuel reste donc égal au compteur. Au plafond, toutes les requêtes `WM_CLOSE` ordinaires sont refusées ; `CloseAll()` détruit les fenêtres natives et remet aussi le compteur virtuel à zéro.
 
-Le plafond est réglable en cours de partie via `SetCeiling()`. Il vaut le maximum protecteur de 67 jusqu’au monologue final, pour que le gag de duplication garde de la marge, puis suit le budget décroissant de `DesiredPopupCount()`. `Dissolve()` détruit directement N fenêtres, sans passer par le chemin de refus : c’est le glitch qui mange l’essaim dans le dernier tiers, pas l’utilisateur qui obtient enfin le droit de fermer. Les créations et destructions sont différées hors du gestionnaire de messages. Les popups sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
+Le plafond courant est réglable via `SetCeiling()`. Jusqu’au monologue final il reste à 267, tandis que `DesiredPopupCount()` pilote la montée du compteur logique. Pendant la finale, le plafond suit le budget décroissant et `Dissolve()` retire directement N entrées sans passer par le refus de fermeture : le glitch mange l’essaim jusqu’à zéro. Les popups natives sont `WS_EX_NOACTIVATE`, restent dans la zone de travail et appartiennent toutes au processus GooseRot.
 
 ### `GlitchLayer` et rendu dense
 
-Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas », rubans de lignes déplacées et flashs. Le planificateur des rubans et flashs dépend du seed et de l'horloge réelle : un accélérateur de timeline ne peut donc jamais compresser leur cadence. Les flashs sont plafonnés à un pulse par tranche de 720 ms, durent au plus 110 ms et gardent un alpha borné. Les rubans utilisent `memmove` uniquement dans le DIB ARGB local ; aucune capture du bureau n'a lieu. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
+Dessine, uniquement dans la surface de l’overlay, les déchirures, blocs corrompus, scanlines, curseurs fantômes, faux cadres « Ne répond pas », 67 glyphes d’erreur originaux, rubans de lignes déplacées et flashs. Le planificateur des rubans et flashs dépend du seed et de l'horloge réelle : un accélérateur de timeline ne peut donc jamais compresser leur cadence. Les flashs sont plafonnés à un pulse par tranche de 720 ms, durent au plus 110 ms et gardent un alpha borné. Les rubans utilisent `memmove` uniquement dans le DIB ARGB local ; aucune capture du bureau n'a lieu. Au-delà de douze oies, de 24 popups, de huit images ou de trois millions de pixels, le rendu passe en mode dense : trois oies restent complètes, les suivantes utilisent une silhouette compacte, les images stables passent par le composite ARGB mis en cache et les scanlines sont espacées.
 
 ### `AudioEffects`
 
@@ -154,7 +158,7 @@ Une image brainrot n’apparaît jamais seule. Chaque `VisualSprite` traverse qu
 
 ### `ShutdownDirector`
 
-Dans l’état actuel du code, la conclusion commence par le nettoyage et la restauration, puis rend une explosion plein écran, une coupure noire et l’entrée d’une oie d’adieu avant la fermeture. Ce même chemin réversible est encore utilisé en `lab`. Le contrat cible de `lab` exclut cette restauration : la VM doit être considérée comme sacrifiée après la corruption des fichiers, du Registre et du démarrage.
+Dans l’état actuel du code, un iris noir grandit pendant la dernière seconde de la timeline, après que le déclencheur final est devenu visible. À `5:00`, le nettoyage et la restauration passent en priorité ; l’horloge visuelle ne démarre qu’après leur réussite. Une explosion plein écran et l’entrée diagonale d’une oie d’adieu sont ensuite rendues pendant 7,5 secondes d’horloge réelle avant la fermeture. L’indicateur d’arrêt `Esc` est redessiné au-dessus de l’iris, du noir et de l’explosion. Ce même chemin réversible est utilisé dans les trois profils.
 
 ### `BootGameHandoff`
 
@@ -171,14 +175,14 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 - plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
 - surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
-- assets décodés une seule fois puis mis en cache ;
-- images brainrot pré-réduites à 256 px, rotations finales pré-rastérisées et compositées directement en ARGB prémultiplié ;
+- assets décodés une seule fois puis mis en cache, avec un LRU borné à 64 géométries et deux millions de pixels de sprites (environ 16 Mo pour Bitmap + ARGB) ;
+- images pré-réduites dans un carré transparent de 256 px sans déformer leur ratio, rotations finales pré-rastérisées et compositées directement en ARGB prémultiplié ;
 - graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
 - nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
 - croix `[x]` des images tracée à main levée en scène légère et en rectangle simple en scène dense ;
-- nombre maximal d’oies et de popups GooseRot simultanées : 67 pour chaque type, tous profils confondus ;
-- effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
-- mémoire cible : moins de 150 Mo ;
+- nombre maximal d’oies : 67 ; nombre maximal de popups logiques : 267, dont 67 HWND ;
+- effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les cadres virtuels opaques, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
+- mémoire cible : moins de 150 Mo sur un bureau courant ; sous le plafond extrême de 30 millions de pixels, la surface principale représente déjà environ 120 Mo et le processus reste borné sous environ 200 Mo ;
 - usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;
 - absence de réseau après le lancement.
 

@@ -11,3 +11,11 @@ IDR_CAT_SHOCKED RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/ca
 IDR_CAT_JUDGMENTAL RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-judgmental-gray.png"
 IDR_CAT_VACANT RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-vacant-white.png"
 IDR_CAT_SUSPICIOUS RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/Generated/Reactions/cat-suspicious-black.png"
+
+IDR_USER_GOOSE_ICE_CREAM RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-ice-cream.png"
+IDR_USER_GOOSE_WORKER RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-worker.png"
+IDR_USER_GOOSE_CALL RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-call.png"
+IDR_USER_GOOSE_STORE RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-store-brainrot.png"
+IDR_USER_GOOSE_PUNCHY RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/punchy-goose-facts.png"
+IDR_USER_GOOSE_GANGSTER RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-gangster.png"
+IDR_USER_GOOSE_JET RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/Assets/User/GooseChaos/goose-jet.png"

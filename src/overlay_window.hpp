@@ -65,7 +65,9 @@ struct ToastNotice {
 
 struct RenderState {
   double logicalTime = 0.0;
+  double shutdownAge = -1.0;
   RunMode mode = RunMode::Safe;
+  std::uint32_t seed = 67;
   const std::vector<GooseEntity>* geese = nullptr;
   const std::vector<VisualSprite>* sprites = nullptr;
   const std::vector<ToastNotice>* toasts = nullptr;
@@ -83,10 +85,12 @@ struct RenderState {
   // Bounded, real-time-governed pulse and displacement strength.
   float screenFlash = 0.0f;
   float faultRibbon = 0.0f;
+  float finalIris = 0.0f;
   std::uint32_t effectPattern = 0;
   // 0 = bare wall, 1 = the 67 tag is finished.
   float graffitiProgress = 0.0f;
   int popupCount = 0;
+  int nativePopupCount = 0;
   int propsClosed = 0;
   // True during the storm phase, including the windows where the pointer has
   // been handed back, so the HUD can say which of the two is happening.
@@ -138,6 +142,7 @@ class OverlayWindow {
     std::vector<std::uint32_t> pixels;
     int width = 0;
     int height = 0;
+    unsigned lastUsedFrame = 0;
   };
 
   static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -150,7 +155,7 @@ class OverlayWindow {
   CachedSprite* FindCachedSprite(int resourceId, int sizePixels, int angleTenths);
   void BlendCachedSprite(const CachedSprite& sprite, int destinationX, int destinationY);
 
-  void DrawPreviewDesktop(Gdiplus::Graphics& graphics) const;
+  void DrawPreviewDesktop(Gdiplus::Graphics& graphics);
   void DrawGoose(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawGooseCompact(Gdiplus::Graphics& graphics, const GooseEntity& goose, int index) const;
   void DrawSpeechBubble(Gdiplus::Graphics& graphics, const std::wstring& text, Vec2 anchor) const;
@@ -159,13 +164,18 @@ class OverlayWindow {
                           bool compact) const;
   void DrawHud(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawSceneEffects(Gdiplus::Graphics& graphics, const RenderState& state);
+  void DrawVirtualWindows(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawClipboardBadge(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawGraffiti(Gdiplus::Graphics& graphics, const RenderState& state);
   void DrawGraffitiUncached(Gdiplus::Graphics& graphics, const RenderState& state) const;
   bool BuildGraffitiCache(const RenderState& state);
   void DrawGlitch(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawErrorIcons(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawChaosFlash(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void ApplyFaultRibbons(const RenderState& state);
+  void DrawFinalIris(Gdiplus::Graphics& graphics, const RenderState& state) const;
+  void DrawEmergencyExitOverlay(Gdiplus::Graphics& graphics,
+                                const RenderState& state) const;
   void DrawToasts(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawCursorLatch(Gdiplus::Graphics& graphics, const RenderState& state) const;
   void DrawFakeShutdown(Gdiplus::Graphics& graphics, const RenderState& state) const;
@@ -214,7 +224,13 @@ class OverlayWindow {
   std::function<void()> closeHandler_;
   std::vector<std::pair<int, std::unique_ptr<ResourceImage>>> images_;
   std::unordered_map<std::uint64_t, std::unique_ptr<CachedSprite>> spriteCache_;
+  std::size_t spriteCachePixels_ = 0;
   unsigned spriteCacheBuildsThisFrame_ = 0;
+  // Preview scenery is static. Keeping one local ARGB copy avoids rebuilding a
+  // full-screen gradient and hills on every benchmark/demo frame.
+  std::vector<std::uint32_t> previewBackgroundCache_;
+  int previewBackgroundWidth_ = 0;
+  int previewBackgroundHeight_ = 0;
   std::unique_ptr<CachedSprite> graffitiCache_;
   int graffitiCacheX_ = 0;
   int graffitiCacheY_ = 0;

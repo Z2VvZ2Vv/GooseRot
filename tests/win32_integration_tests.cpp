@@ -1,17 +1,24 @@
 #include <windows.h>
+#include <objbase.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cwchar>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "companion_windows.hpp"
 #include "desktop_director.hpp"
+#include "overlay_window.hpp"
 #include "recovery_watchdog.hpp"
+#include "resource.h"
 #include "shell_surface.hpp"
 
 namespace {
@@ -43,6 +50,15 @@ LRESULT CALLBACK VictimProcedure(HWND window, UINT message, WPARAM wParam, LPARA
       return 0;
     default:
       return DefWindowProcW(window, message, wParam, lParam);
+  }
+}
+
+void DrainPendingMessages() {
+  MSG message{};
+  while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+    if (message.message == WM_QUIT) continue;
+    TranslateMessage(&message);
+    DispatchMessageW(&message);
   }
 }
 
@@ -401,6 +417,7 @@ void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
   {
     gooserot::PopupSwarm swarm;
     swarm.Spawn(instance, random, 1);
+    swarm.Tick(instance, random, 0.0);
     Expect(swarm.Count() == 1, "popup swarm creates its first window");
     HWND popup = FindPopupWindow();
     Expect(popup != nullptr, "popup window is discoverable");
@@ -413,7 +430,12 @@ void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
   {
     gooserot::PopupSwarm swarm;
     swarm.Spawn(instance, random, gooserot::PopupSwarm::kMaximumPopups);
+    for (int tick = 0; tick < 34; ++tick) {
+      swarm.Tick(instance, random, static_cast<double>(tick) / 60.0);
+    }
     Expect(swarm.AtCap(), "popup swarm reaches but never exceeds its cap");
+    Expect(swarm.NativeCount() == gooserot::PopupSwarm::kMaximumNativePopups,
+           "the 267-window wall materialises exactly 67 native HWND popups");
 
     HWND popup = FindPopupWindow();
     Expect(popup != nullptr, "a tracked popup has a live window");
@@ -426,7 +448,8 @@ void TestPopupSwarmCapRefusalAndEmergencyCleanup() {
              "refused closes keep the capped swarm full");
     }
     swarm.CloseAll();
-    Expect(swarm.Count() == 0, "emergency cleanup destroys the entire capped swarm");
+    Expect(swarm.Count() == 0 && swarm.NativeCount() == 0,
+           "emergency cleanup destroys the native and virtual capped swarm");
   }
 }
 
@@ -437,6 +460,7 @@ void TestPopupSwarmCeilingAndDissolve() {
 
   swarm.SetCeiling(4);
   swarm.Spawn(instance, random, 20);
+  swarm.Tick(instance, random, 0.0);
   Expect(swarm.Count() == 4, "the live ceiling bounds spawning below the maximum");
   Expect(swarm.AtCap(), "the swarm reports being at its live ceiling");
 
@@ -494,6 +518,193 @@ void TestNotepadRefusesTheTaskbar() {
   Expect(IsWindow(window) == FALSE, "cleanup still destroys the fake Notepad outright");
 }
 
+void TestWindowsKeySuppressionPolicy() {
+  using gooserot::ShouldSuppressWindowsKey;
+  Expect(ShouldSuppressWindowsKey(WM_KEYDOWN, VK_LWIN),
+         "left Windows key-down is suppressed in full mode");
+  Expect(ShouldSuppressWindowsKey(WM_SYSKEYUP, VK_RWIN),
+         "right Windows key-up is suppressed in full mode");
+  Expect(!ShouldSuppressWindowsKey(WM_KEYDOWN, VK_ESCAPE),
+         "the Esc emergency exit is never suppressed");
+  Expect(!ShouldSuppressWindowsKey(WM_SYSKEYDOWN, VK_TAB),
+         "Alt+Tab is never suppressed");
+  Expect(!ShouldSuppressWindowsKey(WM_KEYDOWN, VK_CONTROL),
+         "Ctrl+Shift+Esc remains available");
+  Expect(!ShouldSuppressWindowsKey(WM_CHAR, VK_LWIN),
+         "non-keyboard hook messages are ignored");
+}
+
+void TestEmbeddedChaosAssets() {
+  constexpr std::array<int, 14> resourceIds = {
+      IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
+      IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS,
+      IDR_USER_GOOSE_ICE_CREAM, IDR_USER_GOOSE_WORKER, IDR_USER_GOOSE_CALL,
+      IDR_USER_GOOSE_STORE, IDR_USER_GOOSE_PUNCHY, IDR_USER_GOOSE_GANGSTER,
+      IDR_USER_GOOSE_JET};
+  HMODULE module = GetModuleHandleW(nullptr);
+  bool allPresent = true;
+  bool allNonEmpty = true;
+  for (const int resourceId : resourceIds) {
+    HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+    allPresent = allPresent && resource != nullptr;
+    allNonEmpty = allNonEmpty && resource != nullptr && SizeofResource(module, resource) > 0;
+  }
+  Expect(allPresent, "all fourteen image resources are embedded in the executable");
+  Expect(allNonEmpty, "every embedded image resource contains data");
+}
+
+void TestDenseRenderBudget() {
+  DrainPendingMessages();
+  const HRESULT ole = OleInitialize(nullptr);
+  // Warm up window-class, GDI+ and image-codec process caches before taking the
+  // resource baseline. Those one-time allocations are not per-overlay leaks.
+  {
+    gooserot::OverlayWindow warmup;
+    std::wstring warmupError;
+    if (warmup.Create(GetModuleHandleW(nullptr), true, true, []() {}, []() {},
+                      warmupError)) {
+      warmup.StopRenderTimer();
+      gooserot::RenderState warmupState;
+      warmup.Render(warmupState);
+      warmup.Close();
+    }
+  }
+  DrainPendingMessages();
+  Sleep(80);
+  DrainPendingMessages();
+  const DWORD userBefore = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+  const DWORD gdiBefore = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+  gooserot::OverlayWindow overlay;
+  std::wstring error;
+  const bool created = overlay.Create(GetModuleHandleW(nullptr), true, true, []() {}, []() {}, error);
+  Expect(created, "dense render benchmark creates its offscreen preview");
+  if (!created) {
+    if (SUCCEEDED(ole)) OleUninitialize();
+    return;
+  }
+  overlay.StopRenderTimer();
+  RECT outer{0, 0, 1920, 1080};
+  AdjustWindowRectEx(&outer, WS_OVERLAPPEDWINDOW, FALSE, 0);
+  SetWindowPos(overlay.Handle(), nullptr, 0, 0, outer.right - outer.left,
+               outer.bottom - outer.top,
+               SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+  const gooserot::RectF bounds = overlay.CanvasBounds();
+  // The desktop test runner clamps top-level windows to its work area. Accept
+  // 80% of a compact runner's display while requesting and capping at 1.5 MP.
+  const float availablePixels = static_cast<float>(GetSystemMetrics(SM_CXSCREEN)) *
+                                static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+  const float requiredPixels = std::min(1500000.0f, availablePixels * 0.8f);
+  Expect(bounds.Width() * bounds.Height() >= requiredPixels,
+          "dense render benchmark uses a representative display-sized surface");
+
+  std::vector<gooserot::GooseEntity> geese;
+  geese.reserve(67);
+  for (int index = 0; index < 67; ++index) {
+    const int column = index % 11;
+    const int row = index / 11;
+    geese.emplace_back(gooserot::Vec2{90.0f + column * 170.0f, 110.0f + row * 145.0f});
+  }
+
+  constexpr std::array<int, 14> resourceIds = {
+      IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
+      IDR_CAT_SHOCKED, IDR_CAT_JUDGMENTAL, IDR_CAT_VACANT, IDR_CAT_SUSPICIOUS,
+      IDR_USER_GOOSE_ICE_CREAM, IDR_USER_GOOSE_WORKER, IDR_USER_GOOSE_CALL,
+      IDR_USER_GOOSE_STORE, IDR_USER_GOOSE_PUNCHY, IDR_USER_GOOSE_GANGSTER,
+      IDR_USER_GOOSE_JET};
+  std::vector<gooserot::VisualSprite> sprites;
+  sprites.reserve(48);
+  for (int index = 0; index < 48; ++index) {
+    gooserot::VisualSprite sprite;
+    sprite.resourceId = resourceIds[static_cast<std::size_t>(index) % resourceIds.size()];
+    sprite.center = {130.0f + static_cast<float>(index % 12) * 145.0f,
+                     105.0f + static_cast<float>(index / 12) * 245.0f};
+    sprite.targetCenter = sprite.center;
+    sprite.size = 118.0f + static_cast<float>(index % 4) * 12.0f;
+    sprite.angleDegrees = static_cast<float>((index % 5) - 2) * 2.5f;
+    sprite.createdAt = 0.0;
+    sprite.lifetime = 320.0;
+    sprites.push_back(sprite);
+  }
+
+  std::vector<gooserot::ToastNotice> toasts;
+  gooserot::RenderState state;
+  state.logicalTime = 292.0;
+  state.seed = 67;
+  state.geese = &geese;
+  state.sprites = &sprites;
+  state.toasts = &toasts;
+  state.bubbleText = L"CRITICAL ERROR: MAXIMUM BRAINROT REACHED.";
+  state.bubbleAnchor = bounds.Center();
+  state.aura = -999998;
+  state.cursor = {960, 540};
+  state.glitch = 0.92f;
+  state.cursorChaos = 0.95f;
+  state.faultRibbon = 0.92f;
+  state.effectPattern = 67U;
+  state.graffitiProgress = 1.0f;
+  state.popupCount = 267;
+  state.nativePopupCount = 0;
+  state.graffiti = true;
+  state.colorFilter = true;
+  state.finalMonologue = true;
+  state.countdown = true;
+  state.flashesEnabled = false;
+
+  for (int frame = 0; frame < 12; ++frame) overlay.Render(state);
+  std::vector<double> rampSamples;
+  rampSamples.reserve(30);
+  state.nativePopupCount = 67;
+  for (int frame = 0; frame < 30; ++frame) {
+    state.popupCount = 68 + (199 * frame) / 29;
+    const auto started = std::chrono::steady_clock::now();
+    overlay.Render(state);
+    const auto finished = std::chrono::steady_clock::now();
+    rampSamples.push_back(
+        std::chrono::duration<double, std::milli>(finished - started).count());
+  }
+  std::sort(rampSamples.begin(), rampSamples.end());
+  const double rampP95 =
+      rampSamples[static_cast<std::size_t>(rampSamples.size() * 0.95)];
+  Expect(rampP95 < 100.0,
+         "incremental 68-to-267 popup growth keeps the 10 FPS p95 budget");
+
+  std::vector<double> samples;
+  samples.reserve(30);
+  state.popupCount = 267;
+  state.nativePopupCount = 0;
+  for (int frame = 0; frame < 30; ++frame) {
+    const auto started = std::chrono::steady_clock::now();
+    state.effectPattern += 17U;
+    overlay.Render(state);
+    const auto finished = std::chrono::steady_clock::now();
+    samples.push_back(std::chrono::duration<double, std::milli>(finished - started).count());
+  }
+  std::sort(samples.begin(), samples.end());
+  const double p95 = samples[static_cast<std::size_t>(samples.size() * 0.95)];
+  const double average = std::accumulate(samples.begin(), samples.end(), 0.0) /
+                         static_cast<double>(samples.size());
+  std::cout << "Dense render (" << static_cast<int>(bounds.Width()) << 'x'
+            << static_cast<int>(bounds.Height()) << "): average " << average
+            << " ms, p95 " << p95 << " ms, ramp p95 " << rampP95 << " ms\n";
+  wchar_t profileTitle[512]{};
+  GetWindowTextW(overlay.Handle(), profileTitle, static_cast<int>(std::size(profileTitle)));
+  std::wcout << L"Dense render profile: " << profileTitle << L'\n';
+  Expect(average < 100.0, "dense render keeps at least 10 FPS on average");
+  Expect(p95 < 130.0, "dense render avoids long-tail slideshow stalls");
+
+  overlay.Close();
+  DrainPendingMessages();
+  Sleep(80);
+  DrainPendingMessages();
+  if (SUCCEEDED(ole)) OleUninitialize();
+  const DWORD userAfter = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+  const DWORD gdiAfter = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+  std::cout << "Dense render resources: USER " << userBefore << " -> " << userAfter
+            << ", GDI " << gdiBefore << " -> " << gdiAfter << '\n';
+  Expect(userAfter <= userBefore + 8, "dense render releases USER objects");
+  Expect(gdiAfter <= gdiBefore + 16, "dense render releases GDI objects");
+}
+
 bool ParseUnsigned(const wchar_t* text, unsigned long long& value) {
   if (!text || !*text || *text == L'+' || *text == L'-') return false;
   wchar_t* end = nullptr;
@@ -526,6 +737,9 @@ int wmain(int argc, wchar_t** argv) {
   TestPopupSwarmCapRefusalAndEmergencyCleanup();
   TestPopupSwarmCeilingAndDissolve();
   TestNotepadRefusesTheTaskbar();
+  TestWindowsKeySuppressionPolicy();
+  TestEmbeddedChaosAssets();
+  TestDenseRenderBudget();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";
     return 0;

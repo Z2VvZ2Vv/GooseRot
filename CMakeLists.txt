@@ -43,6 +43,13 @@ set(GOOSEROT_RESOURCE_INPUTS
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-judgmental-gray.png"
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-vacant-white.png"
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Reactions/cat-suspicious-black.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-ice-cream.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-worker.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-call.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-store-brainrot.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/punchy-goose-facts.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-gangster.png"
+  "${CMAKE_CURRENT_SOURCE_DIR}/Assets/User/GooseChaos/goose-jet.png"
 )
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GOOSEROT_RESOURCE_INPUTS})
 set(GOOSEROT_RESOURCE_FINGERPRINT_SOURCE "")
@@ -128,6 +135,8 @@ if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
 
   add_executable(gooserot_win32_tests
     tests/win32_integration_tests.cpp
+    src/overlay_window.cpp
+    src/overlay_window.hpp
     src/companion_windows.cpp
     src/companion_windows.hpp
     src/desktop_director.cpp
@@ -136,8 +145,15 @@ if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
     src/recovery_watchdog.hpp
     src/shell_surface.cpp
     src/shell_surface.hpp
+    "${GOOSEROT_GENERATED_DIR}/resources.rc"
   )
-  target_link_libraries(gooserot_win32_tests PRIVATE gooserot_core user32 gdi32)
+  target_link_libraries(gooserot_win32_tests PRIVATE
+    gooserot_core
+    gdiplus
+    gdi32
+    user32
+    ole32
+  )
   if(MSVC)
     set_property(TARGET gooserot_win32_tests PROPERTY
       MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

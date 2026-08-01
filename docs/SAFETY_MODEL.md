@@ -14,24 +14,27 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - traction initiale du curseur sur 67 pixels, puis tempête par vagues, bornée à l’écran, restaurée lors du nettoyage, et qui rend intégralement le pointeur pendant une partie de chaque cycle ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot, fenêtre qui refuse d’être réduite dans la barre des tâches tant que sa phase de frappe est active ;
 - fenêtre GooseRot posée sur le bouton Démarrer, qui absorbe les clics l’atteignant ;
-- lancement consenti de six utilitaires Windows au maximum, suivis exclusivement par leur PID de création ;
-- fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, via notification foreground sans hook clavier ni frappe globale ;
+- lancement consenti de six utilitaires Windows simultanés au maximum, cadencé par l’horloge réelle et suivi exclusivement par leur PID de création ;
+- garde clavier temporaire, après choix explicite de l’expérience complète, qui absorbe uniquement les deux touches Windows ;
+- fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, via notification foreground sans frappe synthétique ;
 - fenêtres GooseRot qui refusent de se fermer et se dupliquent, dans les limites décrites plus bas ;
 - simulation visuelle de `Ctrl+V`, sans hook clavier ni accès au presse-papiers ;
-- faux glitch, faux BSOD et faux firmware ;
+- faux glitch, glyphes d’erreur originaux, faux BSOD et faux firmware ;
 - explosion, coupure noire et conclusion rendues dans l’overlay, sans appel système.
 
-## Bouton Démarrer recouvert
+## Menu Démarrer protégé
 
-Le blocage du bouton Démarrer est un recouvrement, pas une interception :
+Le clic sur le bouton Démarrer est bloqué par recouvrement :
 
 - il s’agit d’une fenêtre appartenant au processus GooseRot, positionnée sur le rectangle du bouton et détruite par le nettoyage, l’arrêt d’urgence et la fin du processus ;
-- aucun hook clavier ou souris global n’est installé, aucune touche n’est synthétisée, et aucune fenêtre du shell n’est sous-classée, déplacée, désactivée ou détruite ;
+- aucune fenêtre du shell n’est sous-classée, déplacée, désactivée ou détruite ;
 - `WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est absorbé sans jamais prendre le focus à l’application de l’utilisateur ;
-- `Ctrl+Shift+Échap`, `Alt+Tab`, `Win+Tab`, la zone de notification et le reste de la barre des tâches restent utilisables ;
+- `Ctrl+Shift+Échap`, `Alt+Tab`, la zone de notification et le reste de la barre des tâches restent utilisables ;
 - la sortie d’urgence `Échap` maintenue deux secondes n’est jamais affectée ;
 - une fois le garde détruit, Windows retrouve immédiatement son comportement normal : aucun réglage du shell n’a été modifié ;
 - le consentement initial annonce explicitement ce recouvrement.
+
+Dans l’expérience complète uniquement, le clavier reçoit en plus un hook bas niveau borné à `VK_LWIN` et `VK_RWIN`. Il n’enregistre rien, ne synthétise rien et ne change aucun réglage persistant. Le mode réduit et la Preview ne l’installent jamais. Le garde reste actif pendant les visuels de conclusion puis disparaît à la sortie de la boucle ; l’arrêt d’urgence et les erreurs le retirent immédiatement.
 
 ## Images fermables
 
@@ -47,11 +50,11 @@ Les images brainrot posées sur le bureau portent une croix `[x]` réellement cl
 Dans l’implémentation actuelle et dans le profil cible `safe`, le gag « une fenêtre fermée en fait apparaître deux » est borné par construction :
 
 - il ne concerne que des fenêtres créées par GooseRot, jamais celles d’une autre application ;
-- le nombre total de popups est plafonné à 67 ; une fois ce plafond atteint, les fermetures ordinaires restent refusées et seul le chemin privilégié de nettoyage les détruit ;
+- le compteur visuel est plafonné à 267 : 67 popups possèdent un HWND et les 200 suivantes sont de simples cadres dans l’overlay ; une fois ce plafond atteint, les fermetures ordinaires restent refusées ;
 - après le monologue final, le plafond décroît et l’essaim est détruit par ce même chemin privilégié jusqu’à disparaître : la fin réduit le nombre de fenêtres au lieu de l’augmenter ;
 - le faux Bloc-notes refuse d’être réduit, jamais d’être détruit : le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement ;
 - le faux Bloc-notes peut revenir tant que sa phase de frappe est active, puis le nettoyage le détruit directement ;
-- les vrais utilitaires reçoivent seulement une requête `WM_CLOSE` pendant le nettoyage et ne sont jamais terminés de force ;
+- chaque vrai utilitaire est créé suspendu et refusé si son assignation au Job Object privé échoue ; les plus anciens reçoivent d’abord `WM_CLOSE` de façon répétée puis, après quatre secondes de grâce et au nettoyage, le job ou le handle exact retourné par `CreateProcessW` empêchent uniquement ces enfants de survivre, sans jamais adopter ni viser un PID préexistant ;
 - les popups sont créées sans vol de focus et restent entièrement dans la zone de travail ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
 - le consentement initial annonce explicitement ce comportement.

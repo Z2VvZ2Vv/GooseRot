@@ -72,6 +72,7 @@ class GooseRotApp {
   void SetBubble(std::wstring text, double durationSeconds);
   void AimLeadGooseBeakAt(Vec2 target, SpeedTier tier);
   void BeginShutdown();
+  void StartShutdownVisuals();
   bool Cleanup();
   bool LaunchBootPreview();
   RenderState BuildRenderState() const;
@@ -94,6 +95,7 @@ class GooseRotApp {
   PopupSwarm popups_;
   OwnedWindowsApps ownedWindowsApps_;
   TaskbarGuard taskbarGuard_;
+  WindowsKeyGuard windowsKeyGuard_;
   std::mt19937 random_;
   std::mt19937 audioRandom_;
   std::mt19937 keyboardRandom_;
@@ -108,9 +110,8 @@ class GooseRotApp {
   double nextWindowAction_ = phase::kCursorAndWindows;
   double nextCursorAction_ = phase::kCursorAndWindows + 15.0;
   double nextSpriteAt_ = phase::kGooseReturn;
-  double nextPopupAt_ = 1e9;
   double nextPopupDissolveAt_ = 0.0;
-  double nextOwnedAppAt_ = phase::kOwnedApps;
+  double nextOwnedAppAtReal_ = 0.0;
   double bubbleUntil_ = 0.0;
   double emergencyHeldSeconds_ = 0.0;
   double auraPromptArmedAt_ = -1.0;
@@ -118,6 +119,7 @@ class GooseRotApp {
   double grabStartedAt_ = -1.0;
   double grabDeadline_ = -1.0;
   double lastTaskbarGuardPokeAt_ = -1000.0;
+  double shutdownStartedRealTime_ = -1.0;
   int auraDelta_ = 0;
   int grabRemainingPixels_ = 0;
   int grabDirection_ = 1;
@@ -132,6 +134,7 @@ class GooseRotApp {
   // gets to it first, so a single click never triggers two reactions.
   bool leftMousePressed_ = false;
   bool flockOffstage_ = false;
+  bool shutdownRequested_ = false;
   bool shutdownStarted_ = false;
   bool cleanupDone_ = false;
   bool completedTimeline_ = false;

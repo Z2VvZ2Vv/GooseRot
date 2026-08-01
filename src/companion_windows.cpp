@@ -432,7 +432,7 @@ ATOM PopupSwarm::Register(HINSTANCE instance) {
 }
 
 bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
-  if (AtCap() || !Register(instance)) return false;
+  if (NativeCount() >= kMaximumNativePopups || !Register(instance)) return false;
 
   auto popup = std::make_unique<Popup>();
   popup->owner = this;
@@ -464,54 +464,69 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random) {
       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
       kWidth / 2 - 70, 104, 140, 32, popup->window,
       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPopupCloseButtonId)), instance, nullptr);
-  popup->font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (!font_) {
+    font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  }
   for (HWND control : {popup->label, popup->button}) {
-    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(popup->font), TRUE);
+    if (control && font_) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
   }
   ShowWindow(popup->window, SW_SHOWNOACTIVATE);
-  UpdateWindow(popup->window);
   popups_.push_back(std::move(popup));
   return true;
 }
 
 void PopupSwarm::Spawn(HINSTANCE instance, std::mt19937& random, int count) {
-  for (int index = 0; index < count && !AtCap(); ++index) CreatePopup(instance, random);
+  (void)instance;
+  (void)random;
+  if (count <= 0 || AtCap()) return;
+  logicalCount_ = std::min(ceiling_, logicalCount_ + count);
 }
 
 void PopupSwarm::SetCeiling(int ceiling) {
   ceiling_ = std::clamp(ceiling, 0, kMaximumPopups);
-  if (AtCap()) pendingSpawns_ = 0;
 }
 
 int PopupSwarm::Dissolve(int count) {
-  int destroyed = 0;
-  for (auto popup = popups_.rbegin(); popup != popups_.rend() && destroyed < count; ++popup) {
+  const int removed = std::min(std::max(0, count), logicalCount_);
+  logicalCount_ -= removed;
+  int nativeToRemove = std::max(
+      0, static_cast<int>(popups_.size()) -
+             std::min(logicalCount_, kMaximumNativePopups));
+  for (auto popup = popups_.rbegin(); popup != popups_.rend() && nativeToRemove > 0; ++popup) {
     if ((*popup)->dead) continue;
     (*popup)->dead = true;
     if ((*popup)->window) DestroyWindow((*popup)->window);
-    ++destroyed;
+    --nativeToRemove;
   }
-  if (destroyed > 0) pendingSpawns_ = 0;
-  return destroyed;
+  popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
+                               [](const std::unique_ptr<Popup>& popup) {
+                                 return popup->dead;
+                               }),
+                popups_.end());
+  return removed;
 }
 
 void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTime) {
   lastTickTime_ = logicalTime;
   popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
                                [](const std::unique_ptr<Popup>& popup) {
-                                 if (!popup->dead) return false;
-                                 if (popup->font) DeleteObject(popup->font);
-                                 return true;
+                                 return popup->dead;
                                }),
                 popups_.end());
 
-  while (pendingSpawns_ > 0 && !AtCap()) {
-    --pendingSpawns_;
-    if (!CreatePopup(instance, random)) break;
+  const int desiredNative = std::min(logicalCount_, kMaximumNativePopups);
+  const ULONGLONG now = GetTickCount64();
+  if (now >= nextNativeSpawnAttemptAt_) {
+    for (int created = 0; created < 2 && NativeCount() < desiredNative; ++created) {
+      if (!CreatePopup(instance, random)) {
+        nextNativeSpawnAttemptAt_ = now + 500;
+        break;
+      }
+      nextNativeSpawnAttemptAt_ = 0;
+    }
   }
-  pendingSpawns_ = 0;
 
   for (const std::unique_ptr<Popup>& popup : popups_) {
     if (!popup->window || logicalTime > popup->jiggleUntil) continue;
@@ -530,7 +545,7 @@ void PopupSwarm::RequestClose(Popup& popup) {
   ++closeAttempts_;
   ++popup.refusals;
   if (!AtCap()) {
-    pendingSpawns_ += 2;
+    logicalCount_ = std::min(kMaximumPopups, logicalCount_ + 1);
     popup.dead = true;
     if (popup.window) DestroyWindow(popup.window);
     return;
@@ -538,7 +553,7 @@ void PopupSwarm::RequestClose(Popup& popup) {
   popup.jiggleUntil = lastTickTime_ + 1.2;
   if (popup.label) {
     SetWindowTextW(popup.label,
-                   L"ACCESS DENIED.\r\nThese windows own this desktop now.");
+                   L"ACCESS DENIED.\r\n267 ERROR WINDOWS OWN THIS DESKTOP.");
   }
   if (popup.button) SetWindowTextW(popup.button, L"CLOSE DENIED");
 }
@@ -552,10 +567,14 @@ bool PopupSwarm::ConsumeCloseAttempt() {
 void PopupSwarm::CloseAll() {
   for (const std::unique_ptr<Popup>& popup : popups_) {
     if (popup->window) DestroyWindow(popup->window);
-    if (popup->font) DeleteObject(popup->font);
   }
   popups_.clear();
-  pendingSpawns_ = 0;
+  if (font_) {
+    DeleteObject(font_);
+    font_ = nullptr;
+  }
+  logicalCount_ = 0;
+  nextNativeSpawnAttemptAt_ = 0;
   closeAttempts_ = 0;
 }
 
@@ -616,6 +635,7 @@ struct OwnedWindowQuery {
   DWORD processId = 0;
   HWND firstWindow = nullptr;
   bool closeWindows = false;
+  bool closePosted = false;
 };
 
 BOOL CALLBACK VisitOwnedWindow(HWND window, LPARAM parameter) {
@@ -624,7 +644,7 @@ BOOL CALLBACK VisitOwnedWindow(HWND window, LPARAM parameter) {
   GetWindowThreadProcessId(window, &processId);
   if (processId != query->processId || GetWindow(window, GW_OWNER) != nullptr) return TRUE;
   if (query->closeWindows) {
-    PostMessageW(window, WM_CLOSE, 0, 0);
+    if (PostMessageW(window, WM_CLOSE, 0, 0)) query->closePosted = true;
     return TRUE;
   }
   if (IsWindowVisible(window)) {
@@ -640,17 +660,31 @@ HWND FindOwnedWindow(DWORD processId) {
   return query.firstWindow;
 }
 
-void AskOwnedWindowsToClose(DWORD processId) {
-  OwnedWindowQuery query{processId, nullptr, true};
+bool AskOwnedWindowsToClose(DWORD processId) {
+  OwnedWindowQuery query{processId, nullptr, true, false};
   EnumWindows(&VisitOwnedWindow, reinterpret_cast<LPARAM>(&query));
+  return query.closePosted;
 }
 
 }  // namespace
 
+OwnedWindowsApps::OwnedWindowsApps() {
+  job_ = CreateJobObjectW(nullptr, nullptr);
+  if (!job_) return;
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation,
+                               &limits, sizeof(limits))) {
+    CloseHandle(job_);
+    job_ = nullptr;
+  }
+}
+
 OwnedWindowsApps::~OwnedWindowsApps() { CloseAll(); }
 
-bool OwnedWindowsApps::LaunchRandom(std::mt19937& random, double logicalTime) {
-  if (Count() >= kMaximumApps) return false;
+bool OwnedWindowsApps::LaunchRandom(std::mt19937& random, double clockSeconds,
+                                    bool stableProcessOnly) {
+  if (Count() >= kMaximumApps || !job_) return false;
 
   wchar_t systemDirectory[MAX_PATH]{};
   wchar_t windowsDirectory[MAX_PATH]{};
@@ -665,32 +699,51 @@ bool OwnedWindowsApps::LaunchRandom(std::mt19937& random, double logicalTime) {
   };
   const std::wstring system(systemDirectory);
   const std::wstring windows(windowsDirectory);
+  // The first three programs keep their own process/window on supported
+  // Windows versions. The finale uses only this subset so rapid rotation never
+  // loses ownership through an Explorer or packaged-app broker.
   const std::array<AppSpec, 6> apps = {{
-      {system + L"\\notepad.exe", L""},
       {system + L"\\mspaint.exe", L""},
-      {system + L"\\taskmgr.exe", L""},
       {system + L"\\charmap.exe", L""},
-      {system + L"\\cmd.exe", L" /d /q /k title GooseRot Console"},
+      {system + L"\\winver.exe", L""},
+      {system + L"\\notepad.exe", L""},
+      {system + L"\\taskmgr.exe", L""},
       {windows + L"\\explorer.exe", L" /separate,\"" + windows + L"\""},
   }};
-  std::uniform_int_distribution<std::size_t> pick(0, apps.size() - 1);
-  const AppSpec& app = apps[pick(random)];
-  if (GetFileAttributesW(app.executable.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+  const std::size_t last = stableProcessOnly ? 2U : apps.size() - 1U;
+  std::array<const AppSpec*, 6> available{};
+  std::size_t availableCount = 0;
+  for (std::size_t index = 0; index <= last; ++index) {
+    if (GetFileAttributesW(apps[index].executable.c_str()) != INVALID_FILE_ATTRIBUTES) {
+      available[availableCount++] = &apps[index];
+    }
+  }
+  if (availableCount == 0) return false;
+  std::uniform_int_distribution<std::size_t> pick(0, availableCount - 1);
+  const AppSpec& app = *available[pick(random)];
 
   std::wstring command = L"\"" + app.executable + L"\"" + app.arguments;
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process{};
   if (!CreateProcessW(app.executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-                      CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &startup, &process)) {
+                      CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED,
+                      nullptr, nullptr, &startup, &process)) {
+    return false;
+  }
+  if (!AssignProcessToJobObject(job_, process.hProcess) ||
+      ResumeThread(process.hThread) == static_cast<DWORD>(-1)) {
+    TerminateProcess(process.hProcess, 0);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
     return false;
   }
   CloseHandle(process.hThread);
-  processes_.push_back({process.hProcess, process.dwProcessId, logicalTime, false});
+  processes_.push_back({process.hProcess, process.dwProcessId, clockSeconds, false, 0.0});
   return true;
 }
 
-void OwnedWindowsApps::Tick(std::mt19937& random, double logicalTime) {
+void OwnedWindowsApps::Tick(std::mt19937& random, double clockSeconds) {
   processes_.erase(std::remove_if(processes_.begin(), processes_.end(), [](ProcessEntry& entry) {
                      if (!entry.process || WaitForSingleObject(entry.process, 0) != WAIT_OBJECT_0) {
                        return false;
@@ -701,10 +754,13 @@ void OwnedWindowsApps::Tick(std::mt19937& random, double logicalTime) {
                    }),
                    processes_.end());
 
+  if (clockSeconds < nextWindowEnumerationAt_) return;
+  nextWindowEnumerationAt_ = clockSeconds + 0.15;
+
   RECT workArea{};
   if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) return;
   for (ProcessEntry& entry : processes_) {
-    if (entry.positioned || logicalTime - entry.launchedAt < 0.35) continue;
+    if (entry.positioned || clockSeconds - entry.launchedAt < 0.35) continue;
     HWND window = FindOwnedWindow(entry.processId);
     if (!window) continue;
     RECT rectangle{};
@@ -721,14 +777,32 @@ void OwnedWindowsApps::Tick(std::mt19937& random, double logicalTime) {
   }
 }
 
+void OwnedWindowsApps::RequestCloseOlderThan(double clockSeconds,
+                                              double maximumAgeSeconds) {
+  for (ProcessEntry& entry : processes_) {
+    const double age = clockSeconds - entry.launchedAt;
+    if (age < maximumAgeSeconds ||
+        clockSeconds < entry.nextCloseAttemptAt) {
+      continue;
+    }
+    const bool posted = AskOwnedWindowsToClose(entry.processId);
+    if (age >= maximumAgeSeconds + 4.0 && entry.process &&
+        WaitForSingleObject(entry.process, 0) == WAIT_TIMEOUT) {
+      // Preserve the promised rotation even if an empty utility ignores
+      // WM_CLOSE. This is still the exact CreateProcessW handle owned here.
+      TerminateProcess(entry.process, 0);
+    }
+    entry.nextCloseAttemptAt = clockSeconds + (posted ? 2.0 : 0.5);
+  }
+}
+
 void OwnedWindowsApps::CloseAll() {
   for (ProcessEntry& entry : processes_) {
     if (entry.processId) AskOwnedWindowsToClose(entry.processId);
   }
 
   // Give cooperative WM_CLOSE a short chance to complete while handles still
-  // identify exactly the processes GooseRot created. We never terminate an
-  // external process and never adopt a pre-existing PID.
+  // identify exactly the processes GooseRot created.
   const ULONGLONG deadline = GetTickCount64() + 900;
   bool running = true;
   while (running && GetTickCount64() < deadline) {
@@ -741,10 +815,26 @@ void OwnedWindowsApps::CloseAll() {
     }
     if (running) Sleep(20);
   }
+  // The job contains only successfully assigned child processes created by
+  // this object. Closing it guarantees those empty utility windows do not
+  // survive normal cleanup or a GooseRot crash; pre-existing PIDs are never
+  // adopted into the job.
+  if (job_) {
+    CloseHandle(job_);
+    job_ = nullptr;
+  }
   for (ProcessEntry& entry : processes_) {
+    if (entry.process && WaitForSingleObject(entry.process, 250) == WAIT_TIMEOUT) {
+      // Fallback for systems that refuse nested job assignment. This handle is
+      // the exact process returned by our CreateProcessW call; no discovered or
+      // pre-existing process is ever terminated.
+      TerminateProcess(entry.process, 0);
+      WaitForSingleObject(entry.process, 250);
+    }
     if (entry.process) CloseHandle(entry.process);
   }
   processes_.clear();
+  nextWindowEnumerationAt_ = 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -920,6 +1010,37 @@ LRESULT TaskbarGuard::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) 
       break;
   }
   return DefWindowProcW(window_, message, wParam, lParam);
+}
+
+// ---------------------------------------------------------------------------
+// WindowsKeyGuard
+// ---------------------------------------------------------------------------
+
+bool ShouldSuppressWindowsKey(WPARAM message, DWORD virtualKey) {
+  const bool keyboardMessage = message == WM_KEYDOWN || message == WM_KEYUP ||
+                               message == WM_SYSKEYDOWN || message == WM_SYSKEYUP;
+  return keyboardMessage && (virtualKey == VK_LWIN || virtualKey == VK_RWIN);
+}
+
+WindowsKeyGuard::~WindowsKeyGuard() { Close(); }
+
+bool WindowsKeyGuard::Install(HINSTANCE instance) {
+  if (hook_) return true;
+  hook_ = SetWindowsHookExW(WH_KEYBOARD_LL, &WindowsKeyGuard::HookProcedure, instance, 0);
+  return hook_ != nullptr;
+}
+
+void WindowsKeyGuard::Close() {
+  if (hook_) UnhookWindowsHookEx(hook_);
+  hook_ = nullptr;
+}
+
+LRESULT CALLBACK WindowsKeyGuard::HookProcedure(int code, WPARAM wParam, LPARAM lParam) {
+  if (code >= 0 && lParam) {
+    const auto* event = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
+    if (ShouldSuppressWindowsKey(wParam, event->vkCode)) return 1;
+  }
+  return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 }  // namespace gooserot

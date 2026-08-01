@@ -269,6 +269,19 @@ ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
   return cue;
 }
 
+FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale) {
+  FrameAdvance advance;
+  if (!std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0 ||
+      !std::isfinite(durationScale) || durationScale <= 0.0) {
+    return advance;
+  }
+  advance.wallDelta = elapsedSeconds;
+  advance.simulationDelta = std::min(elapsedSeconds, 0.25);
+  advance.logicalDelta = elapsedSeconds / durationScale;
+  advance.simulationLogicalDelta = advance.simulationDelta / durationScale;
+  return advance;
+}
+
 TimelineEngine::TimelineEngine()
     : events_({
           {TimelineEventId::PassiveEntrance, phase::kEntrance, L"Passive Entrance"},

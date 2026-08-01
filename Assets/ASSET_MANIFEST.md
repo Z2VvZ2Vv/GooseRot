@@ -32,6 +32,20 @@ Ces trois stickers sont des créations originales générées pour le projet. Il
 - `Generated/UI/clipboard-certified.svg`
 - `Generated/UI/reset-aura-button.svg`
 
+## Fournis pour GooseRot
+
+Les sept PNG de `User/GooseChaos/` ont été fournis explicitement par l’utilisateur pour cette expérience. Ils sont embarqués tels quels comme ressources runtime ; GooseRot conserve leur ratio et les anime depuis un bord de l’écran.
+
+Cette provenance de dépôt ne constitue pas à elle seule une licence de redistribution publique. Une release externe doit vérifier les autorisations correspondantes, notamment pour toute image comportant un watermark.
+
+- `User/GooseChaos/goose-ice-cream.png`
+- `User/GooseChaos/goose-worker.png`
+- `User/GooseChaos/goose-call.png`
+- `User/GooseChaos/goose-store-brainrot.png`
+- `User/GooseChaos/punchy-goose-facts.png`
+- `User/GooseChaos/goose-gangster.png`
+- `User/GooseChaos/goose-jet.png`
+
 ## Palette
 
 - Rose néon : `#ff2daa`

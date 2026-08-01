@@ -10,7 +10,7 @@ Le profil `safe` reste la variante inoffensive et le seul profil offrant la sort
 > [!NOTE]
 > Cette documentation fixe le contrat produit visé. L’implémentation actuelle n’a pas encore été alignée : elle conserve des protections et une sortie `Esc` dans tous les profils et n’implémente pas les destructions décrites pour `lab`. Ne pas confondre ce constat avec une garantie pour une future build `lab`.
 
-Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : les fenêtres récalcitrantes appartiennent à GooseRot, l’essaim est plafonné à 67 et refuse les fermetures ordinaires au plafond, tandis que le nettoyage d’urgence les détruit toutes. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
+Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : les fenêtres récalcitrantes appartiennent à GooseRot, le mur visuel est plafonné à 267 dont 67 HWND natifs et refuse les fermetures ordinaires au plafond, tandis que le nettoyage d’urgence détruit ses deux couches. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
 
 ## État de l’implémentation
 
@@ -21,16 +21,18 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - moteur de glitch piloté par la timeline et l'horloge réelle : déchirures, rubans de pixels déplacés dans l'overlay, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas » et flashs bornés ;
 - tag `67` géant peint en direct à la bombe, avec coulures, overspray et une oie qui suit la buse, dessiné après les images et sous une passe d’encre pour rester visible sur n’importe quel écran ;
 - interface tracée à main levée : bords irréguliers qui frémissent, scotch, plaques penchées ;
-- jusqu’à 67 entités indépendantes, bulles, images PNG systématiquement rapportées depuis hors champ par une oie, fermables par leur croix `[x]` avec conséquences, et effets des cinq phases ;
+- jusqu’à 67 entités indépendantes, bulles et 14 images PNG systématiquement rapportées depuis hors champ par une oie, fermables par leur croix `[x]` avec conséquences, et effets des cinq phases ;
 - traction initiale du curseur sur 67 pixels, puis tempête par vagues à partir de `4:00` : chaque cycle saisit le pointeur puis le rend intégralement, la part saisie et la violence montant jusqu’à la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
 - fenêtres Aura/Sigma interactives, faux Bloc-notes qui écrit pendant presque toute la timeline et refuse d’être réduit dans la barre des tâches, faux Task Manager, File Explorer, Windows Security ou Command Prompt ;
-- petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics, sans hook ni modification du shell, détruit au nettoyage ;
+- petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics ; en expérience complète, garde temporaire limitée aux deux touches Windows, sans modification du shell ni réglage persistant, retirée à la fin ou immédiatement lors d’un arrêt d’urgence ;
+- mur visuel plafonné à 267 fausses fenêtres : 67 HWND interactifs et 200 cadres légers rendus dans l’overlay ;
 - essaim de fenêtres dévoré par le glitch après `5:00` : moins de boîtes de dialogue et une dégradation d’affichage qui monte en continu jusqu’à la fin ;
-- jusqu’à six vrais utilitaires Windows (Notepad, Paint, Task Manager, Character Map, Command Prompt ou Explorer) lancés depuis une liste fixe, suivis par PID, placés aléatoirement puis sollicités pour fermeture par GooseRot ;
+- jusqu’à six vrais utilitaires Windows simultanés (Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer), protégés par un Job Object privé, lancés à cadence réelle puis fermés avant la finale ;
+- pluie déterministe de 67 glyphes d’erreur originaux, dessinés uniquement dans l’overlay ;
 - sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;
 - rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
-- fausses notifications système peintes dans l’overlay, jamais envoyées à Windows ;
+- fausses notifications système peintes dans l’overlay, jamais envoyées à Windows, puis iris noir plein écran et explosion finale ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau, muet, sans flash et à mouvement réduit par défaut ;
 - cœur AURA 67 déterministe — un runner infini pré-OS façon dinosaure Chrome, joué sur une carte mère — et `GooseBootPreview.exe` sûr dans `boot/` ;
@@ -70,7 +72,7 @@ cmake --build build-firmware --target gooseboot_firmware_bundle
 
 Les images vérifiées statiquement sont placées dans `build-firmware/boot/firmware/`. La dernière commande prépare `build-firmware/boot/firmware-dist/` avec les quatre artefacts, le manifeste, les SHA-256 et un README. Ce dossier est un paquet de laboratoire non publiable : `gooseboot-manifest.json` indique `experimental-unsigned`, `installable: false` et `runtimeValidated: false`. Il ne faut ni l’écrire sur un disque physique ni l’utiliser comme chaîne de démarrage.
 
-Le build MSVC produit le livrable contractuel x86 `/MT`. Le smoke build MinGW est utile au développement mais produit un exécutable x64. Le build firmware reste un canal de laboratoire séparé. Les assets de `Assets/Generated/` sont intégrés comme ressources : le binaire Win32 n’a besoin d’aucun dossier d’assets à l’exécution.
+Le build MSVC produit le livrable contractuel x86 `/MT`. Le smoke build MinGW est utile au développement mais produit un exécutable x64. Le build firmware reste un canal de laboratoire séparé. Les assets de `Assets/Generated/` et les sept images fournies sous `Assets/User/GooseChaos/` sont intégrés comme ressources : le binaire Win32 n’a besoin d’aucun dossier d’assets à l’exécution.
 
 La cible `gooserot_release` n'existe que pour un build MSVC Win32 et prépare `dist/` avec `GooseRot.exe`, `GooseBootPreview.exe`, `README.txt` et leurs SHA-256. Les autres toolchains exposent uniquement `gooserot_smoke_bundle`, dans `smoke-dist/`, pour éviter de présenter un binaire x64 MinGW comme une release Windows 7. Le bundle firmware expérimental est séparé de ces deux distributions.
 
@@ -133,4 +135,4 @@ Un build autonome place la Preview dans `build\boot\bin`; copiez-la à côté de
 
 ## Référence et droits
 
-La copie locale de Desktop Goose v0.31 sert uniquement à l’observation. Elle est exclue par `.gitignore` et ne fait partie ni du build ni d’une release. GooseRot ne redistribue aucun exécutable, son, mème, texte ou code décompilé officiel. Seuls le comportement observé, les constantes publiques de `GooseModdingAPI` et les créations originales de `Assets/Generated/` sont utilisés.
+La copie locale de Desktop Goose v0.31 sert uniquement à l’observation. Elle est exclue par `.gitignore` et ne fait partie ni du build ni d’une release. GooseRot ne redistribue aucun exécutable, son, mème, texte ou code décompilé officiel. Le build utilise le comportement observé, les constantes publiques de `GooseModdingAPI`, les créations originales de `Assets/Generated/` et les sept images remises par l’utilisateur sous `Assets/User/GooseChaos/`. Leur présence dans le dépôt ne vaut pas preuve de droits de redistribution publique ; le responsable d’une release doit les vérifier séparément.

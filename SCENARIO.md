@@ -84,7 +84,7 @@ Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l�
 
 En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, sprinte jusqu’à sa barre de titre, s’y accroche et **déplace elle-même cette fenêtre de exactement 67 pixels** dans une direction choisie au hasard.
 
-À partir de `1:35`, GooseRot lance aussi progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, Invite de commandes et une instance séparée de l’Explorateur. Seuls les PID créés par GooseRot sont repositionnés aléatoirement et sollicités pour fermeture pendant le nettoyage ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
+À partir de `1:35`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
@@ -101,7 +101,7 @@ Le curseur reste toujours dans les limites de l’écran. Les fenêtres restent 
 
 Le déplacement des fenêtres tierces s’arrête à `2:40`. La chasse ponctuelle au curseur laisse place à `4:00` à une tempête **par vagues**, tandis que la troupe continue de grandir jusqu’à la fin.
 
-Depuis le début de cette phase, un petit panneau GooseRot est posé **sur le bouton Démarrer** et avale les clics qui l’atteignent : un menu Démarrer ouvert au milieu de la scène recouvrirait tout ce que la timeline est en train de construire. Aucun hook n’est installé, aucune fenêtre du shell n’est modifiée, et détruire ce panneau au nettoyage rend immédiatement le bouton à Windows. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie d’urgence `Échap` ne sont jamais touchés.
+Depuis le début de cette phase, un petit panneau GooseRot est posé **sur le bouton Démarrer** et avale les clics qui l’atteignent : un menu Démarrer ouvert au milieu de la scène recouvrirait tout ce que la timeline est en train de construire. En expérience complète uniquement, un garde clavier temporaire absorbe aussi `Win gauche` et `Win droite`. Aucune fenêtre du shell n’est modifiée et aucun réglage n’est persistant : le garde reste actif jusque pendant les visuels de conclusion, puis rend immédiatement les touches à Windows ; un arrêt d’urgence le retire sans attendre. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie d’urgence `Échap` ne sont jamais touchés.
 
 > START MENU: REVOKED.  
 > There is a goose standing on it.
@@ -109,6 +109,8 @@ Depuis le début de cette phase, un petit panneau GooseRot est posé **sur le bo
 ### 1:50 — Brainrot Subtitles
 
 Des images brainrot — créatures italiennes et visages de chats en réaction — **sont toujours rapportées par une oie**. Le trajet est visible en entier : une oie libre sort par le bord le plus proche, disparaît, revient avec l’image dans le bec, traverse le bureau et la dépose. Aucune image n’apparaît d’elle-même ; s’il n’y a aucune oie disponible, la livraison attend simplement qu’il y en ait une. Les zones de dépôt protègent le HUD **et l’emplacement du futur tag `67`**. Du texte défile au-dessus de l’oie :
+
+Sept photos d’oies fournies pour le projet rejoignent le même pool de livraison : comme les sept images historiques, chacune est rapportée depuis hors champ par une oie, conserve son ratio et reste posée jusqu’à sa fermeture ou à la fin de l’expérience.
 
 > Tralala la la la... 🎶  
 > Tutti frutti cappuccina ☕  
@@ -122,7 +124,7 @@ Chaque image posée porte une petite croix `[x]`, et elle est **réellement cliq
 - le glitch prend un pic, une fausse notification annonce le remplacement ;
 - une fermeture sur trois réveille l’essaim de popups, et à partir de cinq fermetures la troupe gagne une oie supplémentaire.
 
-Le compteur `PHOTOS TORN` s’affiche dans le HUD. Aucun hook clavier ou souris n’est installé : le clic est lu depuis la position du pointeur, puisque l’overlay laisse passer les clics.
+Le compteur `PHOTOS TORN` s’affiche dans le HUD. Cette interaction n’utilise aucun hook souris : le clic est lu depuis la position du pointeur, puisque l’overlay laisse passer les clics.
 
 ### 2:20 — Clipboard Certified
 
@@ -138,7 +140,7 @@ Indépendamment de toute tentative de collage, l’oie tamponne aussi un énorme
 
 L’oie tremble puis se divise en trois oies distinctes, toutes cacardent, et l’essaim de popups commence.
 
-Des fenêtres GooseRot imitent aléatoirement `Task Manager`, `File Explorer`, `Untitled - Notepad`, `Windows Security`, `Command Prompt` et d’autres outils système. **En fermer une en fait apparaître deux autres.** Le compteur de fenêtres ouvertes s’affiche dans le HUD. Au plafond protecteur de 67 fenêtres, toutes les fermetures ordinaires sont refusées ; seul le nettoyage de fin ou `Esc` maintenu deux secondes les détruit directement.
+Des fenêtres GooseRot imitent aléatoirement `Task Manager`, `File Explorer`, `Untitled - Notepad`, `Windows Security`, `Command Prompt` et d’autres outils système. **En fermer une en fait apparaître deux autres.** Le compteur monte suivant une courbe quadratique jusqu’à 267 à `4:52`. Les 67 premières sont des HWND interactifs ; les 200 suivantes sont des cadres légers rendus dans l’overlay afin de préserver le framerate. Au plafond, toutes les fermetures ordinaires sont refusées ; seul le nettoyage de fin ou `Esc` maintenu deux secondes détruit le mur complet.
 
 ### 3:10 — The Graffiti & Vibe
 
@@ -181,6 +183,7 @@ Une intensité de glitch monte avec la timeline (proche de 0 au début, 0,18 à 
 - des scanlines CRT qui défilent ;
 - une aberration chromatique rouge/cyan sur les textes lourds ;
 - des curseurs fantômes qui se multiplient autour du vrai pointeur ;
+- jusqu’à 67 glyphes d’erreur rouges originaux qui s’accumulent sans dessiner sur le vrai bureau ;
 - un faux cadre `explorer.exe — (Ne répond pas)` qui dérive ;
 - des bandes de perte de signal qui défilent et cisaillent l’image au-delà de 0,62 ;
 - de brefs flashs plein écran, cadencés par l’horloge réelle et de plus en plus probables à mesure que l’intensité monte.
@@ -226,7 +229,7 @@ L’oie principale marche sur un bouton virtuel `[ DO NOT PRESS ]`.
 
 ### 6:00 — Fin selon le profil
 
-Dans l’implémentation actuelle, une explosion rose/verte dévore l’overlay, l’écran devient noir, puis une dernière oie entre depuis un coin et annonce `GOODBYE, DUDE. YOU SHOULD'VE LISTENED.` avant la fermeture propre. Le nettoyage et la restauration ont lieu avant cette conclusion visuelle. Le contrat cible destructeur de `lab` décrit plus bas reste volontairement non implémenté.
+Dans l’implémentation actuelle, un cercle noir grandit depuis le centre jusqu’à recouvrir tous les coins de l’écran. Une explosion rose/verte éclate ensuite sur le noir, puis une dernière oie remonte réellement depuis le coin inférieur gauche et annonce `GOODBYE, DUDE. YOU SHOULD'VE LISTENED.` avant la fermeture propre. Le nettoyage et la restauration ont lieu avant l’explosion et la conclusion dure 7,5 secondes réelles, même avec une timeline accélérée.
 
 L’appui de deux secondes sur `Esc` est une sortie d’urgence uniquement en `safe`. Il ne doit pas interrompre `normal` ou `lab`.
 
@@ -280,7 +283,7 @@ Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` s
 - réserver les hooks globaux ainsi que le déplacement du curseur et des fenêtres à la VM ou à un mode opt-in ;
 - fournir en `safe` une sortie d’urgence par `Esc` maintenu deux secondes ; ne pas exposer cette sortie dans `normal` ou `lab` ;
 - ne jamais rendre le pointeur inutilisable en continu : chaque cycle de tempête doit comporter une fenêtre où il est intégralement rendu ;
-- ne bloquer le bouton Démarrer qu’avec une fenêtre appartenant à GooseRot, destructible au nettoyage, sans hook ni modification du shell, et sans jamais toucher `Ctrl+Shift+Échap`, `Alt+Tab` ni `Échap` ;
+- ne bloquer le bouton Démarrer qu’avec une fenêtre appartenant à GooseRot et, après opt-in complet, un hook limité aux deux touches Windows ; détruire les deux gardes au nettoyage, sans modification du shell et sans jamais toucher `Ctrl+Shift+Échap`, `Alt+Tab` ni `Échap` ;
 - afficher avant `lab` un avertissement bloquant annonçant la corruption des fichiers, du Registre et du démarrage ;
 - interdire `lab` hors d’une VM isolée et jetable ;
 - ne jamais lire ou modifier le presse-papiers système ;

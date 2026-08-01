@@ -108,13 +108,15 @@ class PopupSwarm {
   // stop the swarm refilling itself while it is being consumed.
   void SetCeiling(int ceiling);
 
-  int Count() const { return static_cast<int>(popups_.size()); }
+  int Count() const { return logicalCount_; }
+  int NativeCount() const { return static_cast<int>(popups_.size()); }
   int Ceiling() const { return ceiling_; }
   bool AtCap() const { return Count() >= ceiling_; }
   // True once per close attempt, so the app can answer with a bubble.
   bool ConsumeCloseAttempt();
 
-  static constexpr int kMaximumPopups = 67;
+  static constexpr int kMaximumPopups = 267;
+  static constexpr int kMaximumNativePopups = 67;
 
  private:
   struct Popup {
@@ -122,7 +124,6 @@ class PopupSwarm {
     HWND window = nullptr;
     HWND label = nullptr;
     HWND button = nullptr;
-    HFONT font = nullptr;
     double jiggleUntil = -1.0;
     int refusals = 0;
     bool dead = false;
@@ -135,8 +136,10 @@ class PopupSwarm {
   bool CreatePopup(HINSTANCE instance, std::mt19937& random);
 
   std::vector<std::unique_ptr<Popup>> popups_;
+  HFONT font_ = nullptr;
+  ULONGLONG nextNativeSpawnAttemptAt_ = 0;
   double lastTickTime_ = 0.0;
-  int pendingSpawns_ = 0;
+  int logicalCount_ = 0;
   int closeAttempts_ = 0;
   int spawnCounter_ = 0;
   int ceiling_ = kMaximumPopups;
@@ -147,14 +150,16 @@ class PopupSwarm {
 // windows are never adopted.
 class OwnedWindowsApps {
  public:
-  OwnedWindowsApps() = default;
+  OwnedWindowsApps();
   ~OwnedWindowsApps();
 
   OwnedWindowsApps(const OwnedWindowsApps&) = delete;
   OwnedWindowsApps& operator=(const OwnedWindowsApps&) = delete;
 
-  bool LaunchRandom(std::mt19937& random, double logicalTime);
-  void Tick(std::mt19937& random, double logicalTime);
+  bool LaunchRandom(std::mt19937& random, double clockSeconds,
+                    bool stableProcessOnly = false);
+  void Tick(std::mt19937& random, double clockSeconds);
+  void RequestCloseOlderThan(double clockSeconds, double maximumAgeSeconds);
   void CloseAll();
   int Count() const { return static_cast<int>(processes_.size()); }
 
@@ -166,19 +171,21 @@ class OwnedWindowsApps {
     DWORD processId = 0;
     double launchedAt = 0.0;
     bool positioned = false;
+    double nextCloseAttemptAt = 0.0;
   };
 
   std::vector<ProcessEntry> processes_;
+  HANDLE job_ = nullptr;
+  double nextWindowEnumerationAt_ = 0.0;
 };
 
 // A goose foot planted on the Start button.
 //
 // One small always-on-top window is parked exactly over the Start button and
 // swallows the clicks that land on it, because a Start menu opening mid-scene
-// covers the whole experience. Nothing is hooked, no input is synthesised and
-// no shell window is subclassed or moved: the guard is a window of our own that
-// is destroyed during cleanup, after which the button behaves normally again.
-// Ctrl+Shift+Esc, Alt+Tab and the Esc emergency exit are untouched.
+// covers the whole experience. No shell window is subclassed or moved: the
+// guard is a window of our own that is destroyed during cleanup, after which
+// the button behaves normally again.
 class TaskbarGuard {
  public:
   TaskbarGuard() = default;
@@ -207,6 +214,31 @@ class TaskbarGuard {
   RECT placement_{};
   int pendingAttempts_ = 0;
   int totalAttempts_ = 0;
+};
+
+// Pure policy used by both the hook and integration tests. The guard suppresses
+// only the two Windows keys and only for keyboard messages; it never records or
+// synthesises input.
+bool ShouldSuppressWindowsKey(WPARAM message, DWORD virtualKey);
+
+// Session-scoped guard used only after the user selects the full experience.
+// Alt+Tab, Ctrl+Shift+Esc, Esc and every non-Windows key continue normally.
+class WindowsKeyGuard {
+ public:
+  WindowsKeyGuard() = default;
+  ~WindowsKeyGuard();
+
+  WindowsKeyGuard(const WindowsKeyGuard&) = delete;
+  WindowsKeyGuard& operator=(const WindowsKeyGuard&) = delete;
+
+  bool Install(HINSTANCE instance);
+  void Close();
+  bool IsInstalled() const { return hook_ != nullptr; }
+
+ private:
+  static LRESULT CALLBACK HookProcedure(int code, WPARAM wParam, LPARAM lParam);
+
+  HHOOK hook_ = nullptr;
 };
 
 }  // namespace gooserot

@@ -40,25 +40,31 @@ bool AskForConsent(gooserot::AppConfig& config) {
                L"restoring their positions.\r\n"
                L"A small GooseRot window is parked over the Start button and swallows clicks that "
                L"land on it, so the Start menu cannot cover the scene. It is destroyed during "
-               L"cleanup and the button then works normally again. Ctrl+Shift+Esc, Alt+Tab and the "
-               L"Esc exit below are never affected.\r\n";
+               L"cleanup and the button then works normally again. In Full mode only, the left "
+               L"and right Windows keys are also suppressed for the duration of the experience "
+               L"and restored when it ends (or immediately on emergency exit). Ctrl+Shift+Esc, "
+               L"Alt+Tab and the Esc exit below are "
+               L"never affected.\r\n";
   }
   message += L"The experience includes brief rate-limited full-screen flashes, rapid glitch "
              L"motion and asynchronous Windows-style alert sounds. Choose Reduced / Muted if "
              L"you are photosensitive, motion-sensitive or do not want sound.\r\n";
-  message += L"GooseRot may create up to 67 fake Task Manager, File Explorer, Notepad and system "
-             L"windows. They may multiply and refuse normal close requests. Every one belongs to "
-             L"GooseRot and is destroyed during cleanup.\r\n"
-             L"Its own Notepad refuses to minimise into the taskbar for as long as it is typing.\r\n"
-             L"It may also launch up to 6 genuine built-in Windows utilities (Notepad, Paint, "
-             L"Task Manager, Character Map, Command Prompt or a separate File Explorer), move "
-             L"only those new windows, and ask them to close during cleanup. Random typing stays "
-             L"inside GooseRot's own Notepad.\r\n"
-             L"Geese carry brainrot photos onto the desktop. Each one can be closed with its [x], "
-             L"which costs aura and makes the flock fetch two more.\r\n"
-             L"The Start or Search surface is dismissed if it covers the experience.\r\n"
-             L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
-             L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.";
+  message += L"GooseRot may create a 267-window visual swarm, with at most 67 native fake "
+              L"Task Manager, File Explorer, Notepad and system "
+              L"windows. They may multiply and refuse normal close requests. Every one belongs to "
+              L"GooseRot and is destroyed during cleanup.\r\n"
+              L"Its own Notepad refuses to minimise into the taskbar for as long as it is typing.\r\n"
+              L"It may also rotate up to 6 genuine built-in Windows utilities at once (Notepad, "
+              L"Paint, Task Manager, Character Map, About Windows or a separate File Explorer), "
+              L"move only those new windows, and ask them to close during cleanup. If needed, "
+              L"GooseRot ends only the exact utility processes it launched. Random typing stays "
+              L"inside GooseRot's own Notepad.\r\n"
+              L"Geese carry brainrot photos onto the desktop. Each one can be closed with its [x], "
+              L"which costs aura and makes the flock fetch two more.\r\n"
+              L"Start or Search is dismissed if it covers "
+              L"the experience.\r\n"
+              L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
+              L"Hold Esc for 2 seconds at any time to close everything and restore the desktop.";
 
   constexpr int kFullExperience = 100;
   constexpr int kReducedExperience = 101;
@@ -88,9 +94,14 @@ bool AskForConsent(gooserot::AppConfig& config) {
       config.muted = true;
       config.flashesEnabled = false;
       config.reducedMotion = true;
+      config.blockWindowsKey = false;
       return true;
     }
-    return pressed == kFullExperience;
+    if (pressed == kFullExperience) {
+      config.blockWindowsKey = true;
+      return true;
+    }
+    return false;
   }
 
   message += L"\r\n\r\nYes = full experience. No = reduced / muted. Cancel = exit.";
@@ -102,9 +113,14 @@ bool AskForConsent(gooserot::AppConfig& config) {
     config.muted = true;
     config.flashesEnabled = false;
     config.reducedMotion = true;
+    config.blockWindowsKey = false;
     return true;
   }
-  return fallback == IDYES;
+  if (fallback == IDYES) {
+    config.blockWindowsKey = true;
+    return true;
+  }
+  return false;
 }
 
 }  // namespace

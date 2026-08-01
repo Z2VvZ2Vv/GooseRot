@@ -159,6 +159,20 @@ void TestChaosVisualCues() {
   Expect(longestPulseSamples <= 110, "each flash pulse lasts at most 110 milliseconds");
 }
 
+void TestFrameAdvanceAtLowFps() {
+  const auto oneFps = gooserot::EvaluateFrameAdvance(1.0, 1.0);
+  Expect(oneFps.wallDelta == 1.0 && oneFps.logicalDelta == 1.0,
+         "a one FPS frame still advances real deadlines and timeline by one second");
+  Expect(oneFps.simulationDelta == 0.25 && oneFps.simulationLogicalDelta == 0.25,
+         "a one FPS frame keeps only physical simulation bounded");
+  const auto accelerated = gooserot::EvaluateFrameAdvance(1.0, 0.1);
+  Expect(accelerated.wallDelta == 1.0 && accelerated.logicalDelta == 10.0,
+         "duration scale accelerates timeline without compressing real deadlines");
+  const auto invalid = gooserot::EvaluateFrameAdvance(-1.0, 0.0);
+  Expect(invalid.wallDelta == 0.0 && invalid.logicalDelta == 0.0,
+         "invalid frame deltas fail closed");
+}
+
 void TestCarrierAssignment() {
   using gooserot::kNoCarrier;
   using gooserot::PickFreeCarrier;
@@ -401,6 +415,7 @@ int main() {
   TestTimestampParsing();
   TestArgumentParsing();
   TestChaosVisualCues();
+  TestFrameAdvanceAtLowFps();
   TestCarrierAssignment();
   TestPremultipliedAlphaBlend();
   TestTimeline();
