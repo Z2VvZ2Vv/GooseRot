@@ -53,7 +53,10 @@ bool GooseRotApp::Initialize(std::wstring& error) {
     error = L"The high-resolution monotonic clock is unavailable.";
     return false;
   }
-  logicalTime_ = config_.startAtSeconds;
+  initialEntrancePending_ = config_.startAtSeconds <= phase::kEntrance;
+  logicalTime_ = initialEntrancePending_
+                     ? -InitialEntranceDelaySeconds(config_.seed) / config_.durationScale
+                     : config_.startAtSeconds;
   timeline_.Reset(logicalTime_);
 
   if (!overlay_.Create(instance_, config_.preview, config_.primaryMonitorOnly,
@@ -70,18 +73,39 @@ bool GooseRotApp::Initialize(std::wstring& error) {
                                                desktopEffects ? &watchdog_ : nullptr);
 
   const RectF bounds = overlay_.CanvasBounds();
+  const POINT popupTopLeft = overlay_.CanvasToScreen({bounds.left, bounds.top});
+  const POINT popupBottomRight = overlay_.CanvasToScreen({bounds.right, bounds.bottom});
+  popups_.SetBounds({std::min(popupTopLeft.x, popupBottomRight.x),
+                     std::min(popupTopLeft.y, popupBottomRight.y),
+                     std::max(popupTopLeft.x, popupBottomRight.x),
+                     std::max(popupTopLeft.y, popupBottomRight.y)});
   patrolFocus_ = bounds.Center();
-  if (logicalTime_ < 5.0) {
-    std::uniform_int_distribution<int> side(0, 1);
-    std::uniform_real_distribution<float> entranceY(bounds.top + bounds.Height() * 0.28f,
-                                                     bounds.top + bounds.Height() * 0.72f);
-    const bool fromLeft = side(random_) == 0;
-    const Vec2 entrance{fromLeft ? bounds.left - 46.0f : bounds.right + 46.0f,
-                        entranceY(random_)};
+  if (initialEntrancePending_) {
+    std::uniform_int_distribution<int> edge(0, 3);
+    std::uniform_real_distribution<float> along(0.28f, 0.72f);
+    const float clearance = GooseEntity::kBoundsMargin + 28.0f;
+    Vec2 entrance;
+    switch (edge(random_)) {
+      case 0:
+        entrance = {bounds.left - clearance, bounds.top + bounds.Height() * along(random_)};
+        initialEntranceTarget_ = {bounds.left + bounds.Width() * 0.30f, entrance.y};
+        break;
+      case 1:
+        entrance = {bounds.right + clearance, bounds.top + bounds.Height() * along(random_)};
+        initialEntranceTarget_ = {bounds.left + bounds.Width() * 0.70f, entrance.y};
+        break;
+      case 2:
+        entrance = {bounds.left + bounds.Width() * along(random_), bounds.top - clearance};
+        initialEntranceTarget_ = {entrance.x, bounds.top + bounds.Height() * 0.34f};
+        break;
+      default:
+        entrance = {bounds.left + bounds.Width() * along(random_), bounds.bottom + clearance};
+        initialEntranceTarget_ = {entrance.x, bounds.top + bounds.Height() * 0.66f};
+        break;
+    }
     geese_.emplace_back(entrance);
-    geese_.front().SetTarget({bounds.left + bounds.Width() * (fromLeft ? 0.32f : 0.68f),
-                              bounds.top + bounds.Height() * 0.58f},
-                             SpeedTier::Walk, true);
+    geese_.front().SetOffstage(true);
+    geese_.front().SetTarget(entrance);
   } else {
     geese_.emplace_back(bounds.Center());
   }
@@ -91,7 +115,7 @@ bool GooseRotApp::Initialize(std::wstring& error) {
   for (const TimelineEvent& event : timeline_.Advance(logicalTime_)) HandleEvent(event);
   overlay_.Render(BuildRenderState());
   // Loading resources, creating the watchdog and the initial render are setup,
-  // not part of the user's six-minute clock or the Esc hold duration.
+  // not part of the user's story clock or the Esc hold duration.
   if (!QueryPerformanceCounter(&lastCounter_)) {
     error = L"The high-resolution monotonic clock stopped during initialization.";
     return false;
@@ -272,7 +296,7 @@ void GooseRotApp::Tick() {
   lastCounter_ = counter;
   // Wall-clock deadlines (Esc, utility rotation and the conclusion) must not
   // slow down when rendering drops frames. Only physical simulation steps are
-  // capped; elapsed QPC time and the six-minute timeline are not.
+  // capped; elapsed QPC time and the story timeline are not.
   const FrameAdvance advance = EvaluateFrameAdvance(current - previous,
                                                      config_.durationScale);
   realTime_ += advance.wallDelta;
@@ -301,6 +325,7 @@ void GooseRotApp::Tick() {
     UpdateNotepad();
     UpdateErrorSounds();
     UpdateOwnedWindowsApps();
+    UpdatePopups();
     UpdateTaskbarGuard();
     UpdateToasts();
     double movementRemaining = advance.simulationLogicalDelta;
@@ -353,6 +378,10 @@ void GooseRotApp::FileFinding(const wchar_t* text) {
 void GooseRotApp::HandleEvent(const TimelineEvent& event) {
   switch (event.id) {
     case TimelineEventId::PassiveEntrance:
+      if (initialEntrancePending_ && !geese_.empty()) {
+        initialEntrancePending_ = false;
+        geese_.front().SetTarget(initialEntranceTarget_, SpeedTier::Walk, true);
+      }
       SetBubble(L"Do not mind me.\nI am just having a look around.", 9.0);
       break;
     case TimelineEventId::Introduction:
@@ -506,7 +535,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
           L"It can only be closed.\r\n\r\n");
       break;
     case TimelineEventId::Countdown:
-      SetBubble(L"The file closes in forty seconds.\nSay something nice.", 6.0);
+      SetBubble(L"The file closes in forty seconds.\nClear every notice.", 6.0);
       PushToast(L"AURA INSPECTION", L"Case 67 closes in 00:40.\nThank you for your cooperation.");
       FileFinding(
           L"CLOSING. The file will be closed in forty seconds.\r\n"
@@ -811,6 +840,24 @@ void GooseRotApp::UpdateOwnedWindowsApps() {
   nextOwnedAppAtReal_ = realTime_ + delay(random_);
 }
 
+void GooseRotApp::UpdatePopups() {
+  if (!config_.desktopEffects || config_.preview) return;
+  popups_.Tick(instance_, random_, logicalTime_);
+  if (popups_.ConsumeCloseAttempt()) {
+    constexpr std::array<const wchar_t*, 4> lines = {
+        L"ONE NOTICE CLOSED. TWO MORE FILED.",
+        L"THE CLOSE BUTTON HAS BEEN NOTED.",
+        L"YOU CANNOT OUT-CLICK THE PAPERWORK.",
+        L"EVERY DISMISSAL REQUIRES TWO FOLLOW-UPS."};
+    std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1U);
+    SetBubble(popups_.AtCap() ? L"100 NOTICES. ADMINISTRATIVE CAP REACHED."
+                              : lines[pick(random_)],
+              4.5);
+    if (!geese_.empty()) geese_.front().Honk(0.45f);
+    KickGlitch(0.18f);
+  }
+}
+
 // The Start button is covered from the first gag onwards: a Start menu opening
 // mid-scene hides everything the run is building.
 void GooseRotApp::UpdateTaskbarGuard() {
@@ -1083,6 +1130,9 @@ Vec2 GooseRotApp::NextPatrolPoint(std::size_t index) {
 
 void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
   if (geese_.empty()) return;
+  // The goose exists beyond the canvas during the quiet preamble, but must not
+  // start walking until the seeded wall-clock delay has elapsed.
+  if (initialEntrancePending_) return;
   const RectF bounds = overlay_.CanvasBounds();
   const Vec2 center = bounds.Center();
   const POINT cursorScreen = desktop_->CursorPosition();
@@ -1561,6 +1611,7 @@ bool GooseRotApp::Cleanup() {
   auraPrompt_.Close();
   sigmaPrompt_.Close();
   notepad_.Close();
+  popups_.CloseAll();
   // Whatever the swarm was refusing, it goes away here: cleanup and the
   // Emergency/error exits hand the Windows keys back immediately. A completed
   // run keeps them guarded through its short farewell visual; Run() releases

@@ -2,7 +2,7 @@
 
 > Statut : concept initial enregistré  
 > Version : 0.5  
-> Durée totale : 7 minutes 30  
+> Durée totale : 7 minutes 40 à 8 minutes, dont 10 à 30 secondes d’attente initiale
 > Plateforme cible : Windows, idéalement dans une VM de démonstration  
 > Ambiance : desktop goose, bureaucratie absurde, chaos visuel contrôlé en `safe`, destruction réelle de la VM en `lab`, alertes système optionnelles et désactivables
 
@@ -16,9 +16,15 @@ Elle arrive, elle se présente, elle fait le tour du propriétaire, elle ouvre u
 
 Trois principes tiennent la mise en scène :
 
-1. **La timeline ne dépend jamais de l’utilisateur.** Un bureau totalement inactif reste rempli pendant sept minutes et demie. Les actions de l’utilisateur ajoutent des réactions, elles ne débloquent rien.
+1. **La timeline ne dépend jamais de l’utilisateur.** Après l’attente initiale, un bureau totalement inactif reste rempli pendant sept minutes et demie. Les actions de l’utilisateur ajoutent des réactions, elles ne débloquent rien.
 2. **Chaque animation a une cause lisible.** Une image ne se matérialise pas : une oie va la chercher hors champ et la rapporte dans son bec. Le dossier ne s’ouvre pas tout seul : l’oie tamponne le bureau et la fenêtre s’ouvre sous son bec. Le compteur d’aura n’existe pas au lancement : il apparaît quand l’inspectrice commence à noter.
 3. **Rien n’imite Windows.** GooseRot n’ouvre aucune fausse fenêtre système, ne dessine aucune fausse boîte de dialogue et ne peint aucun faux cadre « Ne répond pas ». Tout ce qui s’affiche appartient visiblement à l’inspection. Le seul décalage acceptable avec Windows est celui que l’oie provoque elle-même.
+
+## Préambule — attente réelle de 10 à 30 secondes
+
+Après le consentement, le bureau reste vide : aucune oie n’est encore visible et rien ne bouge. La durée est choisie par le seed et mesurée sur l’horloge réelle, donc `--duration-scale` ne la raccourcit pas. Pendant cette attente, l’inspectrice est immobile et entièrement placée au-delà de l’un des quatre bords de l’écran.
+
+Les horodatages ci-dessous commencent lorsque l’attente se termine et que l’oie se met réellement en mouvement. Un `--start-at` supérieur à `0:00` reprend directement la timeline et saute ce préambule.
 
 ## Phase 1 — 0:00 à 2:45 : L’inspection
 
@@ -26,7 +32,7 @@ L’ouverture est volontairement lente. Il ne se passe rien de spectaculaire pen
 
 ### 0:00 — L’inspectrice arrive
 
-L’oie entre entièrement depuis le bord gauche ou droit, choisi par le seed, et avance sans se presser. Pas de compteur, pas de HUD, pas de fenêtre. Juste une oie sur votre bureau.
+L’oie reçoit sa première cible et entre entièrement depuis le hors-champ, par le bord gauche, droit, haut ou bas choisi par le seed. Elle avance sans se presser et ne se matérialise jamais sur le bord. Pas de compteur, pas de HUD, pas de fenêtre. Juste une oie qui arrive sur votre bureau.
 
 > Do not mind me.  
 > I am just having a look around.
@@ -111,6 +117,8 @@ Quand l’utilisateur tente de cliquer sur une icône ou une fenêtre active, l�
 En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, sprinte jusqu’à sa barre de titre, s’y accroche et **déplace elle-même cette fenêtre de exactement 67 pixels** dans une direction choisie au hasard.
 
 À partir de `2:58`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
+
+À partir de `2:28`, les **petits avis GooseRot historiques** reviennent : des fenêtres compactes de `348×186`, titrées `AURA INSPECTION`, distribuées sur toute la surface par une grille permutée. L’écran se remplit sans qu’une seule boîte masque une zone énorme. Le plafond de **100 avis simultanés** est atteint à `3:55`. Ces fenêtres sont modeless, restent sans activation pour ne pas voler le focus et ne créent aucun thread par avis. Fermer un avis avant la finale en dépose deux nouveaux, jusqu’au plafond administratif.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
@@ -233,7 +241,7 @@ La troupe, déjà bien plus nombreuse que les trois oies initiales, encercle le 
 
 > VERDICT: NON-COMPLIANT. SITE CONDEMNED.
 
-Le dossier reçoit sa conclusion, et plus rien de nouveau n’est ouvert sur le site : aucune application n’est lancée après ce point. La dernière minute et quart ne repose que sur la dégradation de l’affichage.
+Le dossier reçoit sa conclusion, et plus rien de nouveau n’est ouvert sur le site : aucune application ni boîte de message n’est lancée après ce point. Les avis déjà accumulés restent cependant visibles jusqu’au compte à rebours.
 
 ## Phase 5 — 6:50 à 7:30 : La clôture
 
@@ -242,6 +250,8 @@ Le dossier reçoit sa conclusion, et plus rien de nouveau n’est ouvert sur le 
 Un grand compte à rebours rouge apparaît en haut de l’écran :
 
 > 00:40
+
+Les 100 avis se ferment alors **un par un**, dans leur ordre d’arrivée. La cascade dure tout le compte à rebours ; le dernier disparaît à `7:21`, juste avant que l’obturateur commence à réduire la surface visible. Un arrêt d’urgence ne joue pas cette cascade : il ferme immédiatement toutes les fenêtres restantes.
 
 ### 7:10 — Les inspecteurs se déploient
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -171,6 +172,72 @@ void TestFrameAdvanceAtLowFps() {
   const auto invalid = gooserot::EvaluateFrameAdvance(-1.0, 0.0);
   Expect(invalid.wallDelta == 0.0 && invalid.logicalDelta == 0.0,
          "invalid frame deltas fail closed");
+}
+
+void TestInitialEntranceDelay() {
+  const double delay = gooserot::InitialEntranceDelaySeconds(67U);
+  Expect(delay >= 10.0 && delay < 30.0,
+         "the initial entrance delay stays between ten and thirty seconds");
+  Expect(delay == gooserot::InitialEntranceDelaySeconds(67U),
+         "the initial entrance delay is deterministic for a seed");
+
+  bool foundDifferentDelay = false;
+  for (std::uint32_t seed = 0; seed < 64; ++seed) {
+    const double candidate = gooserot::InitialEntranceDelaySeconds(seed);
+    Expect(candidate >= 10.0 && candidate < 30.0,
+           "every seeded entrance delay stays in range");
+    foundDifferentDelay = foundDifferentDelay || candidate != delay;
+  }
+  Expect(foundDifferentDelay, "different seeds vary the entrance delay");
+
+  for (const double durationScale : {0.1, 1.0, 2.0}) {
+    const auto advance = gooserot::EvaluateFrameAdvance(delay, durationScale);
+    Expect(std::abs(-delay / durationScale + advance.logicalDelta) < 1e-9,
+           "duration scale does not change the wall-clock entrance wait");
+  }
+
+  gooserot::TimelineEngine timeline;
+  timeline.Reset(-delay);
+  Expect(timeline.Advance(-0.001).empty(), "entrance stays dormant during the preamble");
+  const auto events = timeline.Advance(0.0);
+  Expect(events.size() == 1 && events.front().id == gooserot::TimelineEventId::PassiveEntrance,
+         "entrance fires when the preamble reaches story time zero");
+}
+
+void TestPopupSchedule() {
+  namespace phase = gooserot::phase;
+  using gooserot::DesiredPopupCount;
+  using gooserot::kMaximumPopups;
+  Expect(DesiredPopupCount(phase::kPopupStart - 0.01) == 0U,
+         "compact notices do not exist before their story beat");
+  Expect(DesiredPopupCount(phase::kPopupStart) == 0U,
+         "the popup swarm begins from an empty desktop");
+  Expect(DesiredPopupCount(phase::kPopupFull) == kMaximumPopups,
+         "the middle of the experience reaches 100 compact notices");
+  Expect(DesiredPopupCount(phase::kPopupCloseStart) == kMaximumPopups,
+         "all notices remain until the final countdown");
+  Expect(DesiredPopupCount(phase::kPopupCloseEnd) == 0U,
+         "the last notice closes before the iris starts");
+  Expect(DesiredPopupCount(std::numeric_limits<double>::quiet_NaN()) == 0U,
+         "an invalid clock never creates notices");
+
+  std::size_t previous = 0U;
+  for (int step = 0; step <= 100; ++step) {
+    const double at = phase::kPopupStart +
+                      (phase::kPopupFull - phase::kPopupStart) * step / 100.0;
+    const std::size_t current = DesiredPopupCount(at);
+    Expect(current >= previous && current <= kMaximumPopups,
+           "compact notices accumulate monotonically and stay capped");
+    previous = current;
+  }
+  previous = kMaximumPopups;
+  for (int step = 0; step <= 100; ++step) {
+    const double at = phase::kPopupCloseStart +
+                      (phase::kPopupCloseEnd - phase::kPopupCloseStart) * step / 100.0;
+    const std::size_t current = DesiredPopupCount(at);
+    Expect(current <= previous, "final compact notices close monotonically one by one");
+    previous = current;
+  }
 }
 
 void TestCarrierAssignment() {
@@ -467,6 +534,8 @@ int main() {
   TestArgumentParsing();
   TestChaosVisualCues();
   TestFrameAdvanceAtLowFps();
+  TestInitialEntranceDelay();
+  TestPopupSchedule();
   TestCarrierAssignment();
   TestPremultipliedAlphaBlend();
   TestTimeline();

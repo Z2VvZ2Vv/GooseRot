@@ -33,8 +33,10 @@ TaskDialogIndirectProcedure ResolveTaskDialogIndirect() {
 
 bool AskForConsent(gooserot::AppConfig& config) {
   if (config.preview) return true;
-  std::wstring message = L"A goose is going to inspect your desktop for seven and a half minutes, and it "
-                          L"will take the place over while it does.\r\n\r\n";
+  std::wstring message =
+      L"After a quiet random wait of 10 to 30 seconds, a goose is going to enter from outside "
+      L"the screen and inspect your desktop for seven and a half minutes. It will take the "
+      L"place over while it does.\r\n\r\n";
   if (config.desktopEffects) {
     message += L"With your consent, the geese will drag the pointer in waves — each wave hands it "
                L"back before the next one — and may temporarily move selected windows before "
@@ -61,6 +63,9 @@ bool AskForConsent(gooserot::AppConfig& config) {
               L"inside GooseRot's own Notepad.\r\n"
               L"Geese carry photographic exhibits onto the desktop. Each one can be closed with "
               L"its [x], which costs aura and makes the flock fetch two more.\r\n"
+              L"The middle of the inspection progressively opens up to 100 compact GooseRot "
+              L"notice windows across the desktop. They close one by one during the final "
+              L"countdown, and emergency cleanup closes all remaining boxes immediately.\r\n"
               L"Start or Search is dismissed if it covers "
               L"the experience.\r\n"
               L"No clipboard data, system file, startup setting, real BSOD or real reboot is changed.\r\n\r\n"
@@ -78,7 +83,7 @@ bool AskForConsent(gooserot::AppConfig& config) {
   dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
   dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
   dialog.pszWindowTitle = L"GooseRot - explicit consent";
-  dialog.pszMainInstruction = L"Choose how intense the six-minute takeover may be.";
+  dialog.pszMainInstruction = L"Choose how intense the desktop inspection may be.";
   dialog.pszContent = message.c_str();
   dialog.pszMainIcon = config.mode == gooserot::RunMode::Safe
                            ? TD_INFORMATION_ICON

@@ -664,6 +664,29 @@ void TestDenseRenderBudget() {
   Expect(gdiAfter <= gdiBefore + 16, "dense render releases GDI objects");
 }
 
+void TestCompactPopupLifecycle() {
+  RECT workArea{};
+  Expect(SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0) != FALSE,
+         "compact-popup test obtains the work area");
+  gooserot::PopupSwarm swarm;
+  swarm.SetBounds(workArea);
+  std::mt19937 random(67U);
+  const double onePopupAt = gooserot::phase::kPopupStart +
+                            (gooserot::phase::kPopupFull - gooserot::phase::kPopupStart) *
+                                1.5 / static_cast<double>(gooserot::kMaximumPopups);
+  swarm.Tick(GetModuleHandleW(nullptr), random, onePopupAt);
+  Expect(swarm.Count() == 1, "the compact-popup schedule creates one notice");
+  HWND popup = FindWindowW(L"GooseRotPopup", nullptr);
+  RECT rectangle{};
+  Expect(popup && GetWindowRect(popup, &rectangle), "the compact GooseRot notice is visible");
+  Expect(rectangle.right - rectangle.left == 348 && rectangle.bottom - rectangle.top == 186,
+         "the restored notice keeps the old compact dimensions");
+
+  swarm.Tick(GetModuleHandleW(nullptr), random, gooserot::phase::kPopupCloseEnd);
+  swarm.CloseAll();
+  Expect(swarm.Count() == 0, "compact-popup cleanup closes the notice");
+}
+
 bool ParseUnsigned(const wchar_t* text, unsigned long long& value) {
   if (!text || !*text || *text == L'+' || *text == L'-') return false;
   wchar_t* end = nullptr;
@@ -697,6 +720,7 @@ int wmain(int argc, wchar_t** argv) {
   TestCaseFileOpensWhereTheGooseStamped();
   TestWindowsKeySuppressionPolicy();
   TestEmbeddedChaosAssets();
+  TestCompactPopupLifecycle();
   TestDenseRenderBudget();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <random>
 #include <string>
@@ -88,9 +89,10 @@ std::wstring UsageText();
 
 // Every timeline anchor, in logical seconds, in one place.
 //
-// The run is one story: a goose turns up to perform an Aura Inspection of the
-// desktop, opens a case file, collects evidence, paints its verdict on the wall
-// and finally condemns the machine. Seven and a half minutes, with a deliberate
+// The run is one story: after a seeded 10-30 second wall-clock preamble, a goose
+// turns up to perform an Aura Inspection of the desktop, opens a case file,
+// collects evidence, paints its verdict on the wall and finally condemns the
+// machine. The logical story lasts seven and a half minutes, with a deliberate
 // opening — the goose arrives, introduces itself and walks a full inspection
 // round before anything is scored, so the aura counter appears because the
 // inspector started writing rather than because the program started.
@@ -132,8 +134,20 @@ constexpr double kCompanionCutoff = kEnd - 2.0;
 // The inspector closes the file: the aperture starts shutting on the desktop
 // while the exposure is cranked, well before the timeline itself runs out.
 constexpr double kIrisStart = kEnd - 9.0;
+// Compact GooseRot notices accumulate through the middle of the story, then
+// disappear individually during the final countdown.
+constexpr double kPopupStart = kGooseReturn;
+constexpr double kPopupFull = kDuplicate;
+constexpr double kPopupCloseStart = kCountdown;
+constexpr double kPopupCloseEnd = kIrisStart;
 
 }  // namespace phase
+
+constexpr std::size_t kMaximumPopups = 100U;
+
+// Number of compact notices that should still be present at a timeline
+// position. This pure schedule keeps accelerated/resumed runs predictable.
+std::size_t DesiredPopupCount(double logicalTime);
 
 // Time-based cues for the non-destructive display corruption. Real time is
 // deliberately separate from timeline time so --duration-scale can never
@@ -155,9 +169,13 @@ struct FrameAdvance {
 };
 
 // Separates real elapsed time from a bounded physical simulation step. This is
-// what keeps Esc, process cadence and the six-minute timeline honest even
+// what keeps Esc, process cadence and the story timeline honest even
 // when a rendered frame takes substantially longer than 250 ms.
 FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale);
+
+// A seeded wall-clock preamble before the logical story starts at kEntrance.
+// Keeping it outside the timeline makes the wait independent of durationScale.
+double InitialEntranceDelaySeconds(std::uint32_t seed);
 
 enum class TimelineEventId {
   PassiveEntrance,

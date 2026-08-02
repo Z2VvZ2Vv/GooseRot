@@ -41,6 +41,7 @@ class GooseRotApp {
   void UpdateNotepad();
   void UpdateErrorSounds();
   void UpdateOwnedWindowsApps();
+  void UpdatePopups();
   void UpdateTaskbarGuard();
   void FileFinding(const wchar_t* text);
   void UpdateDesktopActions();
@@ -94,6 +95,7 @@ class GooseRotApp {
   NotepadWindow notepad_;
   Typewriter typist_;
   OwnedWindowsApps ownedWindowsApps_;
+  PopupSwarm popups_;
   TaskbarGuard taskbarGuard_;
   WindowsKeyGuard windowsKeyGuard_;
   std::mt19937 random_;
@@ -145,6 +147,7 @@ class GooseRotApp {
   bool tagZoneCleared_ = false;
   bool auraVisible_ = false;
   bool inspectionRound_ = false;
+  bool initialEntrancePending_ = false;
   int aura_ = 0;
   int exitCode_ = 0;
   // Photos the user tore off the desktop, and the replacements still owed.
@@ -156,6 +159,7 @@ class GooseRotApp {
   // -1 until the inspector reaches its first station on the opening round.
   int inspectionStation_ = -1;
   Vec2 patrolFocus_;
+  Vec2 initialEntranceTarget_;
   POINT auraReferenceCursor_{};
   PendingAction pendingAction_;
   std::wstring bubbleText_;

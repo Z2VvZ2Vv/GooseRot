@@ -47,7 +47,9 @@ Les images brainrot posées sur le bureau portent une croix `[x]` réellement cl
 
 ## Aucune imitation de Windows
 
-GooseRot n’ouvre et ne dessine aucune fenêtre, boîte de dialogue, icône d’erreur ou notification se faisant passer pour un composant du système. C’est d’abord un choix de mise en scène — l’écart se voit et casse l’illusion — mais c’est aussi une propriété utile ici : rien de ce qui s’affiche ne peut être confondu avec un avertissement réel de Windows. Toutes les surfaces GooseRot s’annoncent comme appartenant à l’inspection.
+GooseRot ne fabrique aucune copie visuelle d’une fenêtre système et aucun texte ne prétend venir de Windows Security, du Gestionnaire des tâches ou de l’Explorateur. Le mur utilise les petites fenêtres GooseRot historiques, dont chaque titre commence par `AURA INSPECTION` et chaque texte parle du dossier 67.
+
+Le plafond est fixé à 100 fenêtres compactes. Elles partagent le thread UI, ne prennent pas le focus et restent strictement modeless. La timeline les détruit une par une avant l’obturateur ; `Cleanup()` détruit directement toutes les restantes et libère leurs polices.
 
 ## Fenêtre récalcitrante
 
@@ -57,6 +59,7 @@ Une seule fenêtre résiste, et elle est bornée par construction :
 - il refuse d’être réduit, jamais d’être détruit : le nettoyage et l’arrêt d’urgence appellent `DestroyWindow` directement ;
 - il peut revenir tant que sa phase de rédaction est active, puis le nettoyage le détruit directement ;
 - chaque vrai utilitaire est créé suspendu et refusé si son assignation au Job Object privé échoue ; les plus anciens reçoivent d’abord `WM_CLOSE` de façon répétée puis, après quatre secondes de grâce et au nettoyage, le job ou le handle exact retourné par `CreateProcessW` empêchent uniquement ces enfants de survivre, sans jamais adopter ni viser un PID préexistant ;
+- les 100 avis compacts appartiennent tous à GooseRot ; le nettoyage les ferme sans toucher aux fenêtres d’un autre processus ;
 - dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
 - le consentement initial annonce explicitement ce comportement.
 - le consentement propose un démarrage réduit et muet ; `--mute`, `--no-flashes` et `--reduced-motion` restent disponibles en ligne de commande.

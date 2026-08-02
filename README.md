@@ -1,6 +1,6 @@
 # GooseRot
 
-GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. L’application joue une histoire de sept minutes et demie sur un bureau Windows : **une oie vient inspecter votre bureau**. Elle arrive, se présente, fait sa tournée, ouvre un dossier et le rédige à la main, sort chercher des pièces à conviction, peint votre note sur le mur, rend son verdict, puis ferme le dossier — l’écran se referme en obturateur, surexpose et lâche.
+GooseRot est une réimplémentation native, autonome et *clean-room* du concept Desktop Goose. Après une attente silencieuse aléatoire de 10 à 30 secondes, l’application joue une histoire de sept minutes et demie sur un bureau Windows : **une oie vient inspecter votre bureau**. Elle arrive, se présente, fait sa tournée, ouvre un dossier et le rédige à la main, sort chercher des pièces à conviction, peint votre note sur le mur, rend son verdict, puis ferme le dossier — l’écran se referme en obturateur, surexpose et lâche.
 
 > [!CAUTION]
 > Le profil `lab` est un **destructeur volontaire**, pas une variante plus intense de la démo. À la fin de son exécution, la machine doit être considérée comme sacrifiée : fichiers supprimés ou corrompus, Registre Windows endommagé et chaîne de démarrage rendue inutilisable. Il est réservé à une VM jetable, isolée, sans données ni secrets, avec un snapshot hors ligne prêt à être restauré. Ne jamais l’exécuter sur un PC physique ou une VM importante.
@@ -16,7 +16,7 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 
 - moteur C++17 et timeline monotone indépendante du framerate ;
 - overlay Win32/GDI+ transparent, click-through et multi-écran, qui referme Start/Search lorsqu’ils recouvrent la scène ;
-- première oie entrant depuis un bord après consentement, puis dessin procédural complet en vue de dessus ;
+- écran vide pendant 10 à 30 secondes après consentement, puis première oie entrant entièrement depuis un point hors écran choisi sur l’un des quatre bords ;
 - ouverture délibérée : arrivée, présentation, tournée d’inspection sur itinéraire fixe, puis ouverture du dossier — la fiche d’aura n’apparaît qu’à `1:40`, quand l’inspectrice commence à noter ;
 - sortie complète de l’écran à `2:05` puis retour par le bord opposé à `2:28`, une pièce à conviction dans le bec ;
 - moteur de glitch piloté par la timeline et l'horloge réelle : déchirures, rubans de pixels déplacés dans l'overlay, scanlines CRT, blocs corrompus, aberration chromatique, curseurs fantômes, faux cadre « Ne répond pas » et flashs bornés ;
@@ -26,14 +26,14 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - traction initiale du curseur sur 67 pixels, puis tempête par vagues à partir de `4:00` : chaque cycle saisit le pointeur puis le rend intégralement, la part saisie et la violence montant jusqu’à la fin, toujours restaurée ;
 - déplacements optionnels des fenêtres, bornés puis restaurés ;
 - dossier d’inspection ouvert **sous le bec de l’oie** qui vient de tamponner le bureau, rédigé caractère par caractère avec cadence irrégulière, pauses de ponctuation et fautes corrigées, et qui refuse d’être réduit dans la barre des tâches ;
-- **aucune fausse fenêtre système** : ni faux Task Manager, ni faux Explorateur, ni faux cadre « Ne répond pas » — l’escalade passe par les oies, les pièces à conviction et l’affichage ;
+- **aucune fausse fenêtre système** : les petits avis sont des fenêtres GooseRot clairement titrées `AURA INSPECTION`, jamais de faux Task Manager, Explorateur ou avertissement Windows ;
 - petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics ; en expérience complète, garde temporaire limitée aux deux touches Windows, sans modification du shell ni réglage persistant, retirée à la fin ou immédiatement lors d’un arrêt d’urgence ;
-- dernier tiers porté uniquement par l’affichage : plus rien n’est ouvert après le verdict et la dégradation monte en continu jusqu’à la fin ;
+- jusqu’à 100 petits avis GooseRot de `348×186` répartis sur toute la surface : ils s’accumulent entre `2:28` et `3:55`, restent affichés, puis se ferment un par un entre `6:50` et `7:21` avant l’obturateur final ;
 - jusqu’à six vrais utilitaires Windows simultanés (Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer), protégés par un Job Object privé, lancés à cadence réelle puis fermés avant la finale ;
 - pluie déterministe de 67 glyphes d’erreur originaux, dessinés uniquement dans l’overlay ;
 - sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;
 - rendu dense adaptatif : trois oies principales détaillées, troupe compacte au-delà, PNG pré-rastérisés, composite alpha logiciel, graffiti final mis en cache et scanlines espacées pour rester fluide ;
-- avis d’inspection peints dans l’overlay, jamais envoyés à Windows, et jamais présentés comme un composant du système ;
+- avis d’inspection peints dans l’overlay et petites fenêtres explicitement attribuées à `AURA INSPECTION`, jamais présentés comme des alertes système ;
 - clôture en obturateur : la partie visible du bureau se réduit à un cercle qui rétrécit pendant que l’exposition est poussée jusqu’au blanc, puis crash type tube cathodique, noir, et l’oie qui revient dire la dernière réplique ;
 - mutex mono-instance, watchdog de restauration en mémoire partagée, nettoyage idempotent et sortie d’urgence ;
 - mode `--preview` fenêtré qui ne touche pas au bureau, muet, sans flash et à mouvement réduit par défaut ;
@@ -111,7 +111,7 @@ Options utiles :
 --seed 67
 ```
 
-`--duration-scale 0.1` joue la timeline dix fois plus vite. Dans l’implémentation actuelle non destructive, `lab --fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les deux exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). Ce comportement de restauration appartient à l’état transitoire du code et non au contrat cible destructeur de `lab`. `--boot-game` échoue actuellement de façon volontaire : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
+`--duration-scale 0.1` joue la timeline dix fois plus vite, sans raccourcir l’attente initiale de 10 à 30 secondes réelles. Un `--start-at` strictement supérieur à `00:00` saute cette attente. Dans l’implémentation actuelle non destructive, `lab --fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les deux exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). Ce comportement de restauration appartient à l’état transitoire du code et non au contrat cible destructeur de `lab`. `--boot-game` échoue actuellement de façon volontaire : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
 
 La Preview du mini-jeu se construit avec le projet racine ou séparément :
 

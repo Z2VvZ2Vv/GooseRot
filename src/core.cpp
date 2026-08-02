@@ -282,6 +282,36 @@ FrameAdvance EvaluateFrameAdvance(double elapsedSeconds, double durationScale) {
   return advance;
 }
 
+double InitialEntranceDelaySeconds(std::uint32_t seed) {
+  constexpr double kMinimumDelaySeconds = 10.0;
+  constexpr double kDelayRangeSeconds = 20.0;
+  return kMinimumDelaySeconds +
+         kDelayRangeSeconds * static_cast<double>(HashUnit(seed ^ 0x67A11CEU));
+}
+
+std::size_t DesiredPopupCount(double logicalTime) {
+  if (!std::isfinite(logicalTime) || logicalTime < phase::kPopupStart) return 0U;
+  if (logicalTime < phase::kPopupFull) {
+    const double progress = std::clamp(
+        (logicalTime - phase::kPopupStart) /
+            (phase::kPopupFull - phase::kPopupStart),
+        0.0, 1.0);
+    return static_cast<std::size_t>(
+        std::floor(progress * static_cast<double>(kMaximumPopups)));
+  }
+  if (logicalTime < phase::kPopupCloseStart) return kMaximumPopups;
+  if (logicalTime < phase::kPopupCloseEnd) {
+    const double progress = std::clamp(
+        (logicalTime - phase::kPopupCloseStart) /
+            (phase::kPopupCloseEnd - phase::kPopupCloseStart),
+        0.0, 1.0);
+    const std::size_t closed = static_cast<std::size_t>(
+        std::floor(progress * static_cast<double>(kMaximumPopups)));
+    return kMaximumPopups - std::min(closed, kMaximumPopups);
+  }
+  return 0U;
+}
+
 TimelineEngine::TimelineEngine()
     : events_({
           {TimelineEventId::PassiveEntrance, phase::kEntrance, L"The Inspector Arrives"},
@@ -309,7 +339,10 @@ TimelineEngine::TimelineEngine()
 }
 
 void TimelineEngine::Reset(double startAtSeconds) {
-  currentTime_ = std::max(0.0, startAtSeconds);
+  // Negative logical time is the quiet preamble before the first event. CLI
+  // start positions remain non-negative, but the app deliberately starts below
+  // zero so the entrance event cannot fire before its wall-clock delay.
+  currentTime_ = std::isfinite(startAtSeconds) ? startAtSeconds : 0.0;
   fired_.assign(events_.size(), false);
   for (std::size_t index = 0; index < events_.size(); ++index) {
     fired_[index] = events_[index].atSeconds < currentTime_;

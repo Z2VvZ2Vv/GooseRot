@@ -61,6 +61,7 @@ GooseRotApp
  │   ├─ PropDelivery
  │   └─ TaskbarGuard
  ├─ AudioEffects
+ ├─ PopupSwarm
  ├─ BootGameHandoff
  └─ ShutdownDirector
 ```
@@ -80,7 +81,7 @@ Charge une timeline déclarative embarquée. Chaque événement possède :
 - une variante autonome ;
 - une procédure de nettoyage.
 
-Une horloge monotone pilote la timeline. Les animations ne doivent jamais dépendre du nombre d’images rendues.
+Une horloge monotone pilote la timeline. Les animations ne doivent jamais dépendre du nombre d’images rendues. Lors d’un lancement à `0:00`, l’horloge logique démarre à une valeur négative calculée depuis le seed : elle atteint zéro après 10 à 30 secondes d’horloge réelle, indépendamment de `--duration-scale`. L’oie reste alors immobile, marquée hors scène et placée au-delà d’un des quatre bords ; l’événement d’entrée à zéro lui attribue seulement à ce moment sa première cible visible. Une reprise par `--start-at` supérieure à zéro initialise directement la timeline au point demandé.
 
 ### `GooseEngine`
 
@@ -123,6 +124,12 @@ La conclusion est un obturateur, pas une explosion. `RenderState::finalIris` et 
 
 Maintient au maximum six vrais utilitaires intégrés à Windows simultanés : Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer avec `/separate`. Chaque cible est un chemin Windows construit par le programme, sans URL ni argument utilisateur ; la sélection filtre d’abord les exécutables réellement présents. Chaque processus est créé suspendu et ne démarre qu’après son assignation réussie au Job Object privé `KILL_ON_JOB_CLOSE` ; sinon le lancement est annulé. Chaque entrée conserve le handle de processus et le PID renvoyés par `CreateProcessW`. Le groupe d’énumérations par PID est limité à une fois toutes les 150 ms. Les lancements commencent à `1:35`, suivent une cadence réelle de 26 à 42 secondes et cessent au monologue final ; les plus anciens reçoivent `WM_CLOSE`, puis seul le handle exact créé par GooseRot peut être terminé après son délai de grâce. Aucun PID découvert ou préexistant n’est visé. Une accélération de timeline ne peut pas créer une rafale de processus.
 
+### `PopupSwarm`
+
+Crée jusqu’à 100 petites fenêtres `GooseRotPopup` de `348×186`. Elles sont modeless et partagent le thread UI : aucun appel modal, hook CBT ou thread supplémentaire n’est nécessaire. Chaque fenêtre utilise `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, reste au-dessus de la scène et occupe une cellule permutée de la surface virtuelle. Le multiplicateur 37, premier avec 100, répartit les premiers avis sur tout l’écran avant de réutiliser les zones voisines.
+
+`DesiredPopupCount()` fait monter le nombre de zéro à 100 entre `2:28` et `3:55`, le maintient, puis le ramène à zéro entre `6:50` et `7:21`. Avant la finale, fermer un avis crée deux remplaçants jusqu’au plafond ; pendant le compte à rebours, les fermetures deviennent définitives et suivent la cible décroissante. Le nettoyage détruit immédiatement les HWND restants et libère leurs polices.
+
 ### `TaskbarGuard`
 
 Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED` est posée exactement sur le bouton Démarrer et absorbe les clics qui l’atteignent, parce qu’un menu Démarrer ouvert recouvre toute la scène. Le rectangle vient du bouton réel quand il est identifiable — sous Windows 10, l’enfant de classe `Start` de `Shell_TrayWnd` — et d’une heuristique sur la géométrie de la barre sinon, la barre XAML de Windows 11 n’exposant pas ce bouton ; la position est réévaluée à chaque tick pour suivre une barre déplacée ou masquée automatiquement.
@@ -135,9 +142,7 @@ Après consentement à l’expérience complète uniquement, un hook bas niveau 
 
 ### Pas de fausses fenêtres
 
-GooseRot n’ouvre et ne dessine **aucune** fenêtre se faisant passer pour un composant de Windows. L’ancien `PopupSwarm` — un mur de 267 imitations de `Task Manager`, `File Explorer`, `Windows Security` et consorts, dont 67 HWND réels — a été retiré : à l’écran, une fausse fenêtre dessinée à la main ne ressemble jamais à la vraie, et l’écart casse l’illusion que le reste de l’expérience construit. Les faux glyphes d’erreur et le cadre `explorer.exe — (Ne répond pas)` ont été retirés pour la même raison.
-
-Ce qui reste appartient visiblement à l’inspection : le dossier `AURA INSPECTION - case 67`, deux boîtes de dialogue GooseRot titrées comme des avis d’inspection, et des avis peints dans l’overlay dont l’en-tête est toujours `AURA INSPECTION`. L’escalade de la fin repose désormais entièrement sur le nombre d’oies, les pièces à conviction et `GlitchLayer`.
+GooseRot ne dessine aucune imitation de `Task Manager`, `File Explorer`, `Windows Security` ou d’un avertissement système. Les avis accumulés sont de petites fenêtres propres à GooseRot ; leurs titres et textes bureaucratiques identifient toujours `AURA INSPECTION` comme auteur.
 
 ### `GlitchLayer` et rendu dense
 

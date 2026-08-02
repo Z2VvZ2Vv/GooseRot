@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "core.hpp"
+
 namespace gooserot {
 
 enum class PromptResult { None, Primary, Secondary, Dismissed };
@@ -120,6 +122,55 @@ class OwnedWindowsApps {
   std::vector<ProcessEntry> processes_;
   HANDLE job_ = nullptr;
   double nextWindowEnumerationAt_ = 0.0;
+};
+
+// A bounded swarm of compact GooseRot notices. They deliberately use small
+// modeless Win32 windows instead of system MessageBoxW dialogs, so a hundred of
+// them can fill the desktop without blocking the timeline or creating a hundred
+// worker threads. Closing one before the finale spawns two replacements; the
+// final countdown closes them directly, one by one.
+class PopupSwarm {
+ public:
+  PopupSwarm() = default;
+  ~PopupSwarm();
+
+  PopupSwarm(const PopupSwarm&) = delete;
+  PopupSwarm& operator=(const PopupSwarm&) = delete;
+
+  void SetBounds(RECT bounds) { bounds_ = bounds; }
+  void Tick(HINSTANCE instance, std::mt19937& random, double logicalTime);
+  void CloseAll();
+  int Count() const { return static_cast<int>(popups_.size()); }
+  bool AtCap() const { return Count() >= static_cast<int>(kMaximumPopups); }
+  bool ConsumeCloseAttempt();
+
+ private:
+  struct Popup {
+    PopupSwarm* owner = nullptr;
+    HWND window = nullptr;
+    HWND label = nullptr;
+    HWND button = nullptr;
+    HFONT font = nullptr;
+    double jiggleUntil = -1.0;
+    int refusals = 0;
+    bool dead = false;
+  };
+
+  static ATOM Register(HINSTANCE instance);
+  static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+  LRESULT HandleMessage(Popup& popup, HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+  void RequestClose(Popup& popup);
+  bool CreatePopup(HINSTANCE instance, std::mt19937& random);
+  void ReapClosed();
+  void CloseOldest();
+
+  std::vector<std::unique_ptr<Popup>> popups_;
+  RECT bounds_{};
+  double lastTickTime_ = 0.0;
+  int pendingSpawns_ = 0;
+  int closeAttempts_ = 0;
+  int spawnCounter_ = 0;
+  bool closing_ = false;
 };
 
 // A goose foot planted on the Start button.
