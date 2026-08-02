@@ -687,6 +687,98 @@ void TestCompactPopupLifecycle() {
   Expect(swarm.Count() == 0, "compact-popup cleanup closes the notice");
 }
 
+// Notices are paperwork issued from the inspector's desk, so they have to grow
+// outward from the point they were issued from rather than land anywhere.
+void TestCompactPopupsGrowFromTheirOrigin() {
+  RECT workArea{};
+  if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) {
+    Expect(false, "origin-growth test obtains the work area");
+    return;
+  }
+  const POINT origin{workArea.left + (workArea.right - workArea.left) / 5,
+                     workArea.top + (workArea.bottom - workArea.top) / 5};
+  gooserot::PopupSwarm swarm;
+  swarm.SetBounds(workArea);
+  swarm.SetOrigin(origin);
+  std::mt19937 random(67U);
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+
+  const auto scheduleFor = [](std::size_t count) {
+    return gooserot::phase::kPopupStart +
+           (gooserot::phase::kPopupFull - gooserot::phase::kPopupStart) *
+               (static_cast<double>(count) + 0.5) / static_cast<double>(gooserot::kMaximumPopups);
+  };
+  const auto distanceFromOrigin = [&origin](const RECT& rectangle) {
+    const double dx = static_cast<double>(rectangle.left + (rectangle.right - rectangle.left) / 2) -
+                      static_cast<double>(origin.x);
+    const double dy = static_cast<double>(rectangle.top + (rectangle.bottom - rectangle.top) / 2) -
+                      static_cast<double>(origin.y);
+    return std::sqrt(dx * dx + dy * dy);
+  };
+
+  // Drive the schedule far enough to place a readable ring of notices, letting
+  // every arrival animation finish so the measured rectangles are final.
+  std::vector<double> distances;
+  for (std::size_t count = 1; count <= 24; ++count) {
+    const double at = scheduleFor(count);
+    swarm.Tick(instance, random, at);
+    for (int settle = 0; settle < 4; ++settle) {
+      swarm.Tick(instance, random, at + gooserot::PopupSwarm::kArrivalSeconds);
+    }
+  }
+  Expect(swarm.Count() == 24, "the schedule placed the expected notices");
+
+  std::vector<RECT> rectangles;
+  for (HWND popup = FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr); popup != nullptr;
+       popup = FindWindowExW(nullptr, popup, L"GooseRotPopup", nullptr)) {
+    RECT rectangle{};
+    if (GetWindowRect(popup, &rectangle)) rectangles.push_back(rectangle);
+  }
+  Expect(rectangles.size() == 24, "every placed notice has a live window");
+  for (const RECT& rectangle : rectangles) distances.push_back(distanceFromOrigin(rectangle));
+  std::sort(distances.begin(), distances.end());
+
+  // The wall is a disc around the desk, not a scatter: the farthest of the
+  // first two dozen notices stays well inside the screen diagonal.
+  const double diagonal = std::sqrt(
+      std::pow(static_cast<double>(workArea.right - workArea.left), 2.0) +
+      std::pow(static_cast<double>(workArea.bottom - workArea.top), 2.0));
+  Expect(!distances.empty() && distances.back() < diagonal * 0.62,
+         "the first notices cluster around the desk instead of the whole desktop");
+  Expect(distances.front() < distances.back(),
+         "notices are placed at increasing distance from the desk");
+
+  // Dismissing one frees its slot, so the replacements land back in the hole
+  // rather than at the outer edge of the wall.
+  RECT dismissed{};
+  HWND victim = FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr);
+  const bool haveVictim = victim && GetWindowRect(victim, &dismissed);
+  Expect(haveVictim, "a notice can be picked to dismiss");
+  if (haveVictim) {
+    SendMessageW(victim, WM_CLOSE, 0, 0);
+    const double at = scheduleFor(24);
+    swarm.Tick(instance, random, at);
+    for (int settle = 0; settle < 4; ++settle) {
+      swarm.Tick(instance, random, at + gooserot::PopupSwarm::kArrivalSeconds);
+    }
+    bool reused = false;
+    for (HWND popup = FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr); popup != nullptr;
+         popup = FindWindowExW(nullptr, popup, L"GooseRotPopup", nullptr)) {
+      RECT rectangle{};
+      if (!GetWindowRect(popup, &rectangle)) continue;
+      if (std::abs(rectangle.left - dismissed.left) <= 40 &&
+          std::abs(rectangle.top - dismissed.top) <= 40) {
+        reused = true;
+        break;
+      }
+    }
+    Expect(reused, "a dismissed notice is answered in the slot it vacated");
+  }
+
+  swarm.CloseAll();
+  Expect(swarm.Count() == 0, "origin-growth cleanup closes every notice");
+}
+
 bool ParseUnsigned(const wchar_t* text, unsigned long long& value) {
   if (!text || !*text || *text == L'+' || *text == L'-') return false;
   wchar_t* end = nullptr;
@@ -721,6 +813,7 @@ int wmain(int argc, wchar_t** argv) {
   TestWindowsKeySuppressionPolicy();
   TestEmbeddedChaosAssets();
   TestCompactPopupLifecycle();
+  TestCompactPopupsGrowFromTheirOrigin();
   TestDenseRenderBudget();
   if (gFailures == 0) {
     std::cout << "All GooseRot Win32 integration tests passed.\n";

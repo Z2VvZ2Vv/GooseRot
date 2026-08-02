@@ -842,6 +842,17 @@ void GooseRotApp::UpdateOwnedWindowsApps() {
 
 void GooseRotApp::UpdatePopups() {
   if (!config_.desktopEffects || config_.preview) return;
+  // Notices are pages coming off the inspector's desk, so they are issued from
+  // the case file if it is open, and from the goose that would be writing it
+  // otherwise. Without this the wall dealt itself across the desktop with no
+  // visible source.
+  POINT issuePoint{};
+  if (!notepad_.TryGetIssuePoint(issuePoint)) {
+    const RectF bounds = overlay_.CanvasBounds();
+    const Vec2 anchor = geese_.empty() ? bounds.Center() : geese_.front().Rig().beakTip;
+    issuePoint = overlay_.CanvasToScreen(anchor);
+  }
+  popups_.SetOrigin(issuePoint);
   popups_.Tick(instance_, random_, logicalTime_);
   if (popups_.ConsumeCloseAttempt()) {
     constexpr std::array<const wchar_t*, 4> lines = {

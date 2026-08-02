@@ -126,9 +126,20 @@ Maintient au maximum six vrais utilitaires intégrés à Windows simultanés : N
 
 ### `PopupSwarm`
 
-Crée jusqu’à 100 petites fenêtres `GooseRotPopup` de `348×186`. Elles sont modeless et partagent le thread UI : aucun appel modal, hook CBT ou thread supplémentaire n’est nécessaire. Chaque fenêtre utilise `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, reste au-dessus de la scène et occupe une cellule permutée de la surface virtuelle. Le multiplicateur 37, premier avec 100, répartit les premiers avis sur tout l’écran avant de réutiliser les zones voisines.
+Crée jusqu’à 100 petites fenêtres `GooseRotPopup` de `348×186`. Elles sont modeless et partagent le thread UI : aucun appel modal, hook CBT ou thread supplémentaire n’est nécessaire. Chaque fenêtre utilise `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` et reste au-dessus de la scène.
 
-`DesiredPopupCount()` fait monter le nombre de zéro à 100 entre `2:28` et `3:55`, le maintient, puis le ramène à zéro entre `6:50` et `7:21`. Avant la finale, fermer un avis crée deux remplaçants jusqu’au plafond ; pendant le compte à rebours, les fermetures deviennent définitives et suivent la cible décroissante. Le nettoyage détruit immédiatement les HWND restants et libère leurs polices.
+L’apparition d’un avis a une **source** et un **ordre**, parce qu’un avis est une page qui sort du dossier de l’inspectrice :
+
+- `SetOrigin()` reçoit à chaque tick le point d’émission — le bord du titre du dossier via `NotepadWindow::TryGetIssuePoint()`, ou le bec de l’oie si le dossier est fermé ;
+- `EnsureSlotOrder()` classe **toutes** les cellules de la grille par distance à ce point, avec un départage angulaire stable ; `AcquireSlot()` prend ensuite la première cellule libre de ce classement. Le mur grandit donc vers l’extérieur depuis le bureau au lieu d’être distribué par une permutation coprime sur tout l’écran ;
+- la fenêtre est créée **au point d’émission**, en `WS_EX_LAYERED`, puis `AdvanceArrival()` la fait glisser vers sa cellule en 0,36 s logique avec une sortie cubique et une montée d’alpha. Le style layered est retiré à l’arrivée : seules les pages en vol coûtent quelque chose au compositeur ;
+- un avis fermé **libère sa cellule**, et comme les cellules se prennent de la plus proche à la plus lointaine, les deux remplaçants retombent dans le trou que l’utilisateur vient de faire ;
+- la cascade finale ferme la fenêtre **la plus récente** d’abord, donc la plus extérieure : le mur se replie vers le bureau au lieu de se trouer par le milieu ;
+- le catch-up n’est pas animé. Après une reprise `--start-at` ou un décrochage, l’arriéré est posé directement en cellule : voir huit pages voler d’un coup se lirait comme du bruit.
+
+Le texte d’un avis vient d’une table unique de triplets `{titre, corps, bouton}` parcourue séquentiellement. Trois tables indépendantes parcourues par des modulos différents produisaient des combinaisons incohérentes ; un seul index rend les avis consécutifs lisibles comme une même série administrative.
+
+`DesiredPopupCount()` fait monter le nombre de zéro à 100 entre `2:28` et `3:55`, le maintient, puis le ramène à zéro entre `6:50` et `7:21`. Avant la finale, fermer un avis crée deux remplaçants jusqu’au plafond ; pendant le compte à rebours, les fermetures deviennent définitives et suivent la cible décroissante. Le nettoyage détruit immédiatement les HWND restants, libère leurs polices et remet toutes les cellules à l’état libre.
 
 ### `TaskbarGuard`
 

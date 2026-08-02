@@ -28,7 +28,8 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - dossier d’inspection ouvert **sous le bec de l’oie** qui vient de tamponner le bureau, rédigé caractère par caractère avec cadence irrégulière, pauses de ponctuation et fautes corrigées, et qui refuse d’être réduit dans la barre des tâches ;
 - **aucune fausse fenêtre système** : les petits avis sont des fenêtres GooseRot clairement titrées `AURA INSPECTION`, jamais de faux Task Manager, Explorateur ou avertissement Windows ;
 - petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics ; en expérience complète, garde temporaire limitée aux deux touches Windows, sans modification du shell ni réglage persistant, retirée à la fin ou immédiatement lors d’un arrêt d’urgence ;
-- jusqu’à 100 petits avis GooseRot de `348×186` répartis sur toute la surface : ils s’accumulent entre `2:28` et `3:55`, restent affichés, puis se ferment un par un entre `6:50` et `7:21` avant l’obturateur final ;
+- jusqu’à 100 petits avis GooseRot de `348×186`, **émis depuis le dossier d’inspection** et glissant jusqu’à leur place : les emplacements se prennent du plus proche du dossier au plus lointain, donc le mur grandit vers l’extérieur depuis le bureau. Ils s’accumulent entre `2:28` et `3:55`, puis se replient un par un du plus extérieur au plus proche entre `6:50` et `7:21` ;
+- fermer un avis en dépose deux, dont un **dans l’emplacement que vous venez de libérer** ;
 - jusqu’à six vrais utilitaires Windows simultanés (Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer), protégés par un Job Object privé, lancés à cadence réelle puis fermés avant la finale ;
 - pluie déterministe de 67 glyphes d’erreur originaux, dessinés uniquement dans l’overlay ;
 - sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;

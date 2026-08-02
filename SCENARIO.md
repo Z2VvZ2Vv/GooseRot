@@ -118,7 +118,13 @@ En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, s
 
 À partir de `2:58`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
-À partir de `2:28`, les **petits avis GooseRot historiques** reviennent : des fenêtres compactes de `348×186`, titrées `AURA INSPECTION`, distribuées sur toute la surface par une grille permutée. L’écran se remplit sans qu’une seule boîte masque une zone énorme. Le plafond de **100 avis simultanés** est atteint à `3:55`. Ces fenêtres sont modeless, restent sans activation pour ne pas voler le focus et ne créent aucun thread par avis. Fermer un avis avant la finale en dépose deux nouveaux, jusqu’au plafond administratif.
+À partir de `2:28`, les **petits avis GooseRot** commencent à s’accumuler : des fenêtres compactes de `348×186`, titrées `AURA INSPECTION`. Le plafond de **100 avis simultanés** est atteint à `3:55`.
+
+Ce ne sont pas des boîtes qui apparaissent au hasard : ce sont des pages qui sortent du dossier. Chaque avis est **émis depuis le dossier d’inspection** — ou depuis le bec de l’oie si le dossier a été fermé — puis **glisse jusqu’à sa place** en un tiers de seconde, en montant en opacité pendant le trajet. Les emplacements sont pris **du plus proche du dossier au plus lointain**, donc le mur de paperasse grandit visiblement vers l’extérieur depuis le bureau où l’inspectrice écrit.
+
+Fermer un avis avant la finale en dépose deux nouveaux — et comme la place libérée est la première reprise, **le remplaçant retombe exactement dans le trou** que vous venez de faire. Ces fenêtres sont modeless, restent sans activation pour ne pas voler le focus et ne créent aucun thread par avis.
+
+Le texte est une série : titre, corps et bouton d’un avis viennent d’une même entrée, et les avis consécutifs se lisent comme un même fil administratif qui s’enfonce.
 
 Chaque déplacement est annoncé par une bulle de BD choisie aléatoirement :
 
@@ -251,7 +257,7 @@ Un grand compte à rebours rouge apparaît en haut de l’écran :
 
 > 00:40
 
-Les 100 avis se ferment alors **un par un**, dans leur ordre d’arrivée. La cascade dure tout le compte à rebours ; le dernier disparaît à `7:21`, juste avant que l’obturateur commence à réduire la surface visible. Un arrêt d’urgence ne joue pas cette cascade : il ferme immédiatement toutes les fenêtres restantes.
+Les 100 avis se ferment alors **un par un**, en commençant par le plus récent — donc le plus éloigné du bureau. Le mur se replie vers le dossier, exactement dans l’ordre inverse de sa construction, au lieu de se trouer par le milieu. La cascade dure tout le compte à rebours ; le dernier disparaît à `7:21`, juste avant que l’obturateur commence à réduire la surface visible. Un arrêt d’urgence ne joue pas cette cascade : il ferme immédiatement toutes les fenêtres restantes.
 
 ### 7:10 — Les inspecteurs se déploient
 
