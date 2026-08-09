@@ -1,4 +1,4 @@
-foreach(profile SAFE NORMAL LAB)
+foreach(profile SAFE NORMAL LAB LAB_DEBUG)
   if(NOT DEFINED GOOSEROT_${profile}_EXE OR
      NOT EXISTS "${GOOSEROT_${profile}_EXE}")
     message(FATAL_ERROR "GOOSEROT_${profile}_EXE does not name a built GooseRot executable")
@@ -20,6 +20,7 @@ file(REMOVE
   "${OUTPUT_DIR}/GooseRot-Safe.exe"
   "${OUTPUT_DIR}/GooseRot-Normal.exe"
   "${OUTPUT_DIR}/GooseRot-Lab.exe"
+  "${OUTPUT_DIR}/GooseRot-Lab-Debug.exe"
   "${OUTPUT_DIR}/GooseBootX64.efi"
   "${OUTPUT_DIR}/gooseboot-bios-stage1.bin"
   "${OUTPUT_DIR}/gooseboot-bios-stage2.bin"
@@ -30,12 +31,17 @@ file(REMOVE
 configure_file("${GOOSEROT_SAFE_EXE}" "${OUTPUT_DIR}/GooseRot-Safe.exe" COPYONLY)
 configure_file("${GOOSEROT_NORMAL_EXE}" "${OUTPUT_DIR}/GooseRot-Normal.exe" COPYONLY)
 configure_file("${GOOSEROT_LAB_EXE}" "${OUTPUT_DIR}/GooseRot-Lab.exe" COPYONLY)
+configure_file("${GOOSEROT_LAB_DEBUG_EXE}" "${OUTPUT_DIR}/GooseRot-Lab-Debug.exe" COPYONLY)
 configure_file("${README_SOURCE}" "${OUTPUT_DIR}/README.txt" COPYONLY)
 
 set(checksums "")
-foreach(profile Safe Normal Lab)
-  file(SHA256 "${OUTPUT_DIR}/GooseRot-${profile}.exe" gooserot_sha256)
-  string(APPEND checksums "${gooserot_sha256}  GooseRot-${profile}.exe\n")
+foreach(exe_name IN ITEMS
+    GooseRot-Safe.exe
+    GooseRot-Normal.exe
+    GooseRot-Lab.exe
+    GooseRot-Lab-Debug.exe)
+  file(SHA256 "${OUTPUT_DIR}/${exe_name}" gooserot_sha256)
+  string(APPEND checksums "${gooserot_sha256}  ${exe_name}\n")
 endforeach()
 
 if(DEFINED GOOSEBOOT_PREVIEW AND NOT GOOSEBOOT_PREVIEW STREQUAL "" AND
