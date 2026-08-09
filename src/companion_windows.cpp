@@ -978,7 +978,7 @@ void PopupSwarm::CloseAll() {
     if (popup->font) DeleteObject(popup->font);
   }
   popups_.clear();
-  std::fill(slotTaken_.begin(), slotTaken_.end(), 0U);
+  std::fill(slotTaken_.begin(), slotTaken_.end(), static_cast<std::uint8_t>(0));
   pendingSpawns_ = 0;
   closeAttempts_ = 0;
   permanentDismissals_ = 0;

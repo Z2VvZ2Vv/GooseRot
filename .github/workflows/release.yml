@@ -7,34 +7,39 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
+  build-windows-mingw:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build x64 (Release)
-        shell: pwsh
-        run: |
-          cmake -S . -B build-x64 -A x64 -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-x64 --config Release --parallel 4
+      - name: Setup MinGW & Ninja
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
 
-      - name: Build Win32 (Release)
-        shell: pwsh
+      - name: Build with MinGW (Release)
+        shell: msys2 {0}
         run: |
-          cmake -S . -B build-win32 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-win32 --config Release --target gooserot_release --parallel 4
+          cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-mingw -j 4
 
       - name: Collect executables
         shell: pwsh
         run: |
           $art = Join-Path $PWD artifacts
           if (!(Test-Path $art)) { New-Item -ItemType Directory -Path $art | Out-Null }
-          $names = @('GooseRot-Safe.exe','GooseRot-Normal.exe','GooseRot-Lab.exe','GooseRot-Lab-Debug.exe')
+          $names = @('GooseRot-Safe.exe','GooseRot-Normal.exe','GooseRot-Lab.exe','GooseRot-Lab-Debug.exe','GooseBootPreview.exe')
           foreach ($n in $names) {
-            $found = Get-ChildItem -Path . -Filter $n -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            $found = Get-ChildItem -Path build-mingw -Filter $n -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($found) { Copy-Item $found.FullName -Destination $art -Force }
           }
+          Get-ChildItem $art
 
       - name: Upload EXE artifacts
         uses: actions/upload-artifact@v4

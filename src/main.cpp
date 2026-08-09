@@ -255,8 +255,8 @@ static_assert(GOOSEROT_BUILD_PROFILE >= 0 && GOOSEROT_BUILD_PROFILE <= 2,
               "GOOSEROT_BUILD_PROFILE must be safe (0), normal (1) or lab (2)");
 
 constexpr gooserot::RunMode CompiledProfile() {
-  if constexpr (GOOSEROT_BUILD_PROFILE == 1) return gooserot::RunMode::Normal;
-  if constexpr (GOOSEROT_BUILD_PROFILE == 2) return gooserot::RunMode::Lab;
+  if (GOOSEROT_BUILD_PROFILE == 1) return gooserot::RunMode::Normal;
+  if (GOOSEROT_BUILD_PROFILE == 2) return gooserot::RunMode::Lab;
   return gooserot::RunMode::Safe;
 }
 
