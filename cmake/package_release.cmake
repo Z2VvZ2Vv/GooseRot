@@ -1,6 +1,9 @@
-if(NOT DEFINED GOOSEROT_EXE OR NOT EXISTS "${GOOSEROT_EXE}")
-  message(FATAL_ERROR "GOOSEROT_EXE does not name a built GooseRot executable")
-endif()
+foreach(profile SAFE NORMAL LAB)
+  if(NOT DEFINED GOOSEROT_${profile}_EXE OR
+     NOT EXISTS "${GOOSEROT_${profile}_EXE}")
+    message(FATAL_ERROR "GOOSEROT_${profile}_EXE does not name a built GooseRot executable")
+  endif()
+endforeach()
 if(NOT DEFINED README_SOURCE OR NOT EXISTS "${README_SOURCE}")
   message(FATAL_ERROR "README_SOURCE is missing")
 endif()
@@ -14,14 +17,26 @@ endif()
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 file(REMOVE
   "${OUTPUT_DIR}/GooseRot.exe"
+  "${OUTPUT_DIR}/GooseRot-Safe.exe"
+  "${OUTPUT_DIR}/GooseRot-Normal.exe"
+  "${OUTPUT_DIR}/GooseRot-Lab.exe"
+  "${OUTPUT_DIR}/GooseBootX64.efi"
+  "${OUTPUT_DIR}/gooseboot-bios-stage1.bin"
+  "${OUTPUT_DIR}/gooseboot-bios-stage2.bin"
+  "${OUTPUT_DIR}/gooseboot-bios.img"
   "${OUTPUT_DIR}/GooseBootPreview.exe"
   "${OUTPUT_DIR}/README.txt"
   "${OUTPUT_DIR}/SHA256SUMS.txt")
-configure_file("${GOOSEROT_EXE}" "${OUTPUT_DIR}/GooseRot.exe" COPYONLY)
+configure_file("${GOOSEROT_SAFE_EXE}" "${OUTPUT_DIR}/GooseRot-Safe.exe" COPYONLY)
+configure_file("${GOOSEROT_NORMAL_EXE}" "${OUTPUT_DIR}/GooseRot-Normal.exe" COPYONLY)
+configure_file("${GOOSEROT_LAB_EXE}" "${OUTPUT_DIR}/GooseRot-Lab.exe" COPYONLY)
 configure_file("${README_SOURCE}" "${OUTPUT_DIR}/README.txt" COPYONLY)
 
-file(SHA256 "${OUTPUT_DIR}/GooseRot.exe" gooserot_sha256)
-set(checksums "${gooserot_sha256}  GooseRot.exe\n")
+set(checksums "")
+foreach(profile Safe Normal Lab)
+  file(SHA256 "${OUTPUT_DIR}/GooseRot-${profile}.exe" gooserot_sha256)
+  string(APPEND checksums "${gooserot_sha256}  GooseRot-${profile}.exe\n")
+endforeach()
 
 if(DEFINED GOOSEBOOT_PREVIEW AND NOT GOOSEBOOT_PREVIEW STREQUAL "" AND
    EXISTS "${GOOSEBOOT_PREVIEW}")

@@ -5,14 +5,16 @@
 Une release contient :
 
 ```text
-GooseRot.exe
+GooseRot-Safe.exe
+GooseRot-Normal.exe
+GooseRot-Lab.exe
 SHA256SUMS.txt
 README.txt
 ```
 
-Le bundle `lab --fake-reboot` ajoute `GooseBootPreview.exe` à côté de `GooseRot.exe`. La cible CMake `gooserot_release`, disponible uniquement en MSVC Win32, produit ce dossier de staging et `SHA256SUMS.txt` dans `build*/dist/` ; si la Preview est désactivée au build, seuls les trois fichiers principaux sont générés. MinGW expose à la place `gooserot_smoke_bundle` dans `smoke-dist/`, explicitement non publiable.
+Le bundle `GooseRot-Lab.exe --fake-reboot` ajoute `GooseBootPreview.exe` à côté des trois exécutables. La cible CMake `gooserot_release`, disponible uniquement en MSVC Win32, produit ce dossier de staging et `SHA256SUMS.txt` dans `build*/dist/`. MinGW expose à la place `gooserot_smoke_bundle` dans `smoke-dist/`, explicitement non publiable.
 
-Les images, la timeline et les textes sont embarqués dans les ressources de l’exécutable. Aucun DLL, installateur, runtime ou dossier d’assets n’est requis à l’exécution.
+Les images, la timeline et les textes sont embarqués dans les ressources des exécutables. Quand les entrées firmware sont fournies au build, le `.efi` et les deux stages BIOS sont embarqués uniquement dans `GooseRot-Lab.exe` ; aucun fichier firmware ne doit rester à côté de l’exécutable.
 
 Le sous-projet pré-OS produit séparément un bundle de laboratoire expérimental. Il ne fait partie ni de `gooserot_release` ni de `gooserot_smoke_bundle`, et il ne constitue pas une release publiable :
 
@@ -44,13 +46,15 @@ Les images intermédiaires vérifiées sont placées dans `build-firmware/boot/f
 Lorsque l’exécutable est déjà présent sur la machine :
 
 ```text
-C:\Chemin\GooseRot.exe --mode safe
-C:\Chemin\GooseRot.exe --mode normal
-C:\Chemin\GooseRot.exe --mode lab --vm-confirmed
-C:\Chemin\GooseRot.exe --mode lab --vm-confirmed --boot-game  # réservé, échoue : bundle non signé/non validé
+C:\Chemin\GooseRot-Safe.exe
+C:\Chemin\GooseRot-Normal.exe
+C:\Chemin\GooseRot-Lab.exe
+C:\Chemin\GooseRot-Lab.exe --boot-game  # réservé, échoue : bundle non signé/non validé
 ```
 
-Les lignes `lab` ci-dessus documentent l’interface de commande, pas une recommandation d’exécution. Le code actuel n’est pas encore aligné avec le contrat destructeur et conserve des protections supplémentaires ; cette divergence est temporaire et ne doit pas servir de garantie de sécurité.
+Chaque fichier verrouille son profil : `--mode` ne permet pas de changer de variante. `GooseRot-Lab.exe` démarre immédiatement sans avertissement ou confirmation. Les lignes `lab` ci-dessus documentent l’interface de commande, pas une recommandation d’exécution. Le code actuel n’est pas encore aligné avec le contrat destructeur et conserve des protections supplémentaires ; cette divergence est temporaire et ne doit pas servir de garantie de sécurité.
+
+Avant d’initialiser l’application, Lab détecte le firmware et extrait depuis ses ressources `GooseBootX64.efi` pour UEFI, ou `gooseboot-bios-stage1.bin` et `gooseboot-bios-stage2.bin` pour BIOS, dans `%TEMP%\GooseRot-Lab\`. Avec MinGW x64, `GOOSEROT_BUILD_BOOT_FIRMWARE=ON` construit puis embarque ces fichiers. Pour une autre toolchain, `GOOSEROT_LAB_FIRMWARE_DIR` peut désigner le dossier `firmware` produit auparavant. Sans l’une de ces deux sources, Lab se construit mais refuse son démarrage avec une erreur explicite car aucune ressource firmware n’est embarquée.
 
 Les chemins contenant des espaces doivent être entourés de guillemets.
 
@@ -70,13 +74,15 @@ Un lanceur « télécharger puis exécuter » en une ligne, un `Invoke-Expressio
 
 ## Script hébergé
 
-Si un script GitHub est ajouté plus tard, son périmètre est le téléchargement vérifié et le lancement explicite de `GooseRot.exe`. Il ne manipule jamais les artefacts GooseBoot, qui appartiennent à un canal de laboratoire séparé.
+Si un script GitHub est ajouté plus tard, son périmètre est le téléchargement vérifié et le lancement explicite de l’un des trois exécutables GooseRot. Il ne manipule jamais les artefacts GooseBoot, qui appartiennent à un canal de laboratoire séparé.
 
 ## Compatibilité Windows 7 → Windows 11
 
 Le binaire évite les dépendances modernes non présentes sur Windows 7. Il utilise la conscience DPI système historique via `SetProcessDPIAware` et conserve un rendu GDI+ classique ; il n'annonce pas de prise en charge DPI per-monitor.
 
-Dans l’implémentation actuelle, GooseRot ne demande pas les droits administrateur et n’appelle aucune API de redémarrage. Cette phrase décrit l’état présent du code, pas le contrat cible destructeur de `lab`. En `safe` et `normal`, la conclusion reste une explosion et une coupure noire entièrement rendues dans l’overlay, compatibles avec toutes les versions ciblées.
+Dans l’implémentation actuelle, `GooseRot-Lab.exe` déclare `requireAdministrator` et Windows affiche donc une demande UAC unique avant son lancement. Un refus annule le lancement sans boucle de relance. `GooseRot-Safe.exe` et `GooseRot-Normal.exe` déclarent `asInvoker`, et aucun profil n’appelle encore d’API de redémarrage. En `safe` et `normal`, la conclusion reste une explosion et une coupure noire entièrement rendues dans l’overlay, compatibles avec toutes les versions ciblées.
+
+Lab reprend cette conclusion visuelle complète. Après l’explosion et l’oie d’adieu, l’overlay affiche une dernière image noire opaque et appelle `RunLabConclusion` une fois avant de se fermer. Son implémentation dans `src/lab_mode.cpp` ne fait rien par défaut et reçoit `LabStartupArtifacts` afin de servir de point d’extension explicite au code Lab.
 
 ## Publication
 

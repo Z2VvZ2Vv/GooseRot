@@ -97,7 +97,7 @@ Deux variantes appartiennent à GooseRot :
 - `lab --fake-reboot` : dans le code actuel non aligné, restauration vérifiée, transition vers la Preview, puis sortie ; cette restauration devra disparaître du contrat cible destructeur ;
 - `lab --boot-game` : option actuellement refusée malgré la présence des artefacts expérimentaux, car ils sont non signés et non validés à l’exécution.
 
-La cible `gooseboot_firmware_bundle` assemble uniquement un dossier de staging et un manifeste portant `installable: false` et `runtimeValidated: false`. Les vérifications actuelles portent sur le format et le layout ; aucun démarrage QEMU/OVMF/SeaBIOS n’a été exécuté. La détection du firmware et l’installation dans une chaîne de démarrage existante ne sont pas dans le périmètre. Elles restent dans un projet d’intégration étudiant séparé, sans procédure fournie ici. Le fichier `gooseboot-bios.img` est destiné uniquement à un futur test sur support virtuel vierge et jetable, jamais à un disque physique.
+La cible `gooseboot_firmware_bundle` assemble uniquement un dossier de staging et un manifeste portant `installable: false` et `runtimeValidated: false`. Les vérifications actuelles portent sur le format et le layout ; aucun démarrage QEMU/OVMF/SeaBIOS n’a été exécuté. Lab détecte désormais le firmware et extrait dans `%TEMP%` le `.efi` ou les deux stages BIOS embarqués, mais il ne les installe dans aucune chaîne de démarrage. Cette installation reste hors périmètre, sans procédure fournie ici. Le fichier `gooseboot-bios.img` est destiné uniquement à un futur test sur support virtuel vierge et jetable, jamais à un disque physique.
 
 ## Restauration
 
@@ -131,6 +131,6 @@ Le test d'intégration `gooserot_win32_integration` n'agit que sur ses propres p
 - `safe` est le profil par défaut ;
 - maintenir `Esc` pendant deux secondes restaure et ferme l’application uniquement en `safe` ;
 - `normal` et `lab` ignorent ce geste comme commande de sortie ;
-- `lab` affiche un avertissement bloquant indiquant que la VM sera saccagée et pourra ne plus redémarrer ;
+- `GooseRot-Lab.exe` encode explicitement le choix du profil dans son nom et démarre sans avertissement bloquant ni confirmation ; il ne doit donc être placé et lancé que dans une VM isolée et jetable ;
 - le HUD affiche en permanence le profil actif, ainsi que l’état courant du pointeur pendant la tempête (`CURSOR: SEIZED` ou `CURSOR: YOURS`) ;
 - les tests `lab` se font sur une VM isolée, jetable, avec snapshot hors ligne et sans données importantes.

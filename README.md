@@ -10,7 +10,7 @@ Le profil `safe` reste la variante inoffensive et le seul profil offrant la sort
 > [!NOTE]
 > Cette documentation fixe le contrat produit visé. L’implémentation actuelle n’a pas encore été alignée : elle conserve des protections et une sortie `Esc` dans tous les profils et n’implémente pas les destructions décrites pour `lab`. Ne pas confondre ce constat avec une garantie pour une future build `lab`.
 
-Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : la seule fenêtre récalcitrante est le dossier d’inspection, qui appartient à GooseRot et que le nettoyage détruit directement. Le consentement initial annonce ce comportement ainsi que la sortie actuelle par `Esc` maintenu deux secondes.
+Dans l’implémentation actuelle revue ici, tous les effets restent réversibles : la seule fenêtre récalcitrante est le dossier d’inspection, qui appartient à GooseRot et que le nettoyage détruit directement. `GooseRot-Safe.exe` et `GooseRot-Normal.exe` conservent le dialogue initial ; `GooseRot-Lab.exe` démarre directement, sans avertissement ni confirmation, et reste réservé à une VM jetable.
 
 ## État de l’implémentation
 
@@ -28,8 +28,7 @@ Dans l’implémentation actuelle revue ici, tous les effets restent réversible
 - dossier d’inspection ouvert **sous le bec de l’oie** qui vient de tamponner le bureau, rédigé caractère par caractère avec cadence irrégulière, pauses de ponctuation et fautes corrigées, et qui refuse d’être réduit dans la barre des tâches ;
 - **aucune fausse fenêtre système** : les petits avis sont des fenêtres GooseRot clairement titrées `AURA INSPECTION`, jamais de faux Task Manager, Explorateur ou avertissement Windows ;
 - petit panneau GooseRot posé sur le bouton Démarrer qui avale ses clics ; en expérience complète, garde temporaire limitée aux deux touches Windows, sans modification du shell ni réglage persistant, retirée à la fin ou immédiatement lors d’un arrêt d’urgence ;
-- jusqu’à 100 petits avis GooseRot de `348×186`, **émis depuis le dossier d’inspection** et glissant jusqu’à leur place : les emplacements se prennent du plus proche du dossier au plus lointain, donc le mur grandit vers l’extérieur depuis le bureau. Ils s’accumulent entre `2:28` et `3:55`, puis se replient un par un du plus extérieur au plus proche entre `6:50` et `7:21` ;
-- fermer un avis en dépose deux, dont un **dans l’emplacement que vous venez de libérer** ;
+- jusqu’à 100 petits avis GooseRot de `348×186`, créés instantanément sans fondu, glissement ni secousse et répartis de façon déterministe sur toute la zone de travail : 1 avis à `3:10`, 12 à `3:55`, 42 à `5:15`, 80 à `6:15`, puis le plafond de 100 au compte à rebours ; ils se replient ensuite dans l’ordre inverse de création avant l’obturateur final ; avant `3:55`, un avis fermé reste fermé sans réaction ni remplacement ;
 - jusqu’à six vrais utilitaires Windows simultanés (Notepad, Paint, Task Manager, Character Map, About Windows ou Explorer), protégés par un Job Object privé, lancés à cadence réelle puis fermés avant la finale ;
 - pluie déterministe de 67 glyphes d’erreur originaux, dessinés uniquement dans l’overlay ;
 - sons d'alerte système asynchrones et cadencés, désactivables avec `--mute` ;
@@ -77,25 +76,29 @@ Les images vérifiées statiquement sont placées dans `build-firmware/boot/firm
 
 Le build MSVC produit le livrable contractuel x86 `/MT`. Le smoke build MinGW est utile au développement mais produit un exécutable x64. Le build firmware reste un canal de laboratoire séparé. Les assets de `Assets/Generated/` et les sept images fournies sous `Assets/User/GooseChaos/` sont intégrés comme ressources : le binaire Win32 n’a besoin d’aucun dossier d’assets à l’exécution.
 
-La cible `gooserot_release` n'existe que pour un build MSVC Win32 et prépare `dist/` avec `GooseRot.exe`, `GooseBootPreview.exe`, `README.txt` et leurs SHA-256. Les autres toolchains exposent uniquement `gooserot_smoke_bundle`, dans `smoke-dist/`, pour éviter de présenter un binaire x64 MinGW comme une release Windows 7. Le bundle firmware expérimental est séparé de ces deux distributions.
+La cible `gooserot_release` n'existe que pour un build MSVC Win32 et prépare `dist/` avec `GooseRot-Safe.exe`, `GooseRot-Normal.exe`, `GooseRot-Lab.exe`, `GooseBootPreview.exe`, `README.txt` et leurs SHA-256. Les autres toolchains exposent uniquement `gooserot_smoke_bundle`, dans `smoke-dist/`, pour éviter de présenter un binaire x64 MinGW comme une release Windows 7. Le bundle firmware expérimental est séparé de ces deux distributions.
 
 ## Lancer
 
 Commencer par la Preview sans effet système :
 
 ```powershell
-build-mingw\bin\GooseRot.exe --preview --duration-scale 0.1
+build-mingw\bin\GooseRot-Safe.exe --preview --duration-scale 0.1
 ```
 
 Puis, pour la démonstration desktop consentie :
 
 ```powershell
-GooseRot.exe --mode safe
-GooseRot.exe --mode normal
-GooseRot.exe --mode lab --vm-confirmed
+GooseRot-Safe.exe
+GooseRot-Normal.exe
+GooseRot-Lab.exe
 ```
 
-`lab` est destructeur par contrat : la commande ci-dessus ne doit être utilisée que dans une VM jetable dont la perte totale est acceptée. Maintenir `Esc` pendant deux secondes ne constitue une sortie garantie qu’en `safe`.
+`lab` est destructeur par contrat : le binaire dédié ne présente aucun dialogue de lancement interne et ne doit être utilisé que dans une VM jetable dont la perte totale est acceptée. Windows demande toutefois l’élévation administrateur avant chaque lancement de `GooseRot-Lab.exe`. Un refus annule le lancement ; l’application ne relance pas la demande en boucle. `GooseRot-Safe.exe` et `GooseRot-Normal.exe` restent en `asInvoker`. Chaque exécutable verrouille son profil ; `--mode` ne permet pas de transformer une variante en une autre. Maintenir `Esc` pendant deux secondes ne constitue une sortie garantie qu’en `safe`.
+
+Au démarrage, `GooseRot-Lab.exe` détecte réellement si Windows a démarré via BIOS ou UEFI. Les artefacts sont embarqués dans les ressources du seul exécutable Lab, qui extrait dans `%TEMP%\GooseRot-Lab\` uniquement ce qui correspond à la machine : `GooseBootX64.efi` en UEFI, ou `gooseboot-bios-stage1.bin` et `gooseboot-bios-stage2.bin` en BIOS. Le type détecté et les chemins sont disponibles dans `LabStartupArtifacts` juste après `RunLabStartup`, ainsi que dans `GOOSEROT_FIRMWARE_TYPE`, `GOOSEROT_LAB_UEFI`, `GOOSEROT_LAB_BIOS_STAGE1` et `GOOSEROT_LAB_BIOS_STAGE2`. Cette extraction n’installe rien et ne modifie ni le Registre, ni le firmware, ni la chaîne de démarrage.
+
+À la fin de la timeline, Lab conserve toute la conclusion visuelle de Safe/Normal : nettoyage, explosion, écran noir puis oie d’adieu. Une dernière image entièrement noire est ensuite affichée et, pendant qu’elle reste à l’écran, `RunLabConclusion` dans `src/lab_mode.cpp` est appelé une seule fois avec les chemins extraits. Ce point d’extension est vide par défaut et constitue l’endroit prévu pour ajouter du code propre à la conclusion Lab ; l’overlay se ferme à son retour.
 
 Options utiles :
 
@@ -112,7 +115,7 @@ Options utiles :
 --seed 67
 ```
 
-`--duration-scale 0.1` joue la timeline dix fois plus vite, sans raccourcir l’attente initiale de 10 à 30 secondes réelles. Un `--start-at` strictement supérieur à `00:00` saute cette attente. Dans l’implémentation actuelle non destructive, `lab --fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les deux exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). Ce comportement de restauration appartient à l’état transitoire du code et non au contrat cible destructeur de `lab`. `--boot-game` échoue actuellement de façon volontaire : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
+`--duration-scale 0.1` joue la timeline dix fois plus vite, sans raccourcir l’attente initiale de 10 à 30 secondes réelles. Un `--start-at` strictement supérieur à `00:00` saute cette attente. Dans l’implémentation actuelle non destructive, `GooseRot-Lab.exe --fake-reboot` lance `GooseBootPreview.exe` après restauration et faux redémarrage si le binaire est placé à côté de GooseRot ; CMake met automatiquement les exécutables dans le même dossier (`bin/` en mono-configuration, `bin/Release` pour la release Visual Studio). Ce comportement de restauration appartient à l’état transitoire du code et non au contrat cible destructeur de `lab`. `--boot-game` échoue actuellement de façon volontaire : le bundle UEFI/BIOS disponible est non signé et non validé à l’exécution, donc il ne satisfait pas le contrat de confiance et aucun handoff n’est émis.
 
 La Preview du mini-jeu se construit avec le projet racine ou séparément :
 
@@ -122,7 +125,7 @@ cmake --build build\boot --parallel
 ctest --test-dir build\boot --output-on-failure
 ```
 
-Un build autonome place la Preview dans `build\boot\bin`; copiez-la à côté de `GooseRot.exe` pour utiliser `--fake-reboot`.
+Un build autonome place la Preview dans `build\boot\bin`; copiez-la à côté de `GooseRot-Lab.exe` pour utiliser `--fake-reboot`.
 
 ## Documentation
 

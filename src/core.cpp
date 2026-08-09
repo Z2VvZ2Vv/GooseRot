@@ -1,10 +1,12 @@
 #include "core.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cwchar>
 #include <limits>
+#include <utility>
 
 namespace gooserot {
 namespace {
@@ -27,6 +29,30 @@ std::uint32_t Hash32(std::uint32_t value) {
 float HashUnit(std::uint32_t value) {
   return static_cast<float>(Hash32(value) & 0xFFFFFFU) /
          static_cast<float>(0x1000000U);
+}
+
+double SmoothStep(double value) {
+  const double clamped = std::clamp(value, 0.0, 1.0);
+  return clamped * clamped * (3.0 - 2.0 * clamped);
+}
+
+template <std::size_t Size>
+double InterpolateKeyframes(
+    double logicalTime,
+    const std::array<std::pair<double, double>, Size>& keyframes) {
+  if (!std::isfinite(logicalTime) || keyframes.empty() ||
+      logicalTime < keyframes.front().first) {
+    return keyframes.empty() ? 0.0 : keyframes.front().second;
+  }
+  for (std::size_t index = 1; index < keyframes.size(); ++index) {
+    if (logicalTime > keyframes[index].first) continue;
+    const auto& previous = keyframes[index - 1U];
+    const auto& next = keyframes[index];
+    const double span = std::max(0.001, next.first - previous.first);
+    const double progress = SmoothStep((logicalTime - previous.first) / span);
+    return previous.second + (next.second - previous.second) * progress;
+  }
+  return keyframes.back().second;
 }
 
 bool ParseDouble(const std::wstring& value, double& result) {
@@ -103,13 +129,20 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
     } else if (Equals(argument, L"--mode")) {
       const wchar_t* value = requireValue(index, L"--mode");
       if (!value) return false;
-      if (_wcsicmp(value, L"safe") == 0) config.mode = RunMode::Safe;
-      else if (_wcsicmp(value, L"normal") == 0) config.mode = RunMode::Normal;
-      else if (_wcsicmp(value, L"lab") == 0) config.mode = RunMode::Lab;
+      RunMode requested = config.mode;
+      if (_wcsicmp(value, L"safe") == 0) requested = RunMode::Safe;
+      else if (_wcsicmp(value, L"normal") == 0) requested = RunMode::Normal;
+      else if (_wcsicmp(value, L"lab") == 0) requested = RunMode::Lab;
       else {
         error = L"Unknown mode. Accepted values: safe, normal, lab.";
         return false;
       }
+      if (config.modeLocked && requested != config.mode) {
+        error = std::wstring(L"This executable is locked to the ") +
+                ModeName(config.mode) + L" profile.";
+        return false;
+      }
+      config.mode = requested;
     } else if (Equals(argument, L"--start-at")) {
       const wchar_t* value = requireValue(index, L"--start-at");
       if (!value || !ParseTimestamp(value, config.startAtSeconds)) {
@@ -201,17 +234,19 @@ std::wstring UsageText() {
   return LR"(GooseRot - standalone desktop experience
 
 Usage:
-  GooseRot.exe [options]
+  GooseRot-Safe.exe [options]
+  GooseRot-Normal.exe [options]
+  GooseRot-Lab.exe [options]
 
 Options:
-  --mode safe|normal|lab     Visual profile (safe by default)
+  --mode safe|normal|lab     Profile selector for shared/development builds
   --start-at MM:SS           Start at a specific timeline position
   --duration-scale N         0.1 = timeline runs ten times faster
   --seed N                   Deterministic seed (67 by default)
   --primary-monitor-only     Limit rendering to the primary monitor
   --fake-reboot              Launch GooseBootPreview after the finale (lab)
   --boot-game                Reserved: unavailable without verified firmware artifacts
-  --vm-confirmed             Required confirmation for lab mode
+  --vm-confirmed             Development-build compatibility flag
   --preview                  960x540 window with no desktop effects
   --no-desktop-effects       Disable cursor and external-window movement
   --mute                     Disable system-style alert sounds
@@ -232,15 +267,18 @@ ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
   }
 
   const double safeRealTime = std::max(0.0, realTime);
-  const float escalation = static_cast<float>(
-      std::clamp((logicalTime - phase::kOwnedApps) /
-                     (phase::kEnd - phase::kOwnedApps),
-                 0.0, 1.0));
+  const float escalation = static_cast<float>(SmoothStep(
+      (logicalTime - phase::kOwnedApps) / (phase::kEnd - phase::kOwnedApps)));
+  const float ribbonOnset = static_cast<float>(SmoothStep(
+      (logicalTime - phase::kOwnedApps) / 20.0));
+  // Early damage changes slowly enough to read as one developing fault. The
+  // pattern rate accelerates with the story instead of starting at 12 Hz.
+  const double patternRate = 2.0 + static_cast<double>(escalation) * 10.0;
   const std::uint32_t visualStep = static_cast<std::uint32_t>(
-      std::fmod(std::floor(safeRealTime * 12.0), 4294967295.0));
+      std::fmod(std::floor(safeRealTime * patternRate), 4294967295.0));
   cue.pattern = Hash32(seed ^ 0xA67F29C3U ^ visualStep * 0x9E3779B9U);
-  cue.faultRibbonIntensity = std::clamp(
-      (0.12f + 0.88f * std::pow(escalation, 0.72f)) *
+  cue.faultRibbonIntensity = ribbonOnset * std::clamp(
+      (0.05f + 0.95f * std::pow(escalation, 1.08f)) *
           (0.72f + HashUnit(cue.pattern ^ 0xD15EA5EU) * 0.28f),
       0.0f, 1.0f);
 
@@ -256,13 +294,15 @@ ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,
   const std::uint32_t slotPattern = Hash32(seed ^ 0xF1A567U ^ slot * 0x85EBCA6BU);
   const double withinSlot = std::fmod(safeRealTime, kFlashSlotSeconds);
   const double pulseStart = 0.08 + static_cast<double>(HashUnit(slotPattern)) * 0.20;
+  const float flashOnset = static_cast<float>(SmoothStep(
+      (logicalTime - phase::kDuplicate) / 20.0));
   const float activationThreshold = 0.72f - escalation * 0.62f;
   if (HashUnit(slotPattern ^ 0xBADC0DEU) >= activationThreshold &&
       withinSlot >= pulseStart && withinSlot < pulseStart + kFlashDurationSeconds) {
     const double phase = (withinSlot - pulseStart) / kFlashDurationSeconds;
     const float envelope = static_cast<float>(
         std::sin(phase * 3.14159265358979323846));
-    cue.flashIntensity = std::clamp((0.28f + escalation * 0.72f) * envelope,
+    cue.flashIntensity = std::clamp(flashOnset * (0.28f + escalation * 0.72f) * envelope,
                                     0.0f, 1.0f);
     cue.pattern = slotPattern;
   }
@@ -292,12 +332,23 @@ double InitialEntranceDelaySeconds(std::uint32_t seed) {
 std::size_t DesiredPopupCount(double logicalTime) {
   if (!std::isfinite(logicalTime) || logicalTime < phase::kPopupStart) return 0U;
   if (logicalTime < phase::kPopupFull) {
-    const double progress = std::clamp(
-        (logicalTime - phase::kPopupStart) /
-            (phase::kPopupFull - phase::kPopupStart),
-        0.0, 1.0);
-    return static_cast<std::size_t>(
-        std::floor(progress * static_cast<double>(kMaximumPopups)));
+    // Story beats, not a single linear flood. The first notice arrives almost
+    // alone; density then builds in readable steps until the countdown briefly
+    // reaches the administrative cap.
+    constexpr std::array<std::pair<double, double>, 9> kGrowth = {{
+        {phase::kPopupStart, 0.0},
+        {phase::kSubtitles, 1.0},
+        {phase::kClipboard, 5.0},
+        {phase::kDuplicate, 12.0},
+        {phase::kGraffiti, 24.0},
+        {phase::kScreenShake, 42.0},
+        {phase::kColorFilter, 60.0},
+        {phase::kFinalMonologue, 80.0},
+        {phase::kPopupFull, static_cast<double>(kMaximumPopups)},
+    }};
+    return std::min(
+        kMaximumPopups,
+        static_cast<std::size_t>(std::floor(InterpolateKeyframes(logicalTime, kGrowth))));
   }
   if (logicalTime < phase::kPopupCloseStart) return kMaximumPopups;
   if (logicalTime < phase::kPopupCloseEnd) {
@@ -310,6 +361,37 @@ std::size_t DesiredPopupCount(double logicalTime) {
     return kMaximumPopups - std::min(closed, kMaximumPopups);
   }
   return 0U;
+}
+
+float BaselineGlitchIntensity(double logicalTime) {
+  if (!std::isfinite(logicalTime) || logicalTime <= phase::kNotepad) return 0.0f;
+  constexpr std::array<std::pair<double, double>, 10> kGlitch = {{
+      {phase::kNotepad, 0.00},
+      {phase::kAuraPrompt, 0.02},
+      {phase::kGooseReturn, 0.04},
+      {phase::kSubtitles, 0.07},
+      {phase::kDuplicate, 0.13},
+      {phase::kGraffiti, 0.22},
+      {phase::kScreenShake, 0.36},
+      {phase::kColorFilter, 0.52},
+      {phase::kFinalMonologue, 0.68},
+      {phase::kEnd, 1.00},
+  }};
+  return static_cast<float>(std::clamp(
+      InterpolateKeyframes(logicalTime, kGlitch), 0.0, 1.0));
+}
+
+std::size_t DesiredFlockSize(double logicalTime, int bonusGeese) {
+  constexpr std::size_t kMaximumFlock = 67U;
+  const std::size_t bonus = static_cast<std::size_t>(std::clamp(bonusGeese, 0, 6));
+  if (!std::isfinite(logicalTime)) return 1U;
+  if (logicalTime < phase::kDuplicate) return std::min(kMaximumFlock, 1U + bonus);
+  if (logicalTime < phase::kScreenShake) return std::min(kMaximumFlock, 3U + bonus);
+  const double progress = SmoothStep(
+      (logicalTime - phase::kScreenShake) / (phase::kResetAura - phase::kScreenShake));
+  const std::size_t scripted =
+      3U + static_cast<std::size_t>(std::floor(progress * 64.0));
+  return std::min(kMaximumFlock, scripted + bonus);
 }
 
 TimelineEngine::TimelineEngine()
@@ -472,7 +554,7 @@ std::size_t PickFreeCarrier(const std::vector<unsigned char>& carrierBusy, bool 
 }
 
 float CursorStormEnvelope(double logicalTime) {
-  if (logicalTime < phase::kScreenShake) return 0.0f;
+  if (!std::isfinite(logicalTime) || logicalTime < phase::kScreenShake) return 0.0f;
   const double since = logicalTime - phase::kScreenShake;
   const float ramp = static_cast<float>(
       std::clamp(since / (phase::kCountdown - phase::kScreenShake), 0.0, 1.0));
@@ -544,7 +626,9 @@ bool Typewriter::Advance(double now, std::mt19937& random, std::wstring& visible
       static constexpr wchar_t kNearbyKeys[] = L"qwertyuiopasdfghjklzxcvbnm";
       std::uniform_int_distribution<std::size_t> key(0, std::size(kNearbyKeys) - 2U);
       std::uniform_int_distribution<int> length(1, 3);
-      typoRemaining_ = length(random);
+      // The per-frame budget remains a hard ceiling even when a
+      // multi-character fumble lands on its final available slot.
+      typoRemaining_ = std::min(length(random), budget);
       for (int index = 0; index < typoRemaining_; ++index) {
         visible += kNearbyKeys[key(random)];
       }

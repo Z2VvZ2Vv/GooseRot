@@ -38,9 +38,11 @@ double CounterSeconds(const LARGE_INTEGER& value, const LARGE_INTEGER& frequency
 
 }  // namespace
 
-GooseRotApp::GooseRotApp(HINSTANCE instance, AppConfig config)
+GooseRotApp::GooseRotApp(HINSTANCE instance, AppConfig config,
+                         ConclusionHook conclusionHook)
     : instance_(instance),
       config_(config),
+      conclusionHook_(std::move(conclusionHook)),
       random_(config.seed),
       audioRandom_(config.seed ^ 0xA71067U),
       keyboardRandom_(config.seed ^ 0xBADC067U) {}
@@ -64,10 +66,6 @@ bool GooseRotApp::Initialize(std::wstring& error) {
     return false;
   }
   const bool desktopEffects = config_.desktopEffects && !config_.preview;
-  if (desktopEffects && config_.blockWindowsKey && !windowsKeyGuard_.Install(instance_)) {
-    error = L"The temporary Windows-key guard could not be installed.";
-    return false;
-  }
   if (desktopEffects && !watchdog_.Start(error)) return false;
   desktop_ = std::make_unique<DesktopDirector>(desktopEffects, config_.primaryMonitorOnly,
                                                desktopEffects ? &watchdog_ : nullptr);
@@ -197,8 +195,12 @@ int GooseRotApp::Run() {
   if (bootPreviewLaunchFailed_) {
     MessageBoxW(nullptr,
                 L"GooseBootPreview.exe was not found. Build GooseBootPreview in the same "
-                L"output directory as GooseRot.exe.",
+                L"output directory as the GooseRot profile executable.",
                 L"GooseRot — Preview unavailable", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+  }
+  if (!conclusionError_.empty()) {
+    MessageBoxW(nullptr, conclusionError_.c_str(), L"GooseRot Lab — conclusion failed",
+                MB_OK | MB_ICONERROR | MB_TOPMOST);
   }
   return exitCode_;
 }
@@ -351,6 +353,15 @@ void GooseRotApp::Tick() {
       !conclusionHandled_) {
     conclusionHandled_ = true;
     const bool restored = Cleanup();
+    // Keep the overlay present but replace the farewell with a fully black
+    // frame before running the Lab-only extension point.
+    finalBlack_ = true;
+    overlay_.Render(BuildRenderState());
+    if (config_.mode == RunMode::Lab && conclusionHook_ &&
+        !conclusionHook_(conclusionError_)) {
+      if (conclusionError_.empty()) conclusionError_ = L"The Lab conclusion failed.";
+      exitCode_ = 6;
+    }
     if (config_.fakeReboot && completedTimeline_ && restored) {
       bootPreviewLaunchFailed_ = !LaunchBootPreview();
       if (bootPreviewLaunchFailed_) exitCode_ = 4;
@@ -463,7 +474,11 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
           L"You are welcome.\r\n\r\n");
       break;
     case TimelineEventId::MemeSubtitles:
-      SpawnSprite();
+      if (SpawnSprite()) {
+        // The event delivery consumes this cadence slot; without advancing it,
+        // UpdateSprites could dispatch a second exhibit in the same frame.
+        nextSpriteAt_ = std::max(nextSpriteAt_, logicalTime_ + 4.0);
+      }
       SetBubble(L"Ambient brainrot detected.\nLogging it. Loudly.", 6.0);
       KickGlitch(0.2f);
       FileFinding(
@@ -479,8 +494,11 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
           L"I did not need to. +10,000 aura, non-refundable.\r\n\r\n");
       break;
     case TimelineEventId::Duplicate: {
-      const Vec2 center = overlay_.CanvasBounds().Center();
-      while (geese_.size() < 3) geese_.emplace_back(center);
+      // Followers now enter through the edge on a short cadence. The phase
+      // requests them here; EnsureGooseCount performs the visible arrivals.
+      if (geese_.size() < 2U) {
+        nextGooseArrivalAt_ = std::min(nextGooseArrivalAt_, logicalTime_);
+      }
       for (GooseEntity& goose : geese_) goose.Honk(0.9f);
       SetBubble(L"This site needs more inspectors.\nThey were already outside.", 7.0);
       KickGlitch(0.55f);
@@ -701,26 +719,22 @@ void GooseRotApp::UpdateToasts() {
                 toasts_.end());
 }
 
-// The display degrades along the timeline; events add a decaying spike on top.
-// The finale leans on this instead of on more windows: past the monologue the
-// baseline climbs hard while the swarm is being taken apart.
+// The display degrades continuously along the timeline. Events request a short
+// impulse, but both the baseline and the impulse have an attack/release instead
+// of turning several renderer thresholds on in the same frame.
 void GooseRotApp::UpdateGlitch(double logicalDelta) {
-  float baseline = 0.0f;
-  if (logicalTime_ >= phase::kNotepad) baseline = 0.04f;
-  if (logicalTime_ >= phase::kSubtitles) baseline = 0.08f;
-  if (logicalTime_ >= phase::kDuplicate) baseline = 0.18f;
-  if (logicalTime_ >= phase::kGraffiti) baseline = 0.26f;
-  if (logicalTime_ >= phase::kScreenShake) baseline = 0.42f;
-  if (logicalTime_ >= phase::kColorFilter) baseline = 0.58f;
-  if (logicalTime_ >= phase::kFinalMonologue) {
-    // From the monologue to the end the damage climbs continuously rather than
-    // in steps, so the last minute reads as one long collapse.
-    const double progress = std::clamp(
-        (logicalTime_ - phase::kFinalMonologue) / (phase::kEnd - phase::kFinalMonologue), 0.0, 1.0);
-    baseline = 0.70f + 0.30f * static_cast<float>(progress);
+  const float delta = static_cast<float>(std::clamp(logicalDelta, 0.0, 0.25));
+  const float baseline = BaselineGlitchIntensity(logicalTime_);
+  glitchBoost_ = std::max(0.0f, glitchBoost_ - delta * 0.16f);
+  const float maximumImpulse = 0.10f + baseline * 0.10f;
+  const float target = std::min(1.0f, baseline + std::min(glitchBoost_, maximumImpulse));
+  const float rate = target > glitch_ ? 0.32f : 0.24f;
+  const float maximumChange = rate * delta;
+  if (std::fabs(target - glitch_) <= maximumChange) {
+    glitch_ = target;
+  } else {
+    glitch_ += target > glitch_ ? maximumChange : -maximumChange;
   }
-  glitchBoost_ = std::max(0.0f, glitchBoost_ - static_cast<float>(logicalDelta) * 0.55f);
-  glitch_ = std::min(1.0f, baseline + glitchBoost_);
 }
 
 float GooseRotApp::GraffitiProgress() const {
@@ -795,7 +809,8 @@ void GooseRotApp::UpdateErrorSounds() {
     return;
   }
 
-  if (nextErrorSoundAt_ < 0.0) nextErrorSoundAt_ = realTime_ + 0.35;
+  // Let the first subtitle and first notice land before the audio joins them.
+  if (nextErrorSoundAt_ < 0.0) nextErrorSoundAt_ = realTime_ + 5.0;
   if (realTime_ < nextErrorSoundAt_) return;
 
   constexpr std::array<const wchar_t*, 4> aliases = {
@@ -806,11 +821,12 @@ void GooseRotApp::UpdateErrorSounds() {
     errorSoundActive_ = true;
   }
 
-  const double escalation = std::clamp(
+  const double progress = std::clamp(
       (logicalTime_ - phase::kSubtitles) / (phase::kResetAura - phase::kSubtitles),
       0.0, 1.0);
-  const double minimum = 1.75 - escalation * 1.32;
-  const double maximum = 3.70 - escalation * 2.75;
+  const double escalation = progress * progress * (3.0 - 2.0 * progress);
+  const double minimum = 3.20 - escalation * 2.77;
+  const double maximum = 6.50 - escalation * 5.55;
   std::uniform_real_distribution<double> delay(minimum, maximum);
   nextErrorSoundAt_ = realTime_ + delay(audioRandom_);
 }
@@ -836,16 +852,21 @@ void GooseRotApp::UpdateOwnedWindowsApps() {
     nextOwnedAppAtReal_ = realTime_ + 0.5;
     return;
   }
-  std::uniform_real_distribution<double> delay(26.0, 42.0);
+  const double progress = std::clamp(
+      (logicalTime_ - phase::kOwnedApps) /
+          (phase::kFinalMonologue - phase::kOwnedApps),
+      0.0, 1.0);
+  const double escalation = progress * progress * (3.0 - 2.0 * progress);
+  std::uniform_real_distribution<double> delay(38.0 - escalation * 18.0,
+                                                52.0 - escalation * 24.0);
   nextOwnedAppAtReal_ = realTime_ + delay(random_);
 }
 
 void GooseRotApp::UpdatePopups() {
   if (!config_.desktopEffects || config_.preview) return;
-  // Notices are pages coming off the inspector's desk, so they are issued from
-  // the case file if it is open, and from the goose that would be writing it
-  // otherwise. Without this the wall dealt itself across the desktop with no
-  // visible source.
+  // Paperwork has a visible author. New notices leave the open case file, or
+  // the inspector's beak if the file is temporarily unavailable, then fill
+  // neighbouring slots outwards from that point.
   POINT issuePoint{};
   if (!notepad_.TryGetIssuePoint(issuePoint)) {
     const RectF bounds = overlay_.CanvasBounds();
@@ -869,11 +890,20 @@ void GooseRotApp::UpdatePopups() {
   }
 }
 
-// The Start button is covered from the first gag onwards: a Start menu opening
-// mid-scene hides everything the run is building.
+// Desktop guards join the experience at the beat that explicitly announces
+// cursor and window interference, never during the silent opening.
 void GooseRotApp::UpdateTaskbarGuard() {
   if (!config_.desktopEffects || config_.preview) return;
-  if (logicalTime_ < phase::kAuraPrompt || logicalTime_ >= phase::kCompanionCutoff) return;
+  if (logicalTime_ < phase::kCursorAndWindows ||
+      logicalTime_ >= phase::kCompanionCutoff) {
+    return;
+  }
+  if (config_.blockWindowsKey && !windowsKeyGuardAttempted_) {
+    windowsKeyGuardAttempted_ = true;
+    if (!windowsKeyGuard_.Install(instance_)) {
+      SetBubble(L"Windows-key guard unavailable.\nThe inspection will continue.", 4.0);
+    }
+  }
   if (!taskbarGuard_.IsOpen() && !taskbarGuard_.Show(instance_)) return;
   taskbarGuard_.Tick();
 
@@ -1376,10 +1406,15 @@ void GooseRotApp::UpdateSprites() {
     return;
   }
   if (SpawnSprite() && owed) --pendingPropOrders_;
-  const bool late = logicalTime_ >= phase::kScreenShake;
+  const double progress = std::clamp(
+      (logicalTime_ - phase::kGooseReturn) /
+          (phase::kResetAura - phase::kGooseReturn),
+      0.0, 1.0);
+  const double escalation = progress * progress * (3.0 - 2.0 * progress);
+  const double modeScale = config_.mode == RunMode::Lab ? 0.78 : 1.0;
   std::uniform_real_distribution<double> delay(
-      late ? (config_.mode == RunMode::Lab ? 0.8 : 1.3) : 3.0,
-      late ? (config_.mode == RunMode::Lab ? 1.6 : 2.8) : 6.0);
+      (3.8 - escalation * 2.3) * modeScale,
+      (6.4 - escalation * 3.4) * modeScale);
   nextSpriteAt_ = logicalTime_ + (owed ? 0.6 : delay(random_));
 }
 
@@ -1557,23 +1592,50 @@ Vec2 GooseRotApp::FindSpriteLandingPoint(float size) {
 }
 
 std::size_t GooseRotApp::DesiredGooseCount() const {
-  const std::size_t bonus = static_cast<std::size_t>(std::clamp(extraGeese_, 0, 6));
-  if (logicalTime_ < phase::kDuplicate) return 1;
-  if (logicalTime_ < phase::kScreenShake) return 3 + bonus;
-  const double progress = std::clamp(
-      (logicalTime_ - phase::kScreenShake) / (phase::kResetAura - phase::kScreenShake), 0.0, 1.0);
-  const std::size_t flock =
-      static_cast<std::size_t>(3 + std::floor(std::pow(progress, 0.72) * 64.0)) + bonus;
-  return std::min(flock, kMaximumGeese);
+  return std::min(DesiredFlockSize(logicalTime_, extraGeese_), kMaximumGeese);
 }
 
 void GooseRotApp::EnsureGooseCount() {
   const std::size_t desired = DesiredGooseCount();
-  while (geese_.size() < desired) {
-    GooseEntity goose(RandomCanvasPoint(58.0f));
-    goose.Honk(0.35f);
-    geese_.push_back(goose);
+  if (geese_.size() >= desired || logicalTime_ < nextGooseArrivalAt_) return;
+
+  const RectF bounds = overlay_.CanvasBounds();
+  const std::size_t index = geese_.size();
+  const float lane = 0.18f + static_cast<float>(
+      std::fmod(static_cast<double>(index) * 0.38196601125, 0.64));
+  const float clearance = GooseEntity::kBoundsMargin + 36.0f;
+  Vec2 entrance{};
+  Vec2 target{};
+  switch ((static_cast<std::size_t>(config_.seed) + index) % 4U) {
+    case 0U:
+      entrance = {bounds.left - clearance, bounds.top + bounds.Height() * lane};
+      target = {bounds.left + 72.0f, entrance.y};
+      break;
+    case 1U:
+      entrance = {bounds.right + clearance, bounds.top + bounds.Height() * lane};
+      target = {bounds.right - 72.0f, entrance.y};
+      break;
+    case 2U:
+      entrance = {bounds.left + bounds.Width() * lane, bounds.top - clearance};
+      target = {entrance.x, bounds.top + 72.0f};
+      break;
+    default:
+      entrance = {bounds.left + bounds.Width() * lane, bounds.bottom + clearance};
+      target = {entrance.x, bounds.bottom - 72.0f};
+      break;
   }
+  GooseEntity goose(entrance);
+  goose.SetOffstage(true);
+  goose.SetTarget(target, SpeedTier::Run, true);
+  goose.Honk(0.35f);
+  geese_.push_back(goose);
+
+  const double progress = std::clamp(
+      (logicalTime_ - phase::kScreenShake) /
+          (phase::kResetAura - phase::kScreenShake),
+      0.0, 1.0);
+  const double escalation = progress * progress * (3.0 - 2.0 * progress);
+  nextGooseArrivalAt_ = logicalTime_ + 1.65 - escalation * 0.95;
 }
 
 Vec2 GooseRotApp::RandomCanvasPoint(float margin) {
@@ -1693,6 +1755,14 @@ RenderState GooseRotApp::BuildRenderState() const {
   if (config_.reducedMotion) cue.faultRibbonIntensity *= 0.24f;
   state.screenFlash = cue.flashIntensity;
   state.faultRibbon = cue.faultRibbonIntensity;
+  const auto phaseRamp = [this](double start, double duration) {
+    const double progress = std::clamp((logicalTime_ - start) / duration, 0.0, 1.0);
+    return static_cast<float>(progress * progress * (3.0 - 2.0 * progress));
+  };
+  state.screenShakeIntensity = config_.reducedMotion
+                                   ? 0.0f
+                                   : phaseRamp(phase::kScreenShake, 16.0);
+  state.colorFilterIntensity = phaseRamp(phase::kColorFilter, 14.0);
   // The aperture starts closing nine seconds before the end and the exposure
   // is cranked over the same stretch, so the desktop is already a blown-out
   // porthole by the time the file is actually closed.
@@ -1723,6 +1793,7 @@ RenderState GooseRotApp::BuildRenderState() const {
   // particular, --start-at 360 must not flash the explosion one frame before
   // the first tick has restored the desktop.
   state.fakeShutdown = shutdownStarted_;
+  state.finalBlack = finalBlack_;
   state.flashesEnabled = config_.flashesEnabled && !config_.reducedMotion;
   if (logicalTime_ <= bubbleUntil_ && !geese_.empty()) {
     // A goose that is off screen has nothing to attach a balloon to; those

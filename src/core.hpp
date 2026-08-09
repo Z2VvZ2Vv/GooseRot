@@ -64,6 +64,9 @@ enum class RunMode { Safe, Normal, Lab };
 
 struct AppConfig {
   RunMode mode = RunMode::Safe;
+  // Standalone profile executables set this before parsing. The shared core
+  // keeps it false so tests and embedders may still select a profile by CLI.
+  bool modeLocked = false;
   double startAtSeconds = 0.0;
   double durationScale = 1.0;
   std::uint32_t seed = 67;
@@ -134,10 +137,11 @@ constexpr double kCompanionCutoff = kEnd - 2.0;
 // The inspector closes the file: the aperture starts shutting on the desktop
 // while the exposure is cranked, well before the timeline itself runs out.
 constexpr double kIrisStart = kEnd - 9.0;
-// Compact GooseRot notices accumulate through the middle of the story, then
-// disappear individually during the final countdown.
-constexpr double kPopupStart = kGooseReturn;
-constexpr double kPopupFull = kDuplicate;
+// Compact GooseRot notices join the story only once the on-site tools start.
+// They keep building through the whole inspection instead of reaching a wall
+// of one hundred at the same instant as the backup inspectors and flash cues.
+constexpr double kPopupStart = kOwnedApps;
+constexpr double kPopupFull = kCountdown;
 constexpr double kPopupCloseStart = kCountdown;
 constexpr double kPopupCloseEnd = kIrisStart;
 
@@ -148,6 +152,15 @@ constexpr std::size_t kMaximumPopups = 100U;
 // Number of compact notices that should still be present at a timeline
 // position. This pure schedule keeps accelerated/resumed runs predictable.
 std::size_t DesiredPopupCount(double logicalTime);
+
+// Continuous baseline used by the overlay's glitch engine. Narrative events
+// may add short impulses, but the underlying damage never changes by a step.
+float BaselineGlitchIntensity(double logicalTime);
+
+// Gradual flock size, shared with tests so a phase change can never materialise
+// dozens of geese in one frame. Interaction-earned helpers are included even
+// before the scripted duplication beat.
+std::size_t DesiredFlockSize(double logicalTime, int bonusGeese = 0);
 
 // Time-based cues for the non-destructive display corruption. Real time is
 // deliberately separate from timeline time so --duration-scale can never

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -17,7 +18,10 @@ namespace gooserot {
 
 class GooseRotApp {
  public:
-  GooseRotApp(HINSTANCE instance, AppConfig config);
+  using ConclusionHook = std::function<bool(std::wstring&)>;
+
+  GooseRotApp(HINSTANCE instance, AppConfig config,
+              ConclusionHook conclusionHook = {});
   ~GooseRotApp();
 
   bool Initialize(std::wstring& error);
@@ -83,6 +87,7 @@ class GooseRotApp {
 
   HINSTANCE instance_ = nullptr;
   AppConfig config_;
+  ConclusionHook conclusionHook_;
   OverlayWindow overlay_;
   RecoveryWatchdog watchdog_;
   std::unique_ptr<DesktopDirector> desktop_;
@@ -110,6 +115,7 @@ class GooseRotApp {
   double nextWindowAction_ = phase::kCursorAndWindows;
   double nextCursorAction_ = phase::kCursorAndWindows + 15.0;
   double nextSpriteAt_ = phase::kGooseReturn;
+  double nextGooseArrivalAt_ = 0.0;
   double nextOwnedAppAtReal_ = 0.0;
   double bubbleUntil_ = 0.0;
   double emergencyHeldSeconds_ = 0.0;
@@ -141,9 +147,11 @@ class GooseRotApp {
   bool completedTimeline_ = false;
   bool exiting_ = false;
   bool conclusionHandled_ = false;
+  bool finalBlack_ = false;
   bool bootPreviewLaunchFailed_ = false;
   bool recoveryFailure_ = false;
   bool errorSoundActive_ = false;
+  bool windowsKeyGuardAttempted_ = false;
   bool tagZoneCleared_ = false;
   bool auraVisible_ = false;
   bool inspectionRound_ = false;
@@ -164,6 +172,7 @@ class GooseRotApp {
   PendingAction pendingAction_;
   std::wstring bubbleText_;
   std::wstring notepadText_;
+  std::wstring conclusionError_;
 };
 
 }  // namespace gooserot

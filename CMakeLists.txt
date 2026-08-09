@@ -10,6 +10,8 @@ option(GOOSEROT_BUILD_TESTS "Build the deterministic core tests" ON)
 option(GOOSEROT_BUILD_BOOT_PREVIEW "Build the safe AURA 67 portable core and Win32 preview" ON)
 option(GOOSEROT_BUILD_BOOT_FIRMWARE
   "Build the experimental, non-installing GooseBoot UEFI/BIOS artifacts" OFF)
+set(GOOSEROT_LAB_FIRMWARE_DIR "" CACHE PATH
+  "Directory containing prebuilt GooseBoot firmware to embed in GooseRot-Lab")
 
 set(GOOSEROT_RUNTIME_DIR "${CMAKE_BINARY_DIR}/bin")
 function(gooserot_set_runtime_output target_name)
@@ -35,7 +37,6 @@ file(MAKE_DIRECTORY "${GOOSEROT_GENERATED_DIR}")
 
 set(GOOSEROT_RESOURCE_INPUTS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/resource.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/gooserot.manifest"
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/tralalero-tralala.png"
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/ballerina-cappuccina.png"
   "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Generated/Brainrot/bombardiro-crocodilo.png"
@@ -62,6 +63,19 @@ configure_file(src/resources.rc.in "${GOOSEROT_GENERATED_DIR}/resources.rc" @ONL
 set_property(SOURCE "${GOOSEROT_GENERATED_DIR}/resources.rc" APPEND PROPERTY
   OBJECT_DEPENDS ${GOOSEROT_RESOURCE_INPUTS})
 
+set(GOOSEROT_STANDARD_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/gooserot.manifest")
+set(GOOSEROT_LAB_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/gooserot_lab.manifest")
+set(GOOSEROT_MANIFEST_PATH "${GOOSEROT_STANDARD_MANIFEST}")
+configure_file(src/application_manifest.rc.in
+               "${GOOSEROT_GENERATED_DIR}/standard_manifest.rc" @ONLY)
+set(GOOSEROT_MANIFEST_PATH "${GOOSEROT_LAB_MANIFEST}")
+configure_file(src/application_manifest.rc.in
+               "${GOOSEROT_GENERATED_DIR}/lab_manifest.rc" @ONLY)
+set_property(SOURCE "${GOOSEROT_GENERATED_DIR}/standard_manifest.rc" APPEND PROPERTY
+             OBJECT_DEPENDS "${GOOSEROT_STANDARD_MANIFEST}")
+set_property(SOURCE "${GOOSEROT_GENERATED_DIR}/lab_manifest.rc" APPEND PROPERTY
+             OBJECT_DEPENDS "${GOOSEROT_LAB_MANIFEST}")
+
 add_library(gooserot_core STATIC
   src/core.cpp
   src/core.hpp
@@ -76,7 +90,7 @@ target_compile_definitions(gooserot_core PUBLIC
   WIN32_LEAN_AND_MEAN
 )
 
-add_executable(GooseRot WIN32
+set(GOOSEROT_APP_SOURCES
   src/main.cpp
   src/app.cpp
   src/app.hpp
@@ -93,7 +107,54 @@ add_executable(GooseRot WIN32
   src/resource.h
   "${GOOSEROT_GENERATED_DIR}/resources.rc"
 )
-target_link_libraries(GooseRot PRIVATE
+
+function(gooserot_add_profile target_name output_name profile_id)
+  if("${profile_id}" STREQUAL "2")
+    set(profile_manifest_resource "${GOOSEROT_GENERATED_DIR}/lab_manifest.rc")
+  else()
+    set(profile_manifest_resource "${GOOSEROT_GENERATED_DIR}/standard_manifest.rc")
+  endif()
+  add_executable(${target_name} WIN32 ${GOOSEROT_APP_SOURCES}
+                 "${profile_manifest_resource}")
+  target_compile_definitions(${target_name} PRIVATE GOOSEROT_BUILD_PROFILE=${profile_id})
+  if("${profile_id}" STREQUAL "2")
+    target_compile_definitions(${target_name} PRIVATE GOOSEROT_BUILD_DEBUG_CONSOLE=1)
+  endif()
+  target_link_libraries(${target_name} PRIVATE
+    gooserot_core
+    gdiplus
+    gdi32
+    user32
+    shell32
+    ole32
+    comctl32
+    winmm
+  )
+  if(MSVC)
+    set_property(TARGET ${target_name} PROPERTY
+      MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(${target_name} PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(${target_name} PRIVATE $<$<CONFIG:Release>:/O2>)
+    target_link_options(${target_name} PRIVATE /SUBSYSTEM:WINDOWS,6.01)
+  else()
+    target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_options(${target_name} PRIVATE -municode -static -static-libgcc -static-libstdc++)
+  endif()
+  set_target_properties(${target_name} PROPERTIES OUTPUT_NAME "${output_name}")
+  gooserot_set_runtime_output(${target_name})
+endfunction()
+
+gooserot_add_profile(GooseRotSafe "GooseRot-Safe" 0)
+gooserot_add_profile(GooseRotNormal "GooseRot-Normal" 1)
+gooserot_add_profile(GooseRotLab "GooseRot-Lab" 2)
+add_executable(GooseRotLabDebug WIN32
+  ${GOOSEROT_APP_SOURCES}
+  "${GOOSEROT_GENERATED_DIR}/lab_manifest.rc"
+  src/lab_mode.cpp
+  src/lab_mode.hpp
+)
+target_compile_definitions(GooseRotLabDebug PRIVATE GOOSEROT_BUILD_PROFILE=2 GOOSEROT_BUILD_DEBUG_CONSOLE=1)
+target_link_libraries(GooseRotLabDebug PRIVATE
   gooserot_core
   gdiplus
   gdi32
@@ -103,22 +164,28 @@ target_link_libraries(GooseRot PRIVATE
   comctl32
   winmm
 )
+if(MSVC)
+  set_property(TARGET GooseRotLabDebug PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  target_compile_options(GooseRotLabDebug PRIVATE /W4 /permissive- /utf-8)
+  target_link_options(GooseRotLabDebug PRIVATE /SUBSYSTEM:WINDOWS,6.01)
+else()
+  target_compile_options(GooseRotLabDebug PRIVATE -Wall -Wextra -Wpedantic)
+  target_link_options(GooseRotLabDebug PRIVATE -municode -static -static-libgcc -static-libstdc++)
+endif()
+set_target_properties(GooseRotLabDebug PROPERTIES OUTPUT_NAME "GooseRot-Lab-Debug")
+gooserot_set_runtime_output(GooseRotLabDebug)
+add_dependencies(GooseRotLab GooseRotLabDebug)
+target_sources(GooseRotLab PRIVATE
+  src/lab_mode.cpp
+  src/lab_mode.hpp
+)
 
 if(MSVC)
-  set_property(TARGET GooseRot PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   set_property(TARGET gooserot_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   target_compile_options(gooserot_core PRIVATE /W4 /permissive- /utf-8)
-  target_compile_options(GooseRot PRIVATE /W4 /permissive- /utf-8)
-  target_compile_options(GooseRot PRIVATE $<$<CONFIG:Release>:/O2>)
-  target_link_options(GooseRot PRIVATE /SUBSYSTEM:WINDOWS,6.01)
 else()
   target_compile_options(gooserot_core PRIVATE -Wall -Wextra -Wpedantic)
-  target_compile_options(GooseRot PRIVATE -Wall -Wextra -Wpedantic)
-  target_link_options(GooseRot PRIVATE -municode -static -static-libgcc -static-libstdc++)
 endif()
-
-set_target_properties(GooseRot PROPERTIES OUTPUT_NAME "GooseRot")
-gooserot_set_runtime_output(GooseRot)
 
 include(CTest)
 if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
@@ -174,9 +241,54 @@ if(GOOSEROT_BUILD_BOOT_PREVIEW OR GOOSEROT_BUILD_BOOT_FIRMWARE)
       CACHE BOOL "Build experimental GooseBoot firmware artifacts" FORCE)
   add_subdirectory(boot)
 endif()
+if(TARGET gooseboot_firmware)
+  add_dependencies(GooseRotLab gooseboot_firmware)
+  add_dependencies(GooseRotLabDebug gooseboot_firmware)
+  set(GOOSEROT_LAB_UEFI_IMAGE
+      "${CMAKE_BINARY_DIR}/boot/firmware/GooseBootX64.efi")
+  set(GOOSEROT_LAB_BIOS_STAGE1
+      "${CMAKE_BINARY_DIR}/boot/firmware/gooseboot-bios-stage1.bin")
+  set(GOOSEROT_LAB_BIOS_STAGE2
+      "${CMAKE_BINARY_DIR}/boot/firmware/gooseboot-bios-stage2.bin")
+elseif(NOT GOOSEROT_LAB_FIRMWARE_DIR STREQUAL "")
+  get_filename_component(GOOSEROT_LAB_FIRMWARE_DIR
+                         "${GOOSEROT_LAB_FIRMWARE_DIR}" ABSOLUTE)
+  set(GOOSEROT_LAB_UEFI_IMAGE
+      "${GOOSEROT_LAB_FIRMWARE_DIR}/GooseBootX64.efi")
+  set(GOOSEROT_LAB_BIOS_STAGE1
+      "${GOOSEROT_LAB_FIRMWARE_DIR}/gooseboot-bios-stage1.bin")
+  set(GOOSEROT_LAB_BIOS_STAGE2
+      "${GOOSEROT_LAB_FIRMWARE_DIR}/gooseboot-bios-stage2.bin")
+  foreach(firmware_input IN ITEMS
+          "${GOOSEROT_LAB_UEFI_IMAGE}"
+          "${GOOSEROT_LAB_BIOS_STAGE1}"
+          "${GOOSEROT_LAB_BIOS_STAGE2}")
+    if(NOT EXISTS "${firmware_input}")
+      message(FATAL_ERROR "Missing Lab firmware input: ${firmware_input}")
+    endif()
+  endforeach()
+endif()
 
-set(GOOSEROT_PACKAGE_DEPENDS GooseRot)
-set(GOOSEROT_PACKAGE_ARGUMENTS "-DGOOSEROT_EXE=$<TARGET_FILE:GooseRot>")
+if(DEFINED GOOSEROT_LAB_UEFI_IMAGE)
+  set(GOOSEROT_LAB_FIRMWARE_RESOURCE
+      "${GOOSEROT_GENERATED_DIR}/lab_firmware.rc")
+  set(GOOSEROT_LAB_FIRMWARE_INPUTS
+      "${GOOSEROT_LAB_UEFI_IMAGE}"
+      "${GOOSEROT_LAB_BIOS_STAGE1}"
+      "${GOOSEROT_LAB_BIOS_STAGE2}")
+  configure_file(src/lab_firmware.rc.in
+                 "${GOOSEROT_LAB_FIRMWARE_RESOURCE}" @ONLY)
+  set_property(SOURCE "${GOOSEROT_LAB_FIRMWARE_RESOURCE}" APPEND PROPERTY
+               OBJECT_DEPENDS ${GOOSEROT_LAB_FIRMWARE_INPUTS})
+  target_sources(GooseRotLab PRIVATE "${GOOSEROT_LAB_FIRMWARE_RESOURCE}")
+  target_sources(GooseRotLabDebug PRIVATE "${GOOSEROT_LAB_FIRMWARE_RESOURCE}")
+endif()
+
+set(GOOSEROT_PACKAGE_DEPENDS GooseRotSafe GooseRotNormal GooseRotLab)
+set(GOOSEROT_PACKAGE_ARGUMENTS
+    "-DGOOSEROT_SAFE_EXE=$<TARGET_FILE:GooseRotSafe>"
+    "-DGOOSEROT_NORMAL_EXE=$<TARGET_FILE:GooseRotNormal>"
+    "-DGOOSEROT_LAB_EXE=$<TARGET_FILE:GooseRotLab>")
 if(TARGET GooseBootPreview)
   list(APPEND GOOSEROT_PACKAGE_DEPENDS GooseBootPreview)
   list(APPEND GOOSEROT_PACKAGE_ARGUMENTS

@@ -85,6 +85,10 @@ struct RenderState {
   // Bounded, real-time-governed pulse and displacement strength.
   float screenFlash = 0.0f;
   float faultRibbon = 0.0f;
+  // Narrative effects fade in over several seconds instead of switching on at
+  // their phase boundary.
+  float screenShakeIntensity = 0.0f;
+  float colorFilterIntensity = 0.0f;
   float finalIris = 0.0f;
   // 0 = normal exposure, 1 = the aperture has blown the whole frame to white.
   float finalExposure = 0.0f;
@@ -107,6 +111,7 @@ struct RenderState {
   bool countdown = false;
   bool resetButton = false;
   bool fakeShutdown = false;
+  bool finalBlack = false;
   bool flashesEnabled = true;
   bool reducedMotion = false;
 };

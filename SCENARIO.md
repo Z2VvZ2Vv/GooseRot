@@ -118,11 +118,9 @@ En parallèle, l’oie choisit régulièrement une fenêtre visible au hasard, s
 
 À partir de `2:58`, GooseRot lance progressivement jusqu’à six vrais utilitaires Windows parmi Bloc-notes, Paint, Gestionnaire des tâches, Table des caractères, À propos de Windows et une instance séparée de l’Explorateur. Chaque enfant est créé suspendu, assigné au Job Object privé qui se ferme avec GooseRot, puis seulement démarré ; si cette protection échoue, le lancement est annulé. Les plus anciens sont sollicités pour fermeture et tout lancement cesse avant le monologue final. Seuls les PID créés par GooseRot sont suivis ; une instance déjà ouverte par l’utilisateur n’est jamais adoptée.
 
-À partir de `2:28`, les **petits avis GooseRot** commencent à s’accumuler : des fenêtres compactes de `348×186`, titrées `AURA INSPECTION`. Le plafond de **100 avis simultanés** est atteint à `3:55`.
+La paperasse commence doucement avec les outils de terrain : le premier **petit avis GooseRot** est seul à `3:10`. Ce sont des fenêtres compactes de `348×186`, titrées `AURA INSPECTION`, modeless et sans activation. Il y en a 5 à `3:35`, 12 à `3:55`, 24 à `4:25`, 42 à `5:15`, 60 à `5:45`, 80 à `6:15`, puis brièvement 100 au début du compte à rebours.
 
-Ce ne sont pas des boîtes qui apparaissent au hasard : ce sont des pages qui sortent du dossier. Chaque avis est **émis depuis le dossier d’inspection** — ou depuis le bec de l’oie si le dossier a été fermé — puis **glisse jusqu’à sa place** en un tiers de seconde, en montant en opacité pendant le trajet. Les emplacements sont pris **du plus proche du dossier au plus lointain**, donc le mur de paperasse grandit visiblement vers l’extérieur depuis le bureau où l’inspectrice écrit.
-
-Fermer un avis avant la finale en dépose deux nouveaux — et comme la place libérée est la première reprise, **le remplaçant retombe exactement dans le trou** que vous venez de faire. Ces fenêtres sont modeless, restent sans activation pour ne pas voler le focus et ne créent aucun thread par avis.
+Chaque avis apparaît directement à sa place, sans fondu, glissement, tremblement ni transparence. Le premier reste lié au dossier d’inspection, puis chaque cellule est choisie pour être aussi éloignée que possible des cellules déjà occupées : les premières pages sont donc immédiatement éparpillées sur les deux axes, sans placement aléatoire ni paquet soudain. Un limiteur n’autorise qu’une création à la fois, y compris après un ralentissement ou une reprise accélérée. Avant `3:55`, fermer un avis le supprime définitivement, sans son, glitch, refus ni remplacement. À partir de `3:55`, la règle narrative de duplication s’active : un avis fermé commande deux remplaçants, créés un par un, et la cellule libérée est réutilisée en priorité.
 
 Le texte est une série : titre, corps et bouton d’un avis viennent d’une même entrée, et les avis consécutifs se lisent comme un même fil administratif qui s’enfonce.
 
@@ -219,7 +217,7 @@ Si le menu Démarrer ou la recherche Windows recouvre le tag et les oies, GooseR
 
 ### Tout du long — Dégradation de l’affichage
 
-Une intensité de glitch monte avec la timeline (proche de 0 au début, 0,18 à `3:55`, 0,26 à `4:25`, 0,42 à `5:15`, 0,58 à `5:45`, puis une montée **continue** de 0,70 à 1,00 entre `6:15` et la fin) et chaque constat ajoute un pic qui retombe. Le dernier tiers ne compte que sur l’affichage lui-même : il n’y a aucune fenêtre à empiler. Elle pilote, toujours à l’intérieur de l’overlay :
+Une intensité de glitch monte sans palier avec la timeline (0 au dossier, environ 0,13 à `3:55`, 0,22 à `4:25`, 0,36 à `5:15`, 0,52 à `5:45`, puis de 0,68 à 1,00 entre `6:15` et la fin). Chaque constat demande une impulsion bornée avec une attaque et une retombée, au lieu de franchir plusieurs seuils du renderer dans la même frame. Le dernier tiers ne compte que sur l’affichage lui-même. Cette intensité pilote, toujours à l’intérieur de l’overlay :
 
 - des bandes de déchirure horizontales décalées en rose et cyan ;
 - des blocs de framebuffer « corrompus » ;
@@ -257,7 +255,7 @@ Un grand compte à rebours rouge apparaît en haut de l’écran :
 
 > 00:40
 
-Les 100 avis se ferment alors **un par un**, en commençant par le plus récent — donc le plus éloigné du bureau. Le mur se replie vers le dossier, exactement dans l’ordre inverse de sa construction, au lieu de se trouer par le milieu. La cascade dure tout le compte à rebours ; le dernier disparaît à `7:21`, juste avant que l’obturateur commence à réduire la surface visible. Un arrêt d’urgence ne joue pas cette cascade : il ferme immédiatement toutes les fenêtres restantes.
+Le centième avis marque le sommet, puis les avis se ferment **un par un**, du plus récent et du plus extérieur vers le dossier. La cascade dure tout le compte à rebours ; le dernier disparaît à `7:21`, juste avant que l’obturateur commence à réduire la surface visible. Un arrêt d’urgence ne joue pas cette cascade : il ferme immédiatement toutes les fenêtres restantes.
 
 ### 7:10 — Les inspecteurs se déploient
 
@@ -337,7 +335,7 @@ Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` s
 - fournir en `safe` une sortie d’urgence par `Esc` maintenu deux secondes ; ne pas exposer cette sortie dans `normal` ou `lab` ;
 - ne jamais rendre le pointeur inutilisable en continu : chaque cycle de tempête doit comporter une fenêtre où il est intégralement rendu ;
 - ne bloquer le bouton Démarrer qu’avec une fenêtre appartenant à GooseRot et, après opt-in complet, un hook limité aux deux touches Windows ; détruire les deux gardes au nettoyage, sans modification du shell et sans jamais toucher `Ctrl+Shift+Échap`, `Alt+Tab` ni `Échap` ;
-- afficher avant `lab` un avertissement bloquant annonçant la corruption des fichiers, du Registre et du démarrage ;
+- réserver le binaire dédié `GooseRot-Lab.exe`, qui démarre sans dialogue, à une VM isolée et jetable ;
 - interdire `lab` hors d’une VM isolée et jetable ;
 - ne jamais lire ou modifier le presse-papiers système ;
 - fermer uniquement le dossier d’inspection lancé par GooseRot ;

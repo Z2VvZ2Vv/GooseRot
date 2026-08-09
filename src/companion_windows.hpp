@@ -71,8 +71,7 @@ class NotepadWindow {
   int Refusals() const { return refusals_; }
   // True once per refused minimise, for the same reason.
   bool ConsumeMinimiseRefusal();
-  // Screen point the notices are issued from: the left edge of the case file's
-  // title bar, i.e. where a page would come off the desk. False when closed.
+  // Screen point where paperwork leaves the case file. False while closed.
   bool TryGetIssuePoint(POINT& point) const;
 
  private:
@@ -133,12 +132,10 @@ class OwnedWindowsApps {
 // worker threads. Closing one before the finale spawns two replacements; the
 // final countdown closes them directly, one by one.
 //
-// Notices are paperwork, and paperwork has a source. Each one is issued from
-// `SetOrigin()` — the case file the inspector is writing in — and slides out to
-// its slot, so the wall visibly grows outward from the desk instead of dealing
-// itself across the screen at random. Slots are claimed in order of distance
-// from that origin, and a slot freed by a dismissed notice is the first one
-// reused, which is why a dismissal is immediately answered in the same place.
+// Placement is immediate and deterministic. The first cell is near the case
+// file, then each next cell is chosen as far as possible from those already
+// selected, so early notices are spread across the desktop without random
+// jitter. A cadence limiter still allows only one new window at a time.
 class PopupSwarm {
  public:
   PopupSwarm() = default;
@@ -148,16 +145,12 @@ class PopupSwarm {
   PopupSwarm& operator=(const PopupSwarm&) = delete;
 
   void SetBounds(RECT bounds);
-  // Where new notices are issued from, in screen coordinates.
   void SetOrigin(POINT origin) { origin_ = origin; }
   void Tick(HINSTANCE instance, std::mt19937& random, double logicalTime);
   void CloseAll();
   int Count() const { return static_cast<int>(popups_.size()); }
   bool AtCap() const { return Count() >= static_cast<int>(kMaximumPopups); }
   bool ConsumeCloseAttempt();
-
-  // How long a notice spends sliding out of the case file, in logical seconds.
-  static constexpr double kArrivalSeconds = 0.36;
 
  private:
   struct Popup {
@@ -166,13 +159,8 @@ class PopupSwarm {
     HWND label = nullptr;
     HWND button = nullptr;
     HFONT font = nullptr;
-    double jiggleUntil = -1.0;
-    // Negative once the notice has settled into its slot.
-    double arrivalStartedAt = -1.0;
-    POINT from{};
     POINT to{};
     int slot = -1;
-    int refusals = 0;
     bool dead = false;
   };
 
@@ -180,17 +168,14 @@ class PopupSwarm {
   static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
   LRESULT HandleMessage(Popup& popup, HWND window, UINT message, WPARAM wParam, LPARAM lParam);
   void RequestClose(Popup& popup);
-  bool CreatePopup(HINSTANCE instance, std::mt19937& random, double logicalTime,
-                   bool animate);
+  bool CreatePopup(HINSTANCE instance);
   void ReapClosed();
   void CloseNewest();
   void ReleaseSlot(int slot);
-  // Orders every grid cell by how far it is from the current origin, so slots
-  // fill outward from the desk. Rebuilt when the origin moves a long way.
   void EnsureSlotOrder();
   int AcquireSlot();
   POINT SlotPosition(int slot) const;
-  void AdvanceArrival(Popup& popup, double logicalTime);
+  double SpawnInterval(double logicalTime) const;
 
   std::vector<std::unique_ptr<Popup>> popups_;
   std::vector<int> slotOrder_;
@@ -201,8 +186,11 @@ class PopupSwarm {
   int columns_ = 1;
   int rows_ = 1;
   double lastTickTime_ = 0.0;
+  double nextSpawnAt_ = -1.0;
+  double nextCloseAt_ = -1.0;
   int pendingSpawns_ = 0;
   int closeAttempts_ = 0;
+  int permanentDismissals_ = 0;
   int spawnCounter_ = 0;
   bool closing_ = false;
 };

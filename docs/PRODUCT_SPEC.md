@@ -45,13 +45,15 @@ L’expérience laisse toujours une prise à l’utilisateur. La tempête de cur
 
 > **État de l’implémentation :** ce bloc décrit le contrat cible de `lab`. Le code actuellement présent dans le dépôt conserve encore la restauration et la sortie `Esc`, et n’implémente pas ces effets destructeurs. Cet écart doit rester explicite jusqu’à l’alignement du binaire.
 
-## Commandes prévues
+## Exécutables
 
 ```text
-GooseRot.exe --mode safe
-GooseRot.exe --mode normal
-GooseRot.exe --mode lab --vm-confirmed
+GooseRot-Safe.exe
+GooseRot-Normal.exe
+GooseRot-Lab.exe
 ```
+
+Le profil est compilé et verrouillé dans chaque fichier. La variante `Lab` intègre le choix VM et démarre directement sans dialogue d’avertissement ou de confirmation propre à GooseRot. Son manifeste `requireAdministrator` fait afficher une demande UAC unique par lancement ; un refus empêche le démarrage, sans nouvelle demande automatique. Les variantes `Safe` et `Normal` utilisent `asInvoker`.
 
 Options de développement :
 
@@ -61,7 +63,6 @@ Options de développement :
 --primary-monitor-only
 --fake-reboot
 --boot-game
---vm-confirmed
 --preview
 --no-desktop-effects
 --seed 67

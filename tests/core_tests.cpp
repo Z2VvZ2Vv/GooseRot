@@ -58,6 +58,17 @@ void TestArgumentParsing() {
              !config.muted && config.flashesEnabled && !config.reducedMotion,
          "normal full experience enables every effect category by default");
 
+  config = {};
+  config.mode = gooserot::RunMode::Normal;
+  config.modeLocked = true;
+  error.clear();
+  Expect(!gooserot::ParseArguments(3, safeMode, config, error) &&
+             config.mode == gooserot::RunMode::Normal,
+         "a profile executable rejects a conflicting mode override");
+  error.clear();
+  Expect(gooserot::ParseArguments(3, normalMode, config, error),
+         "a profile executable accepts its matching mode name");
+
   wchar_t seed[] = L"--seed";
   wchar_t negativeSeed[] = L"-1";
   wchar_t plusSeed[] = L"+67";
@@ -126,6 +137,24 @@ void TestChaosVisualCues() {
   const auto before = EvaluateChaosVisualCue(phase::kOwnedApps - 0.1, 12.0, 67U, true);
   Expect(before.flashIntensity == 0.0f && before.faultRibbonIntensity == 0.0f,
          "visual corruption is inactive before its phase");
+  const auto onset = EvaluateChaosVisualCue(phase::kOwnedApps, 12.0, 67U, true);
+  Expect(onset.flashIntensity == 0.0f && onset.faultRibbonIntensity == 0.0f,
+         "visual corruption starts from zero at its phase boundary");
+  const auto early = EvaluateChaosVisualCue(phase::kOwnedApps + 5.0, 12.0, 67U, true);
+  const auto established = EvaluateChaosVisualCue(phase::kOwnedApps + 20.0, 12.0, 67U, true);
+  Expect(early.faultRibbonIntensity < 0.03f &&
+             established.faultRibbonIntensity > early.faultRibbonIntensity,
+         "fault ribbons fade in instead of jumping to a visible minimum");
+
+  float duplicateFlashPeak = 0.0f;
+  for (int sample = 0; sample < 2000; ++sample) {
+    duplicateFlashPeak = std::max(
+        duplicateFlashPeak,
+        EvaluateChaosVisualCue(phase::kDuplicate, sample / 1000.0, 67U, true)
+            .flashIntensity);
+  }
+  Expect(duplicateFlashPeak == 0.0f,
+         "flash pulses start at zero when the duplicate beat is crossed");
 
   const auto mutedFlash = EvaluateChaosVisualCue(phase::kEnd - 1.0, 12.0, 67U, false);
   Expect(mutedFlash.flashIntensity == 0.0f && mutedFlash.faultRibbonIntensity > 0.0f,
@@ -212,8 +241,17 @@ void TestPopupSchedule() {
          "compact notices do not exist before their story beat");
   Expect(DesiredPopupCount(phase::kPopupStart) == 0U,
          "the popup swarm begins from an empty desktop");
+  Expect(DesiredPopupCount(phase::kSubtitles) == 1U &&
+             DesiredPopupCount(phase::kClipboard) == 5U &&
+             DesiredPopupCount(phase::kDuplicate) == 12U,
+         "the first half of the story adds paperwork in small narrative steps");
+  Expect(DesiredPopupCount(phase::kGraffiti) == 24U &&
+             DesiredPopupCount(phase::kScreenShake) == 42U &&
+             DesiredPopupCount(phase::kColorFilter) == 60U &&
+             DesiredPopupCount(phase::kFinalMonologue) == 80U,
+         "the popup wall keeps growing through the late story");
   Expect(DesiredPopupCount(phase::kPopupFull) == kMaximumPopups,
-         "the middle of the experience reaches 100 compact notices");
+         "only the countdown reaches 100 compact notices");
   Expect(DesiredPopupCount(phase::kPopupCloseStart) == kMaximumPopups,
          "all notices remain until the final countdown");
   Expect(DesiredPopupCount(phase::kPopupCloseEnd) == 0U,
@@ -238,6 +276,38 @@ void TestPopupSchedule() {
     Expect(current <= previous, "final compact notices close monotonically one by one");
     previous = current;
   }
+}
+
+void TestContinuousEscalation() {
+  namespace phase = gooserot::phase;
+  using gooserot::BaselineGlitchIntensity;
+  using gooserot::DesiredFlockSize;
+
+  Expect(BaselineGlitchIntensity(phase::kNotepad) == 0.0f,
+         "the baseline glitch starts cleanly");
+  float previous = 0.0f;
+  for (int sample = 0; sample <= 900; ++sample) {
+    const double at = phase::kEntrance + sample * 0.5;
+    const float current = BaselineGlitchIntensity(at);
+    Expect(current >= previous && current >= 0.0f && current <= 1.0f,
+           "baseline glitch grows continuously and remains bounded");
+    Expect(current - previous < 0.02f,
+           "no half-second glitch sample crosses a visible step");
+    previous = current;
+  }
+
+  Expect(DesiredFlockSize(phase::kDuplicate - 0.1, 0) == 1U,
+         "one inspector remains before the duplication beat");
+  Expect(DesiredFlockSize(phase::kDuplicate, 0) == 3U,
+         "the duplication beat requests a small trio");
+  Expect(DesiredFlockSize(phase::kScreenShake + 1.0, 0) == 3U,
+         "the late flock no longer jumps by several geese in its first second");
+  Expect(DesiredFlockSize(phase::kResetAura, 0) == 67U,
+         "the flock reaches its cap only at the final trigger");
+  Expect(DesiredFlockSize(phase::kDuplicate - 1.0, 4) == 5U,
+         "interaction-earned helpers are not hidden until the scripted beat");
+  Expect(DesiredFlockSize(std::numeric_limits<double>::quiet_NaN(), 6) == 1U,
+         "an invalid flock clock fails closed");
 }
 
 void TestCarrierAssignment() {
@@ -298,6 +368,9 @@ void TestCursorStormWaves() {
   using gooserot::CursorStormEnvelope;
   Expect(CursorStormEnvelope(phase::kScreenShake - 1.0) == 0.0f,
          "the pointer is untouched before the storm");
+  Expect(CursorStormEnvelope(std::numeric_limits<double>::quiet_NaN()) == 0.0f &&
+             CursorStormEnvelope(std::numeric_limits<double>::infinity()) == 0.0f,
+         "an invalid storm clock cannot move the pointer");
 
   // Sample a stretch late in the storm, where it is at its most aggressive: the
   // pointer still has to come back regularly, or it is simply unusable.
@@ -353,6 +426,17 @@ void TestCaseFileTypist() {
   }();
   Expect(afterHugeStall > 0U && afterHugeStall <= 24U,
          "a long stall advances the file but is not repaid as one instant paragraph");
+  for (std::uint32_t seed = 0; seed < 512U; ++seed) {
+    std::mt19937 seeded(seed);
+    std::wstring buffer;
+    gooserot::Typewriter budgeted;
+    budgeted.SetSpeed(90.0);
+    budgeted.Reset(0.0);
+    budgeted.Queue(std::wstring(200U, L'a'));
+    budgeted.Advance(600.0, seeded, buffer);
+    Expect(buffer.size() <= 24U,
+           "typewriter fumbles obey the per-frame keystroke budget");
+  }
 
   double now = 0.0;
   int guard = 0;
@@ -536,6 +620,7 @@ int main() {
   TestFrameAdvanceAtLowFps();
   TestInitialEntranceDelay();
   TestPopupSchedule();
+  TestContinuousEscalation();
   TestCarrierAssignment();
   TestPremultipliedAlphaBlend();
   TestTimeline();

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace gooserot {
 namespace {
@@ -705,19 +706,25 @@ ATOM PopupSwarm::Register(HINSTANCE instance) {
 }
 
 void PopupSwarm::SetBounds(RECT bounds) {
-  // Re-deriving the grid throws away which slots are occupied, so a repeated
-  // call with the same rectangle must not disturb a swarm already on screen.
   if (!slotOrder_.empty() && EqualRect(&bounds_, &bounds)) return;
+  // SetBounds is a setup operation. Rebuilding a live grid would invalidate
+  // every occupied slot, so retain the current geometry until cleanup.
+  if (!popups_.empty()) return;
   bounds_ = bounds;
   const int boundsWidth = std::max(1L, bounds_.right - bounds_.left);
   const int boundsHeight = std::max(1L, bounds_.bottom - bounds_.top);
-  const double aspect = static_cast<double>(boundsWidth) / static_cast<double>(boundsHeight);
+  const double aspect = static_cast<double>(boundsWidth) /
+                        static_cast<double>(boundsHeight);
   columns_ = std::max(
-      1, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(kMaximumPopups) * aspect))));
-  rows_ = std::max(1, static_cast<int>((kMaximumPopups + static_cast<std::size_t>(columns_) - 1U) /
-                                       static_cast<std::size_t>(columns_)));
+      1, static_cast<int>(std::ceil(std::sqrt(
+             static_cast<double>(kMaximumPopups) * aspect))));
+  rows_ = std::max(
+      1, static_cast<int>((kMaximumPopups + static_cast<std::size_t>(columns_) - 1U) /
+                          static_cast<std::size_t>(columns_)));
   slotOrder_.clear();
-  slotTaken_.assign(static_cast<std::size_t>(columns_) * static_cast<std::size_t>(rows_), 0U);
+  slotTaken_.assign(static_cast<std::size_t>(columns_) *
+                        static_cast<std::size_t>(rows_),
+                    0U);
 }
 
 POINT PopupSwarm::SlotPosition(int slot) const {
@@ -739,33 +746,65 @@ POINT PopupSwarm::SlotPosition(int slot) const {
                               static_cast<int>(bounds_.bottom) - kPopupHeight))};
 }
 
-// Slots are ranked by distance from the desk, so the wall of paperwork grows
-// outward from where the inspector is writing rather than appearing all over
-// the desktop at once. The angle tiebreak keeps equidistant cells in a stable
-// order, which is what stops the growth looking like a shuffle.
 void PopupSwarm::EnsureSlotOrder() {
   const int cells = columns_ * rows_;
   if (cells <= 0) return;
-  const bool moved = std::abs(origin_.x - slotOrderOrigin_.x) > (bounds_.right - bounds_.left) / 6 ||
-                     std::abs(origin_.y - slotOrderOrigin_.y) > (bounds_.bottom - bounds_.top) / 6;
+  const int movementX = std::max(1L, bounds_.right - bounds_.left) / 6;
+  const int movementY = std::max(1L, bounds_.bottom - bounds_.top) / 6;
+  const bool moved = std::abs(origin_.x - slotOrderOrigin_.x) > movementX ||
+                     std::abs(origin_.y - slotOrderOrigin_.y) > movementY;
   if (!slotOrder_.empty() && !moved) return;
   slotOrderOrigin_ = origin_;
 
-  slotOrder_.resize(static_cast<std::size_t>(cells));
-  for (int index = 0; index < cells; ++index) slotOrder_[static_cast<std::size_t>(index)] = index;
-  const POINT origin = origin_;
-  std::stable_sort(slotOrder_.begin(), slotOrder_.end(), [&](int left, int right) {
-    const POINT leftPoint = SlotPosition(left);
-    const POINT rightPoint = SlotPosition(right);
-    const double leftDx = static_cast<double>(leftPoint.x + kPopupWidth / 2 - origin.x);
-    const double leftDy = static_cast<double>(leftPoint.y + kPopupHeight / 2 - origin.y);
-    const double rightDx = static_cast<double>(rightPoint.x + kPopupWidth / 2 - origin.x);
-    const double rightDy = static_cast<double>(rightPoint.y + kPopupHeight / 2 - origin.y);
-    const double leftDistance = leftDx * leftDx + leftDy * leftDy;
-    const double rightDistance = rightDx * rightDx + rightDy * rightDy;
-    if (leftDistance != rightDistance) return leftDistance < rightDistance;
-    return std::atan2(leftDy, leftDx) < std::atan2(rightDy, rightDx);
-  });
+  const auto centre = [this](int slot) {
+    const POINT topLeft = SlotPosition(slot);
+    return POINT{topLeft.x + kPopupWidth / 2,
+                 topLeft.y + kPopupHeight / 2};
+  };
+  const auto distanceSquared = [](POINT left, POINT right) {
+    const double dx = static_cast<double>(left.x - right.x);
+    const double dy = static_cast<double>(left.y - right.y);
+    return dx * dx + dy * dy;
+  };
+
+  // Begin beside the case file, then repeatedly choose the cell farthest from
+  // every selected cell. This is deterministic blue-noise-like dispersion:
+  // no random permutation, no clump, and no jitter.
+  int first = 0;
+  double firstDistance = std::numeric_limits<double>::max();
+  for (int slot = 0; slot < cells; ++slot) {
+    const double candidate = distanceSquared(centre(slot), origin_);
+    if (candidate < firstDistance) {
+      firstDistance = candidate;
+      first = slot;
+    }
+  }
+
+  slotOrder_.clear();
+  slotOrder_.reserve(static_cast<std::size_t>(cells));
+  std::vector<unsigned char> selected(static_cast<std::size_t>(cells), 0U);
+  slotOrder_.push_back(first);
+  selected[static_cast<std::size_t>(first)] = 1U;
+  while (slotOrder_.size() < static_cast<std::size_t>(cells)) {
+    int best = -1;
+    double bestClearance = -1.0;
+    for (int candidate = 0; candidate < cells; ++candidate) {
+      if (selected[static_cast<std::size_t>(candidate)]) continue;
+      double clearance = std::numeric_limits<double>::max();
+      const POINT candidateCentre = centre(candidate);
+      for (const int existing : slotOrder_) {
+        clearance = std::min(clearance,
+                             distanceSquared(candidateCentre, centre(existing)));
+      }
+      if (clearance > bestClearance) {
+        bestClearance = clearance;
+        best = candidate;
+      }
+    }
+    if (best < 0) break;
+    slotOrder_.push_back(best);
+    selected[static_cast<std::size_t>(best)] = 1U;
+  }
 }
 
 int PopupSwarm::AcquireSlot() {
@@ -784,33 +823,16 @@ void PopupSwarm::ReleaseSlot(int slot) {
   slotTaken_[static_cast<std::size_t>(slot)] = 0U;
 }
 
-// The slide out of the case file. Position is eased so the page leaves quickly
-// and settles slowly, and the window fades up over the same stretch; the
-// layered style is dropped on arrival so only the pages in flight cost the
-// compositor anything.
-void PopupSwarm::AdvanceArrival(Popup& popup, double logicalTime) {
-  if (popup.arrivalStartedAt < 0.0 || !popup.window) return;
-  const double elapsed = logicalTime - popup.arrivalStartedAt;
-  const double progress = std::clamp(elapsed / kArrivalSeconds, 0.0, 1.0);
-  const double eased = 1.0 - std::pow(1.0 - progress, 3.0);
-  const int x = popup.from.x + static_cast<int>(std::lround((popup.to.x - popup.from.x) * eased));
-  const int y = popup.from.y + static_cast<int>(std::lround((popup.to.y - popup.from.y) * eased));
-  SetWindowPos(popup.window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-  SetLayeredWindowAttributes(popup.window, 0,
-                             static_cast<BYTE>(70 + static_cast<int>(185.0 * progress)), LWA_ALPHA);
-  if (progress < 1.0) return;
-
-  popup.arrivalStartedAt = -1.0;
-  const LONG_PTR style = GetWindowLongPtrW(popup.window, GWL_EXSTYLE);
-  if (style & WS_EX_LAYERED) {
-    SetWindowLongPtrW(popup.window, GWL_EXSTYLE, style & ~static_cast<LONG_PTR>(WS_EX_LAYERED));
-    RedrawWindow(popup.window, nullptr, nullptr,
-                 RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
-  }
+double PopupSwarm::SpawnInterval(double logicalTime) const {
+  const double progress = std::clamp(
+      (logicalTime - phase::kPopupStart) /
+          (phase::kPopupFull - phase::kPopupStart),
+      0.0, 1.0);
+  const double eased = progress * progress * (3.0 - 2.0 * progress);
+  return 0.90 - eased * 0.58;
 }
 
-bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random, double logicalTime,
-                             bool animate) {
+bool PopupSwarm::CreatePopup(HINSTANCE instance) {
   if (AtCap() || !Register(instance)) return false;
   if (bounds_.right <= bounds_.left || bounds_.bottom <= bounds_.top) {
     RECT work{};
@@ -824,32 +846,14 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random, double lo
   popup->owner = this;
   popup->slot = slot;
   popup->to = SlotPosition(slot);
-  // A little scatter so a hundred pages do not look laser-aligned, but small
-  // enough that the outward growth stays readable.
-  std::uniform_int_distribution<int> jitter(-14, 14);
-  const auto clampX = [this](int value) {
-    return std::clamp(value, static_cast<int>(bounds_.left),
-                      std::max(static_cast<int>(bounds_.left),
-                               static_cast<int>(bounds_.right) - kPopupWidth));
-  };
-  const auto clampY = [this](int value) {
-    return std::clamp(value, static_cast<int>(bounds_.top),
-                      std::max(static_cast<int>(bounds_.top),
-                               static_cast<int>(bounds_.bottom) - kPopupHeight));
-  };
-  popup->to.x = clampX(static_cast<int>(popup->to.x) + jitter(random));
-  popup->to.y = clampY(static_cast<int>(popup->to.y) + jitter(random));
-  popup->from = animate ? POINT{clampX(static_cast<int>(origin_.x) - kPopupWidth / 2),
-                                clampY(static_cast<int>(origin_.y) - kPopupHeight / 2)}
-                        : popup->to;
 
-  const NoticeText& notice = kNotices[static_cast<std::size_t>(spawnCounter_++) % kNotices.size()];
-  const DWORD extendedStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
-                              (animate ? WS_EX_LAYERED : 0U);
-  popup->window = CreateWindowExW(extendedStyle, L"GooseRotPopup", notice.title,
-                                  WS_POPUP | WS_CAPTION | WS_SYSMENU, popup->from.x, popup->from.y,
-                                  kPopupWidth, kPopupHeight, nullptr, nullptr, instance,
-                                  popup.get());
+  const std::size_t index = static_cast<std::size_t>(spawnCounter_);
+  const NoticeText& notice = kNotices[index % kNotices.size()];
+  popup->window = CreateWindowExW(
+      WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+      L"GooseRotPopup", notice.title,
+      WS_POPUP | WS_CAPTION | WS_SYSMENU, popup->to.x, popup->to.y,
+      kPopupWidth, kPopupHeight, nullptr, nullptr, instance, popup.get());
   if (!popup->window) {
     ReleaseSlot(slot);
     return false;
@@ -867,13 +871,10 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance, std::mt19937& random, double lo
   for (HWND control : {popup->label, popup->button}) {
     if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(popup->font), TRUE);
   }
-  if (animate) {
-    popup->arrivalStartedAt = logicalTime;
-    SetLayeredWindowAttributes(popup->window, 0, 70, LWA_ALPHA);
-  }
   ShowWindow(popup->window, SW_SHOWNOACTIVATE);
   UpdateWindow(popup->window);
   popups_.push_back(std::move(popup));
+  ++spawnCounter_;
   return true;
 }
 
@@ -881,9 +882,6 @@ void PopupSwarm::ReapClosed() {
   popups_.erase(std::remove_if(popups_.begin(), popups_.end(),
                                [this](const std::unique_ptr<Popup>& popup) {
                                  if (!popup->dead) return false;
-                                 // Freeing the slot is what lets the two
-                                 // replacement notices land back on the hole the
-                                 // user just made, rather than at the far edge.
                                  ReleaseSlot(popup->slot);
                                  if (popup->font) DeleteObject(popup->font);
                                  return true;
@@ -891,9 +889,6 @@ void PopupSwarm::ReapClosed() {
                 popups_.end());
 }
 
-// The countdown unwinds the wall the way it was built: the outermost, most
-// recent page goes first, so the paperwork visibly retreats toward the desk
-// instead of leaving holes in the middle.
 void PopupSwarm::CloseNewest() {
   if (popups_.empty()) return;
   std::unique_ptr<Popup>& popup = popups_.back();
@@ -904,69 +899,70 @@ void PopupSwarm::CloseNewest() {
 }
 
 void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTime) {
+  (void)random;
+  if (!std::isfinite(logicalTime)) return;
   lastTickTime_ = logicalTime;
   closing_ = logicalTime >= phase::kPopupCloseStart;
   ReapClosed();
 
-  const std::size_t scheduled = DesiredPopupCount(logicalTime);
-  std::size_t budget = logicalTime >= phase::kPopupCloseEnd ? kMaximumPopups : 8U;
-  // A page is only worth animating when the swarm is keeping up with its
-  // schedule. A resumed or stalled run has a backlog to place, and watching
-  // eight pages fly out at once would read as noise rather than as filing.
-  const bool animateArrivals = !closing_ && scheduled <= popups_.size() + 2U;
+  const std::size_t rawScheduled = DesiredPopupCount(logicalTime);
+  const std::size_t dismissed = static_cast<std::size_t>(
+      std::clamp(permanentDismissals_, 0, static_cast<int>(kMaximumPopups)));
+  const std::size_t scheduled = rawScheduled - std::min(rawScheduled, dismissed);
   if (closing_) pendingSpawns_ = 0;
 
-  std::size_t target = scheduled;
-  if (!closing_ && pendingSpawns_ > 0) {
-    target = std::min(kMaximumPopups,
-                      popups_.size() + static_cast<std::size_t>(pendingSpawns_));
-    target = std::max(target, scheduled);
-  }
-  while (popups_.size() < target && budget > 0U && !AtCap()) {
-    if (!CreatePopup(instance, random, logicalTime, animateArrivals)) break;
-    if (pendingSpawns_ > 0) --pendingSpawns_;
-    --budget;
-  }
-  if (!closing_) pendingSpawns_ = 0;
-
-  while (closing_ && popups_.size() > scheduled && budget > 0U) {
-    CloseNewest();
-    --budget;
-  }
-
-  for (const std::unique_ptr<Popup>& popup : popups_) {
-    if (popup->arrivalStartedAt >= 0.0) AdvanceArrival(*popup, logicalTime);
-  }
-
-  for (const std::unique_ptr<Popup>& popup : popups_) {
-    if (!popup->window || popup->arrivalStartedAt >= 0.0 || logicalTime > popup->jiggleUntil) {
-      continue;
+  if (!closing_) {
+    std::size_t target = scheduled;
+    if (pendingSpawns_ > 0) {
+      target = std::max(
+          target,
+          std::min(kMaximumPopups,
+                   popups_.size() + static_cast<std::size_t>(pendingSpawns_)));
     }
-    RECT rectangle{};
-    if (!GetWindowRect(popup->window, &rectangle)) continue;
-    const int shove = (static_cast<int>(logicalTime * 26.0) % 2 == 0) ? 6 : -6;
-    SetWindowPos(popup->window, nullptr, rectangle.left + shove, rectangle.top, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const bool due = nextSpawnAt_ < 0.0 || logicalTime >= nextSpawnAt_;
+    if (popups_.size() < target && due && !AtCap()) {
+      if (CreatePopup(instance)) {
+        if (pendingSpawns_ > 0) --pendingSpawns_;
+        nextSpawnAt_ = logicalTime + SpawnInterval(logicalTime);
+      } else {
+        // A transient USER-object failure keeps the debt and retries later;
+        // it no longer causes eight new windows on the next frame.
+        nextSpawnAt_ = logicalTime + 0.25;
+      }
+    }
+  } else {
+    if (nextCloseAt_ < 0.0) nextCloseAt_ = logicalTime;
+    if (popups_.size() > scheduled && logicalTime >= nextCloseAt_) {
+      CloseNewest();
+      nextCloseAt_ = logicalTime + 0.20;
+    }
+    // A jumped clock must still leave the desktop clean before the iris. This
+    // is the only deliberate catch-up path, and it removes rather than creates.
+    if (logicalTime >= phase::kPopupCloseEnd) {
+      while (popups_.size() > scheduled) CloseNewest();
+    }
   }
+
 }
 
 void PopupSwarm::RequestClose(Popup& popup) {
-  ++closeAttempts_;
-  ++popup.refusals;
   if (closing_) {
     popup.dead = true;
     if (popup.window) DestroyWindow(popup.window);
     return;
   }
-  if (!AtCap()) {
-    pendingSpawns_ += 2;
-    popup.dead = true;
-    if (popup.window) DestroyWindow(popup.window);
-    return;
+  if (lastTickTime_ < phase::kDuplicate) {
+    // Early paperwork behaves like an ordinary window: closing it is final and
+    // has no sound, glitch, refusal or replacement side effect.
+    permanentDismissals_ = std::min(
+        static_cast<int>(kMaximumPopups), permanentDismissals_ + 1);
+  } else {
+    ++closeAttempts_;
+    pendingSpawns_ = std::min(static_cast<int>(kMaximumPopups),
+                              pendingSpawns_ + 2);
   }
-  popup.jiggleUntil = lastTickTime_ + 1.2;
-  if (popup.label) SetWindowTextW(popup.label, L"ACCESS DENIED.\r\n100 notices own this desktop now.");
-  if (popup.button) SetWindowTextW(popup.button, L"CLOSE DENIED");
+  popup.dead = true;
+  if (popup.window) DestroyWindow(popup.window);
 }
 
 bool PopupSwarm::ConsumeCloseAttempt() {
@@ -985,6 +981,9 @@ void PopupSwarm::CloseAll() {
   std::fill(slotTaken_.begin(), slotTaken_.end(), 0U);
   pendingSpawns_ = 0;
   closeAttempts_ = 0;
+  permanentDismissals_ = 0;
+  nextSpawnAt_ = -1.0;
+  nextCloseAt_ = -1.0;
 }
 
 LRESULT CALLBACK PopupSwarm::WindowProcedure(HWND window, UINT message, WPARAM wParam,

@@ -805,11 +805,14 @@ void OverlayWindow::Render(const RenderState& state) {
     const GraphicsState saved = graphics.Save();
     // Shake: a steady beat from the screen-shake beat onwards, plus an extra
     // kick the more the display is falling apart.
-    if (!state.reducedMotion && state.logicalTime >= phase::kScreenShake) {
+    if (!state.reducedMotion && state.screenShakeIntensity > 0.001f) {
       const int pulse = static_cast<int>((state.logicalTime - phase::kScreenShake) / 2.0);
       if (std::fmod(state.logicalTime - phase::kScreenShake, 2.0) < 0.18) {
-        graphics.TranslateTransform((pulse % 2 == 0) ? 4.0f : -4.0f,
-                                    (pulse % 3 == 0) ? -3.0f : 3.0f);
+        const float x = (pulse % 2 == 0 ? 4.0f : -4.0f) *
+                        state.screenShakeIntensity;
+        const float y = (pulse % 3 == 0 ? -3.0f : 3.0f) *
+                        state.screenShakeIntensity;
+        graphics.TranslateTransform(x, y);
       }
     }
     if (!state.reducedMotion && state.glitch > 0.35f) {
@@ -1390,7 +1393,10 @@ void OverlayWindow::DrawPropCloseBadge(Graphics& graphics, const VisualSprite& s
 void OverlayWindow::DrawSceneEffects(Graphics& graphics, const RenderState& state) {
   if (state.colorFilter) {
     const bool matrix = static_cast<int>((state.logicalTime - phase::kColorFilter) / 2.0) % 2 == 0;
-    const Color filterColor = matrix ? Color(38, 57, 255, 20) : Color(38, 255, 45, 170);
+    const BYTE filterAlpha = static_cast<BYTE>(std::clamp(
+        static_cast<int>(std::lround(38.0f * state.colorFilterIntensity)), 0, 38));
+    const Color filterColor = matrix ? Color(filterAlpha, 57, 255, 20)
+                                     : Color(filterAlpha, 255, 45, 170);
     if (surfacePixels_) {
       graphics.Flush(FlushIntentionSync);
       const unsigned alpha = filterColor.GetA();
@@ -2130,6 +2136,7 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
   const double age = std::max(0.0, state.shutdownAge);
   SolidBrush background(Color(255, 0, 0, 0));
   graphics.FillRectangle(&background, 0, 0, width_, height_);
+  if (state.finalBlack) return;
 
   const float centerX = width_ * 0.5f;
   const float centerY = height_ * 0.48f;

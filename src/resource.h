@@ -14,3 +14,8 @@
 #define IDR_USER_GOOSE_PUNCHY 112
 #define IDR_USER_GOOSE_GANGSTER 113
 #define IDR_USER_GOOSE_JET 114
+
+// Lab-only firmware resources. These IDs are linked only into GooseRot-Lab.
+#define IDR_GOOSEBOOT_UEFI 201
+#define IDR_GOOSEBOOT_BIOS_STAGE1 202
+#define IDR_GOOSEBOOT_BIOS_STAGE2 203
