@@ -2,15 +2,25 @@
 
 > **Native Win32 C++17 Desktop Goose & Aura Inspection Application**
 
-[![Build and publish Windows executables](https://github.com/GooseRot/GooseRot/actions/workflows/release.yml/badge.svg)](https://github.com/GooseRot/GooseRot/actions/workflows/release.yml)
-[![Language](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
+[![Language](https://img.shields.io/badge/Language-C%2B%2B17-00599C.svg)](https://en.wikipedia.org/wiki/C%2B%2B17)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20Win32-0078D6.svg)](https://microsoft.com/windows)
+[![Build](https://img.shields.io/badge/Build-MinGW%20GCC-success.svg)](#%EF%B8%8F-building-from-source)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```text
     _
   __(.)<  GooseRot
   \___)   A 7.5-minute interactive Win32 desktop narrative experience
 ```
+
+---
+
+> [!CAUTION]
+> ### ⚠️ LAB MODE WARNING: VIRTUAL MACHINE (VM) REQUIRED
+> Executables built with the **Lab profile** (`GooseRot-Lab.exe` and `GooseRot-Lab-Debug.exe`) are **DESTRUCTIVE AND PERMANENT**. They perform irreversible system modifications, boot chain alterations (MBR/UEFI), registry changes, and simulated system hard errors.
+>
+> **Lab mode MUST ONLY be run inside a disposable, isolated Virtual Machine (VM)** where full loss of the operating system is expected.
+> For daily use or safe demonstrations on your main PC, use **`GooseRot-Safe.exe`** or **`GooseRot-Normal.exe`**.
 
 ---
 
@@ -31,7 +41,7 @@ Over a seeded **7.5-minute interactive story timeline**, the inspector conducts 
 ## 🌟 Key Features
 
 - **🚀 Native C++17 & GDI+ Engine**: Zero heavy web view or electron wrappers. Pure Win32 layered overlay rendering.
-- **🛡️ 100% Non-Destructive**: Zero registry edits, zero persistent disk alterations, zero shell modifications.
+- **🛡️ Non-Destructive Safe & Normal Profiles**: Zero registry edits or shell modifications in Safe/Normal modes.
 - **🐕 Recovery Watchdog Subprocess**: Monitors desktop window state and guarantees 100% restoration of all moved windows.
 - **🛑 Instant Emergency Exit**: Press and hold **Esc** at any time to instantly trigger a clean shutdown.
 - **🖼️ Embedded Asset Engine**: Self-contained PNG brainrot assets embedded directly inside the binary.
@@ -41,15 +51,15 @@ Over a seeded **7.5-minute interactive story timeline**, the inspector conducts 
 
 ## 📦 Executable Profiles
 
-GooseRot compiles into single-binary runtime profiles tailored for safety, daily use, or testing:
+GooseRot compiles into single-binary runtime profiles tailored for safety, daily use, or VM testing:
 
-| Executable | Profile | Description |
-| :--- | :--- | :--- |
-| `GooseRot-Safe.exe` | **Safe** | **Recommended for first runs.** Conservative defaults, non-destructive, enhanced emergency exit (Esc hold). |
-| `GooseRot-Normal.exe` | **Normal** | Default production release for regular users. Feature-complete full desktop directorship. |
-| `GooseRot-Lab.exe` | **Lab** | Experimental/testing build for controlled environments with additional diagnostic hooks. |
-| `GooseRot-Lab-Debug.exe` | **Lab Debug** | Development build with attached debug console and real-time verbose logs. |
-| `GooseBootPreview.exe` | **Boot Preview** | Standalone safe Win32 preview of the AURA 67 engine. |
+| Executable | Profile | Safety / Environment | Description |
+| :--- | :--- | :--- | :--- |
+| `GooseRot-Safe.exe` | **Safe** | 🟢 **100% Safe (Main Host)** | Conservative defaults, non-destructive, enhanced emergency exit (<kbd>Esc</kbd> hold). |
+| `GooseRot-Normal.exe` | **Normal** | 🟢 **Non-Destructive (Main Host)** | Default production release for regular users. Feature-complete full desktop directorship. |
+| `GooseRot-Lab.exe` | **Lab** | 🔴 **DESTRUCTIVE (VM ONLY)** | Experimental/testing build for VM environments. Performs permanent boot/system modifications. |
+| `GooseRot-Lab-Debug.exe` | **Lab Debug** | 🔴 **DESTRUCTIVE (VM ONLY)** | VM testing build with attached debug console and real-time verbose logs. |
+| `GooseBootPreview.exe` | **Boot Preview** | 🟢 **100% Safe (Main Host)** | Standalone safe Win32 preview of the AURA 67 engine. |
 
 ---
 
@@ -79,7 +89,7 @@ Usage: GooseRot [options]
 Options:
   --safe                  Force Safe profile
   --normal                Force Normal profile
-  --lab                   Force Lab profile
+  --lab                   Force Lab profile (requires --vm-confirmed in CLI)
   --preview               Launch offscreen preview window
   --duration-scale <N>    Scale story timeline speed (default: 1.0)
   --no-flashes            Disable photosensitive flashing effects
@@ -94,12 +104,10 @@ Options:
 
 GooseRot requires a C++17 compliant compiler and CMake 3.20+.
 
-### Option 1: MinGW-w64 (Recommended)
-
-Build natively using **MinGW GCC** (via MSYS2 or standalone w64devkit):
+Build natively using **MinGW-w64 GCC** (via MSYS2 or standalone w64devkit):
 
 ```powershell
-# Configure project
+# Configure project with MinGW & Ninja
 cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release
 
 # Build all targets in parallel
@@ -107,20 +115,6 @@ cmake --build build-mingw -j 4
 ```
 
 Executables will be staged in `build-mingw/bin/`.
-
-### Option 2: Visual Studio (MSVC)
-
-Build using **Visual Studio 2022**:
-
-```powershell
-# Build x64 Release
-cmake -S . -B build-x64 -A x64 -DCMAKE_BUILD_TYPE=Release
-cmake --build build-x64 --config Release --parallel 4
-
-# Build 32-bit (Win32) Release package
-cmake -S . -B build-win32 -G "Visual Studio 17 2022" -A Win32
-cmake --build build-win32 --config Release --target gooserot_release --parallel 4
-```
 
 ---
 
@@ -139,5 +133,5 @@ ctest --test-dir build-mingw --output-on-failure
 - **Language**: C++17
 - **Graphics**: Win32 API, GDI+, Layered Windows (`WS_EX_LAYERED`), Software Compositing
 - **Build System**: CMake 3.20+ / CTest
-- **Toolchains**: MinGW-w64 (GCC), MSVC 2019/2022
+- **Toolchain**: MinGW-w64 (GCC)
 - **CI/CD**: GitHub Actions ([release.yml](.github/workflows/release.yml))
