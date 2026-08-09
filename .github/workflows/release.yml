@@ -2,7 +2,8 @@ name: Build and publish Windows executables
 
 on:
   push:
-    branches: [ 'release' ]
+    branches: [ 'master', 'release' ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 jobs:
@@ -16,13 +17,13 @@ jobs:
         shell: pwsh
         run: |
           cmake -S . -B build-x64 -A x64 -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-x64 --config Release --target ALL_BUILD -- /m
+          cmake --build build-x64 --config Release --parallel 4
 
-      - name: Build Win32 (Visual Studio)
+      - name: Build Win32 (Release)
         shell: pwsh
         run: |
-          cmake -S . -B build-win32 -G "Visual Studio 17 2022" -A Win32
-          cmake --build build-win32 --config Release --target gooserot_release --parallel
+          cmake -S . -B build-win32 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-win32 --config Release --target gooserot_release --parallel 4
 
       - name: Collect executables
         shell: pwsh
@@ -40,3 +41,11 @@ jobs:
         with:
           name: goose-executables
           path: artifacts/
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
