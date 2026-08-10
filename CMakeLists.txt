@@ -291,6 +291,34 @@ if(DEFINED GOOSEROT_LAB_UEFI_IMAGE)
                OBJECT_DEPENDS ${GOOSEROT_LAB_FIRMWARE_INPUTS})
   target_sources(GooseRotLab PRIVATE "${GOOSEROT_LAB_FIRMWARE_RESOURCE}")
   target_sources(GooseRotLabDebug PRIVATE "${GOOSEROT_LAB_FIRMWARE_RESOURCE}")
+
+  if(WIN32 AND BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
+    # This verifier opens Lab only as a PE data file. It never executes Lab;
+    # each embedded RCDATA blob must exactly equal the firmware built/provided
+    # for this configuration before a release workflow may upload the EXE.
+    add_executable(gooserot_lab_resource_tests tests/lab_resource_tests.cpp)
+    target_include_directories(gooserot_lab_resource_tests PRIVATE
+                               "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_features(gooserot_lab_resource_tests PRIVATE cxx_std_17)
+    add_dependencies(gooserot_lab_resource_tests GooseRotLab)
+    if(MSVC)
+      set_property(TARGET gooserot_lab_resource_tests PROPERTY
+                   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+      target_compile_options(gooserot_lab_resource_tests PRIVATE /W4 /permissive- /utf-8)
+    else()
+      target_compile_options(gooserot_lab_resource_tests PRIVATE
+                             -Wall -Wextra -Wpedantic)
+      target_link_options(gooserot_lab_resource_tests PRIVATE
+                          -municode -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME gooserot_lab_embedded_firmware
+      COMMAND gooserot_lab_resource_tests
+              "$<TARGET_FILE:GooseRotLab>"
+              "${GOOSEROT_LAB_UEFI_IMAGE}"
+              "${GOOSEROT_LAB_BIOS_STAGE1}"
+              "${GOOSEROT_LAB_BIOS_STAGE2}")
+    set_tests_properties(gooserot_lab_embedded_firmware PROPERTIES TIMEOUT 15)
+  endif()
 endif()
 
 set(GOOSEROT_PACKAGE_DEPENDS GooseRotSafe GooseRotNormal GooseRotLab GooseRotLabDebug)

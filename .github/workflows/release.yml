@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: gooserot-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-windows-mingw:
     runs-on: windows-latest
@@ -23,14 +27,25 @@ jobs:
           update: false
           install: >-
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
 
       - name: Build with MinGW (Release)
         shell: msys2 {0}
         run: |
-          cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build-mingw -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGOOSEROT_BUILD_TESTS=ON \
+            -DGOOSEROT_BUILD_BOOT_PREVIEW=ON \
+            -DGOOSEROT_BUILD_BOOT_FIRMWARE=ON
           cmake --build build-mingw -j 4
+
+      - name: Verify tests and embedded Lab firmware
+        shell: msys2 {0}
+        run: |
+          cmake --build build-mingw --target gooserot_lab_resource_tests -j 4
+          ctest --test-dir build-mingw --output-on-failure
 
       - name: Collect executables
         shell: pwsh
@@ -39,9 +54,17 @@ jobs:
           if (!(Test-Path $art)) { New-Item -ItemType Directory -Path $art | Out-Null }
           $names = @('GooseRot-Safe.exe','GooseRot-Normal.exe','GooseRot-Lab.exe','GooseRot-Lab-Debug.exe','GooseBootPreview.exe')
           foreach ($n in $names) {
-            $found = Get-ChildItem -Path build-mingw -Filter $n -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { Copy-Item $found.FullName -Destination $art -Force }
+            $source = Join-Path (Join-Path $PWD 'build-mingw/bin') $n
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Required release executable is missing: $source"
+            }
+            Copy-Item -LiteralPath $source -Destination $art -Force
           }
+          $checksums = foreach ($n in $names) {
+            $hash = (Get-FileHash -LiteralPath (Join-Path $art $n) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $n"
+          }
+          [IO.File]::WriteAllLines((Join-Path $art 'SHA256SUMS.txt'), $checksums)
           Get-ChildItem $art
 
       - name: Upload EXE artifacts
@@ -49,6 +72,7 @@ jobs:
         with:
           name: goose-executables
           path: artifacts/
+          if-no-files-found: error
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -57,6 +81,7 @@ jobs:
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'GooseRot Release' }}
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

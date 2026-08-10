@@ -14,6 +14,8 @@ README.txt
 
 Le bundle `GooseRot-Lab.exe --fake-reboot` ajoute `GooseBootPreview.exe` à côté des trois exécutables. La cible CMake `gooserot_release`, disponible uniquement en MSVC Win32, produit ce dossier de staging et `SHA256SUMS.txt` dans `build*/dist/`. MinGW expose à la place `gooserot_smoke_bundle` dans `smoke-dist/`, explicitement non publiable.
 
+Le workflow GitHub `release.yml` active explicitement `GOOSEROT_BUILD_BOOT_FIRMWARE`. Avant tout upload, `gooserot_lab_resource_tests` ouvre `GooseRot-Lab.exe` uniquement comme fichier PE de données et compare octet par octet les ressources RCDATA 201, 202 et 203 aux artefacts UEFI/BIOS produits dans ce même run. Une ressource absente ou différente, un exécutable manquant ou un test en échec interrompt la publication. Le workflow collecte uniquement les chemins `build-mingw/bin` attendus et publie aussi `SHA256SUMS.txt`.
+
 Les images, la timeline et les textes sont embarqués dans les ressources des exécutables. Quand les entrées firmware sont fournies au build, le `.efi` et les deux stages BIOS sont embarqués uniquement dans `GooseRot-Lab.exe` ; aucun fichier firmware ne doit rester à côté de l’exécutable.
 
 Le sous-projet pré-OS produit séparément un bundle de laboratoire expérimental. Il ne fait partie ni de `gooserot_release` ni de `gooserot_smoke_bundle`, et il ne constitue pas une release publiable :
