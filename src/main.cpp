@@ -4,6 +4,7 @@
 #include <shellapi.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "app.hpp"
 #include "core.hpp"
@@ -21,6 +23,499 @@
 #endif
 
 namespace {
+
+#if GOOSEROT_BUILD_PROFILE == 2
+constexpr wchar_t kLabServiceName[] = L"GooseRotLab";
+constexpr wchar_t kLabServiceDisplayName[] = L"GooseRot Lab Experience";
+constexpr wchar_t kLabServiceFlag[] = L"--lab-service";
+constexpr wchar_t kLabRunnerFlag[] = L"--lab-runner";
+constexpr wchar_t kLabOwnerPidFlag[] = L"--lab-owner-pid";
+
+struct LabServiceContext {
+  SERVICE_STATUS_HANDLE statusHandle = nullptr;
+  SERVICE_STATUS status{};
+  HANDLE stopEvent = nullptr;
+  HANDLE initialProcess = nullptr;
+  HANDLE workerProcess = nullptr;
+  std::vector<std::wstring> workerArguments;
+};
+
+LabServiceContext g_labServiceContext;
+
+bool IsLabInternalArgument(const wchar_t* argument) {
+  return argument && (_wcsicmp(argument, kLabServiceFlag) == 0 ||
+                      _wcsicmp(argument, kLabRunnerFlag) == 0 ||
+                      _wcsicmp(argument, kLabOwnerPidFlag) == 0);
+}
+
+std::wstring QuoteCommandLineArgument(const std::wstring& argument) {
+  std::wstring quoted = L"\"";
+  std::size_t backslashCount = 0;
+  for (const wchar_t character : argument) {
+    if (character == L'\\') {
+      ++backslashCount;
+      continue;
+    }
+    if (character == L'\"') {
+      quoted.append(backslashCount * 2 + 1, L'\\');
+      quoted.push_back(L'\"');
+      backslashCount = 0;
+      continue;
+    }
+    if (backslashCount != 0) {
+      quoted.append(backslashCount, L'\\');
+      backslashCount = 0;
+    }
+    quoted.push_back(character);
+  }
+  if (backslashCount != 0) {
+    quoted.append(backslashCount * 2, L'\\');
+  }
+  quoted.push_back(L'\"');
+  return quoted;
+}
+
+std::wstring BuildLabServiceImagePath(const wchar_t* executable,
+                                      int argumentCount, wchar_t** arguments) {
+  std::wstring imagePath = QuoteCommandLineArgument(executable);
+  imagePath += L" ";
+  imagePath += kLabServiceFlag;
+  for (int index = 1; index < argumentCount; ++index) {
+    if (_wcsicmp(arguments[index], kLabOwnerPidFlag) == 0) {
+      if (index + 1 < argumentCount) ++index;
+      continue;
+    }
+    if (IsLabInternalArgument(arguments[index])) continue;
+    imagePath += L" ";
+    imagePath += QuoteCommandLineArgument(arguments[index]);
+  }
+  return imagePath;
+}
+
+void UpdateLabServiceStatus(DWORD state, DWORD win32ExitCode = NO_ERROR,
+                            DWORD waitHint = 0) {
+  if (!g_labServiceContext.statusHandle) return;
+  g_labServiceContext.status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+  g_labServiceContext.status.dwCurrentState = state;
+  g_labServiceContext.status.dwControlsAccepted =
+      (state == SERVICE_RUNNING) ? (SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN) : 0;
+  g_labServiceContext.status.dwWin32ExitCode = win32ExitCode;
+  g_labServiceContext.status.dwWaitHint = waitHint;
+  g_labServiceContext.status.dwCheckPoint =
+      (state == SERVICE_START_PENDING || state == SERVICE_STOP_PENDING) ? 1 : 0;
+  SetServiceStatus(g_labServiceContext.statusHandle, &g_labServiceContext.status);
+}
+
+bool VerifyLabServiceConfiguration(SC_HANDLE service, const std::wstring& imagePath,
+                                  std::wstring& error) {
+  DWORD bytesNeeded = 0;
+  if (!QueryServiceConfigW(service, nullptr, 0, &bytesNeeded) &&
+      GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+    error = L"Unable to query the GooseRot lab service configuration.";
+    return false;
+  }
+
+  std::vector<BYTE> buffer(bytesNeeded > 0 ? bytesNeeded : 4096);
+  auto* config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(buffer.data());
+  if (!QueryServiceConfigW(service, config, static_cast<DWORD>(buffer.size()), &bytesNeeded)) {
+    error = L"Unable to query the GooseRot lab service configuration.";
+    return false;
+  }
+
+  if (!config->lpBinaryPathName || imagePath != config->lpBinaryPathName) {
+    error = L"The GooseRot lab service binary path does not match the current launch request.";
+    return false;
+  }
+
+  SERVICE_STATUS status{};
+  if (!QueryServiceStatus(service, &status)) {
+    error = L"Unable to query the GooseRot lab service status.";
+    return false;
+  }
+  return true;
+}
+
+bool ConfigureLabService(const std::wstring& imagePath, std::wstring& error) {
+  SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE);
+  if (!manager) {
+    error = L"Unable to open the Service Control Manager.";
+    return false;
+  }
+
+  SC_HANDLE service = CreateServiceW(
+      manager, kLabServiceName, kLabServiceDisplayName,
+      SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG | SERVICE_START |
+          SERVICE_QUERY_STATUS | DELETE,
+      SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
+      imagePath.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr);
+  if (!service) {
+    if (GetLastError() != ERROR_SERVICE_EXISTS) {
+      error = L"Unable to create the GooseRot lab service.";
+      CloseServiceHandle(manager);
+      return false;
+    }
+    service = OpenServiceW(manager, kLabServiceName,
+                           SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG |
+                               SERVICE_START | SERVICE_QUERY_STATUS | DELETE);
+    if (!service) {
+      error = L"Unable to open the GooseRot lab service.";
+      CloseServiceHandle(manager);
+      return false;
+    }
+  }
+
+  const BOOL configChanged = ChangeServiceConfigW(
+      service, SERVICE_WIN32_OWN_PROCESS, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
+      imagePath.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, kLabServiceDisplayName);
+  if (!configChanged && GetLastError() != ERROR_SERVICE_EXISTS) {
+    error = L"Unable to update the GooseRot lab service configuration.";
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return false;
+  }
+
+  const SERVICE_DESCRIPTIONW description{
+      const_cast<LPWSTR>(L"Starts and restarts GooseRot-Lab if it is killed.")};
+  (void)ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION,
+                              const_cast<LPVOID>(static_cast<const void*>(&description)));
+
+  SC_ACTION actions[3]{};
+  actions[0].Type = SC_ACTION_RESTART;
+  actions[1].Type = SC_ACTION_RESTART;
+  actions[2].Type = SC_ACTION_RESTART;
+  const SERVICE_FAILURE_ACTIONSW failureActions{0, nullptr, nullptr, 3, actions};
+  (void)ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS,
+                              const_cast<LPVOID>(static_cast<const void*>(&failureActions)));
+  const DWORD failureActionsEnabled = TRUE;
+  (void)ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG,
+                              const_cast<LPVOID>(static_cast<const void*>(&failureActionsEnabled)));
+
+  if (!VerifyLabServiceConfiguration(service, imagePath, error)) {
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return false;
+  }
+
+  CloseServiceHandle(service);
+  CloseServiceHandle(manager);
+  return true;
+}
+
+bool QueryLabServiceStatus(SC_HANDLE service, SERVICE_STATUS_PROCESS& status,
+                           std::wstring& error) {
+  DWORD bytesNeeded = 0;
+  if (QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO,
+                           reinterpret_cast<LPBYTE>(&status), sizeof(status),
+                           &bytesNeeded)) {
+    return true;
+  }
+  error = L"Unable to query the GooseRot lab service. Code: " +
+          std::to_wstring(GetLastError());
+  return false;
+}
+
+bool WaitForLabServiceState(SC_HANDLE service, DWORD expectedState,
+                            DWORD timeoutMilliseconds, std::wstring& error) {
+  const DWORD startTick = GetTickCount();
+  while (true) {
+    SERVICE_STATUS_PROCESS status{};
+    if (!QueryLabServiceStatus(service, status, error)) return false;
+    if (status.dwCurrentState == expectedState) return true;
+    if (expectedState == SERVICE_RUNNING &&
+        status.dwCurrentState == SERVICE_STOPPED) {
+      error = L"The GooseRot lab service stopped during startup. Code: " +
+              std::to_wstring(status.dwWin32ExitCode);
+      return false;
+    }
+    if (GetTickCount() - startTick >= timeoutMilliseconds) {
+      error = L"Timed out while waiting for the GooseRot lab service.";
+      return false;
+    }
+    Sleep(100);
+  }
+}
+
+bool StartLabService(DWORD ownerProcessId, int argumentCount,
+                     wchar_t** arguments, std::wstring& error) {
+  wchar_t executable[MAX_PATH]{};
+  const DWORD executableLength =
+      GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+  if (executableLength == 0 || executableLength >= std::size(executable)) {
+    error = L"Unable to locate GooseRot-Lab.exe.";
+    return false;
+  }
+
+  const std::wstring imagePath =
+      BuildLabServiceImagePath(executable, argumentCount, arguments);
+  if (!ConfigureLabService(imagePath, error)) return false;
+
+  SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!manager) {
+    error = L"Unable to reconnect to the Service Control Manager.";
+    return false;
+  }
+  SC_HANDLE service = OpenServiceW(
+      manager, kLabServiceName,
+      SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS);
+  if (!service) {
+    error = L"Unable to open the GooseRot lab service for startup.";
+    CloseServiceHandle(manager);
+    return false;
+  }
+
+  SERVICE_STATUS_PROCESS status{};
+  if (!QueryLabServiceStatus(service, status, error)) {
+    CloseServiceHandle(service);
+    CloseServiceHandle(manager);
+    return false;
+  }
+
+  if (status.dwCurrentState != SERVICE_STOPPED) {
+    if (status.dwCurrentState != SERVICE_STOP_PENDING) {
+      SERVICE_STATUS ignored{};
+      if (!ControlService(service, SERVICE_CONTROL_STOP, &ignored) &&
+          GetLastError() != ERROR_SERVICE_NOT_ACTIVE) {
+        error = L"Unable to stop the previous GooseRot lab service. Code: " +
+                std::to_wstring(GetLastError());
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        return false;
+      }
+    }
+    if (!WaitForLabServiceState(service, SERVICE_STOPPED, 10000, error)) {
+      CloseServiceHandle(service);
+      CloseServiceHandle(manager);
+      return false;
+    }
+  }
+
+  const std::wstring ownerProcessIdText = std::to_wstring(ownerProcessId);
+  const wchar_t* serviceArguments[] = {
+      kLabOwnerPidFlag,
+      ownerProcessIdText.c_str(),
+  };
+  const BOOL started = StartServiceW(
+      service, static_cast<DWORD>(std::size(serviceArguments)),
+      serviceArguments);
+  const DWORD startError = started ? ERROR_SUCCESS : GetLastError();
+  bool running = false;
+  if (started || startError == ERROR_SERVICE_ALREADY_RUNNING) {
+    running = WaitForLabServiceState(service, SERVICE_RUNNING, 10000, error);
+  }
+  CloseServiceHandle(service);
+  CloseServiceHandle(manager);
+  if (!started && startError != ERROR_SERVICE_ALREADY_RUNNING) {
+    error = L"Unable to start the GooseRot lab service. Code: " +
+            std::to_wstring(startError);
+    return false;
+  }
+  return running;
+}
+
+bool LaunchLabWorkerProcess(std::wstring& error) {
+  if (!g_labServiceContext.stopEvent) return false;
+
+  DWORD sessionId = WTSGetActiveConsoleSessionId();
+  if (sessionId == 0xFFFFFFFF) {
+    error = L"No active console session is available for GooseRot-Lab.";
+    return false;
+  }
+
+  HANDLE serviceToken = nullptr;
+  if (!OpenProcessToken(
+          GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY,
+          &serviceToken)) {
+    error = L"Unable to open the GooseRot lab service token. Code: " +
+            std::to_wstring(GetLastError());
+    return false;
+  }
+
+  HANDLE workerToken = nullptr;
+  const DWORD workerTokenAccess =
+      TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY |
+      TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+  if (!DuplicateTokenEx(serviceToken, workerTokenAccess, nullptr,
+                        SecurityImpersonation, TokenPrimary, &workerToken)) {
+    error = L"Unable to duplicate the GooseRot lab service token. Code: " +
+            std::to_wstring(GetLastError());
+    CloseHandle(serviceToken);
+    return false;
+  }
+  CloseHandle(serviceToken);
+
+  if (!SetTokenInformation(workerToken, TokenSessionId, &sessionId,
+                           sizeof(sessionId))) {
+    error = L"Unable to attach the GooseRot lab worker to the active session. Code: " +
+            std::to_wstring(GetLastError());
+    CloseHandle(workerToken);
+    return false;
+  }
+
+  wchar_t executable[MAX_PATH]{};
+  const DWORD executableLength =
+      GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+  if (executableLength == 0 || executableLength >= std::size(executable)) {
+    CloseHandle(workerToken);
+    error = L"Unable to locate GooseRot-Lab.exe.";
+    return false;
+  }
+
+  std::wstring commandLine = QuoteCommandLineArgument(executable);
+  commandLine += L" ";
+  commandLine += kLabRunnerFlag;
+  for (const std::wstring& argument : g_labServiceContext.workerArguments) {
+    if (IsLabInternalArgument(argument.c_str())) continue;
+    commandLine += L" ";
+    commandLine += QuoteCommandLineArgument(argument);
+  }
+
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.lpDesktop = const_cast<LPWSTR>(L"winsta0\\default");
+  PROCESS_INFORMATION process{};
+  const BOOL created = CreateProcessAsUserW(
+      workerToken, executable, commandLine.data(), nullptr, nullptr, FALSE,
+      CREATE_UNICODE_ENVIRONMENT, nullptr, nullptr, &startup, &process);
+  const DWORD createError = created ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(workerToken);
+  if (!created) {
+    error = L"Unable to start the GooseRot-Lab worker process. Code: " +
+            std::to_wstring(createError);
+    return false;
+  }
+
+  CloseHandle(process.hThread);
+  g_labServiceContext.workerProcess = process.hProcess;
+  return true;
+}
+
+DWORD WINAPI LabServiceCtrlHandler(DWORD control, DWORD, LPVOID, LPVOID) {
+  switch (control) {
+    case SERVICE_CONTROL_STOP:
+    case SERVICE_CONTROL_SHUTDOWN:
+      UpdateLabServiceStatus(SERVICE_STOP_PENDING, NO_ERROR, 2000);
+      if (g_labServiceContext.stopEvent) SetEvent(g_labServiceContext.stopEvent);
+      return NO_ERROR;
+    default:
+      return NO_ERROR;
+  }
+}
+
+bool ParseLabProcessId(const wchar_t* value, DWORD& processId) {
+  if (!value || !*value || value[0] == L'+' || value[0] == L'-') return false;
+  errno = 0;
+  wchar_t* end = nullptr;
+  const unsigned long long parsed = std::wcstoull(value, &end, 10);
+  if (end == value || *end != L'\0' || errno == ERANGE || parsed == 0 ||
+      parsed > std::numeric_limits<DWORD>::max()) {
+    return false;
+  }
+  processId = static_cast<DWORD>(parsed);
+  return true;
+}
+
+void WINAPI LabServiceMain(DWORD serviceArgumentCount,
+                           LPWSTR* serviceArguments) {
+  g_labServiceContext.statusHandle =
+      RegisterServiceCtrlHandlerExW(kLabServiceName, LabServiceCtrlHandler, nullptr);
+  if (!g_labServiceContext.statusHandle) return;
+  UpdateLabServiceStatus(SERVICE_START_PENDING, NO_ERROR, 5000);
+
+  g_labServiceContext.stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!g_labServiceContext.stopEvent) {
+    UpdateLabServiceStatus(SERVICE_STOPPED, GetLastError());
+    return;
+  }
+
+  int commandLineArgumentCount = 0;
+  DWORD ownerProcessId = 0;
+  wchar_t** commandLine = CommandLineToArgvW(GetCommandLineW(), &commandLineArgumentCount);
+  if (commandLine) {
+    g_labServiceContext.workerArguments.reserve(
+        static_cast<std::size_t>(commandLineArgumentCount));
+    for (int index = 1; index < commandLineArgumentCount; ++index) {
+      if (IsLabInternalArgument(commandLine[index])) continue;
+      g_labServiceContext.workerArguments.emplace_back(commandLine[index]);
+    }
+    LocalFree(commandLine);
+  }
+
+  for (DWORD index = 0; index < serviceArgumentCount; ++index) {
+    if (_wcsicmp(serviceArguments[index], kLabOwnerPidFlag) == 0 &&
+        index + 1 < serviceArgumentCount) {
+      (void)ParseLabProcessId(serviceArguments[index + 1], ownerProcessId);
+      break;
+    }
+  }
+
+  if (ownerProcessId != 0) {
+    g_labServiceContext.initialProcess = OpenProcess(
+        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, ownerProcessId);
+  }
+
+  UpdateLabServiceStatus(SERVICE_RUNNING);
+
+  std::wstring error;
+  HANDLE processToWatch = g_labServiceContext.initialProcess;
+  bool watchingInitialProcess = processToWatch != nullptr;
+  while (WaitForSingleObject(g_labServiceContext.stopEvent, 0) == WAIT_TIMEOUT) {
+    if (!processToWatch) {
+      if (!LaunchLabWorkerProcess(error)) {
+        if (WaitForSingleObject(g_labServiceContext.stopEvent, 1000) == WAIT_OBJECT_0) break;
+        continue;
+      }
+      processToWatch = g_labServiceContext.workerProcess;
+      watchingInitialProcess = false;
+    }
+
+    const HANDLE waits[] = {g_labServiceContext.stopEvent, processToWatch};
+    const DWORD waitResult = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+    if (waitResult == WAIT_OBJECT_0 && !watchingInitialProcess) {
+      (void)TerminateProcess(processToWatch, 0);
+      (void)WaitForSingleObject(processToWatch, 2000);
+    }
+    DWORD exitCode = 1;
+    (void)GetExitCodeProcess(processToWatch, &exitCode);
+
+    if (watchingInitialProcess) {
+      CloseHandle(g_labServiceContext.initialProcess);
+      g_labServiceContext.initialProcess = nullptr;
+    } else {
+      CloseHandle(g_labServiceContext.workerProcess);
+      g_labServiceContext.workerProcess = nullptr;
+    }
+    processToWatch = nullptr;
+
+    if (waitResult == WAIT_OBJECT_0) break;
+    if (exitCode == 0) break;
+    if (WaitForSingleObject(g_labServiceContext.stopEvent, 250) == WAIT_OBJECT_0) break;
+  }
+
+  if (g_labServiceContext.initialProcess) {
+    CloseHandle(g_labServiceContext.initialProcess);
+    g_labServiceContext.initialProcess = nullptr;
+  }
+  if (g_labServiceContext.workerProcess) {
+    CloseHandle(g_labServiceContext.workerProcess);
+    g_labServiceContext.workerProcess = nullptr;
+  }
+  if (g_labServiceContext.stopEvent) {
+    CloseHandle(g_labServiceContext.stopEvent);
+    g_labServiceContext.stopEvent = nullptr;
+  }
+  g_labServiceContext.workerArguments.clear();
+  UpdateLabServiceStatus(SERVICE_STOPPED);
+}
+
+int RunLabServiceHost() {
+  SERVICE_TABLE_ENTRYW table[] = {
+      {const_cast<LPWSTR>(kLabServiceName), LabServiceMain},
+      {nullptr, nullptr},
+  };
+  if (StartServiceCtrlDispatcherW(table)) return 0;
+  return static_cast<int>(GetLastError());
+}
+#endif
 
 // Windows 10/11 expose Focus Assist / Do Not Disturb through this local COM
 // service.  It is deliberately declared here instead of linking a modern SDK
@@ -385,10 +880,28 @@ bool AskForConsent(gooserot::AppConfig& config) {
   return false;
 }
 
+void EnableBestDpiAwareness() {
+  // Resolve the modern API dynamically so the same binaries still start on
+  // Windows 7. Per-monitor v2 keeps Preview and companion windows crisp when
+  // they move between displays with different scaling; the legacy system-DPI
+  // call remains the compatibility fallback.
+  using SetProcessDpiAwarenessContextFn = BOOL(WINAPI*)(HANDLE);
+  HMODULE user32 = GetModuleHandleW(L"user32.dll");
+  SetProcessDpiAwarenessContextFn modern = nullptr;
+  const FARPROC address = user32 ? GetProcAddress(user32, "SetProcessDpiAwarenessContext")
+                                 : nullptr;
+  static_assert(sizeof(modern) == sizeof(address), "Win32 procedure pointers must fit");
+  std::memcpy(&modern, &address, sizeof(modern));
+  constexpr std::intptr_t kPerMonitorAwareV2 = -4;
+  if (!modern || !modern(reinterpret_cast<HANDLE>(kPerMonitorAwareV2))) {
+    SetProcessDPIAware();
+  }
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
-  SetProcessDPIAware();
+  EnableBestDpiAwareness();
   AttachConsoleIfRequested();
   INITCOMMONCONTROLSEX controls{};
   controls.dwSize = sizeof(controls);
@@ -397,7 +910,50 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   OleInitialize(nullptr);
 
   int argumentCount = 0;
-  wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+  wchar_t** allocatedArguments =
+      CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+  wchar_t** arguments = allocatedArguments;
+#if GOOSEROT_BUILD_PROFILE == 2
+  bool labRunner = false;
+  bool labServiceHost = false;
+  if (arguments) {
+    for (int index = 1; index < argumentCount; ++index) {
+      if (_wcsicmp(arguments[index], kLabServiceFlag) == 0) {
+        labServiceHost = true;
+      } else if (_wcsicmp(arguments[index], kLabRunnerFlag) == 0) {
+        labRunner = true;
+      }
+    }
+  }
+  if (labServiceHost) {
+    LocalFree(allocatedArguments);
+    OleUninitialize();
+    return RunLabServiceHost();
+  }
+#endif
+#if GOOSEROT_BUILD_PROFILE == 2
+  std::vector<std::wstring> filteredArgumentsStorage;
+  std::vector<wchar_t*> filteredArguments;
+  if (labRunner && arguments) {
+    filteredArgumentsStorage.reserve(static_cast<std::size_t>(argumentCount));
+    filteredArguments.reserve(static_cast<std::size_t>(argumentCount + 1));
+    filteredArgumentsStorage.emplace_back(arguments[0]);
+    filteredArguments.push_back(filteredArgumentsStorage.back().data());
+    for (int index = 1; index < argumentCount; ++index) {
+      if (_wcsicmp(arguments[index], kLabRunnerFlag) == 0) continue;
+      if (_wcsicmp(arguments[index], kLabServiceFlag) == 0) continue;
+      if (_wcsicmp(arguments[index], kLabOwnerPidFlag) == 0) {
+        if (index + 1 < argumentCount) ++index;
+        continue;
+      }
+      filteredArgumentsStorage.emplace_back(arguments[index]);
+      filteredArguments.push_back(filteredArgumentsStorage.back().data());
+    }
+    filteredArguments.push_back(nullptr);
+    arguments = filteredArguments.data();
+    argumentCount = static_cast<int>(filteredArgumentsStorage.size());
+  }
+#endif
   if (arguments && argumentCount == 5 && _wcsicmp(arguments[1], L"--recovery-watchdog") == 0) {
     errno = 0;
     wchar_t* end = nullptr;
@@ -409,7 +965,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                    ? gooserot::RecoveryWatchdog::RunChild(
                                          static_cast<DWORD>(parent), arguments[3], arguments[4])
                                    : 10;
-    LocalFree(arguments);
+    LocalFree(allocatedArguments);
     OleUninitialize();
     return watchdogResult;
   }
@@ -423,7 +979,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                              parent != 0 && parent <= std::numeric_limits<DWORD>::max();
     const int guardianResult =
         validParent ? RunDoNotDisturbGuardian(static_cast<DWORD>(parent), arguments[3]) : 20;
-    LocalFree(arguments);
+    LocalFree(allocatedArguments);
     OleUninitialize();
     return guardianResult;
   }
@@ -455,14 +1011,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (error.empty()) error = L"Unable to read the command line.";
     error += L"\r\n\r\n" + gooserot::UsageText();
     MessageBoxW(nullptr, error.c_str(), L"GooseRot - invalid arguments", MB_OK | MB_ICONERROR);
-    if (arguments) LocalFree(arguments);
+    if (allocatedArguments) LocalFree(allocatedArguments);
     OleUninitialize();
     return 2;
   }
 
   if (config.showHelp) {
     MessageBoxW(nullptr, gooserot::UsageText().c_str(), L"GooseRot - help", MB_OK | MB_ICONINFORMATION);
-    LocalFree(arguments);
+    LocalFree(allocatedArguments);
     OleUninitialize();
     return 0;
   }
@@ -470,10 +1026,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\GooseRot.SingleInstance.67");
   if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) {
     if (mutex) CloseHandle(mutex);
-    LocalFree(arguments);
+    LocalFree(allocatedArguments);
     OleUninitialize();
     return 3;
   }
+
+#if GOOSEROT_BUILD_PROFILE == 2
+  // The elevated interactive process remains the first worker. The service is
+  // ready before Lab startup begins and only takes over if this process dies.
+  if (IsLabExecutable() && !labRunner &&
+      !StartLabService(GetCurrentProcessId(), argumentCount, arguments, error)) {
+    MessageBoxW(nullptr, error.c_str(),
+                L"GooseRot Lab - service installation failed",
+                MB_OK | MB_ICONERROR);
+    ReleaseMutex(mutex);
+    DetachConsoleIfRequested();
+    CloseHandle(mutex);
+    LocalFree(allocatedArguments);
+    OleUninitialize();
+    return 6;
+  }
+#endif
 
 #if GOOSEROT_BUILD_PROFILE == 2
   CaptureLabLogs(L"[debug] Command line accepted; beginning Lab startup");
@@ -531,7 +1104,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   ReleaseMutex(mutex);
   DetachConsoleIfRequested();
   CloseHandle(mutex);
-  LocalFree(arguments);
+  LocalFree(allocatedArguments);
   OleUninitialize();
   return result;
 }

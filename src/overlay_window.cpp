@@ -21,6 +21,10 @@ namespace {
 using namespace Gdiplus;
 
 constexpr float kPi = 3.14159265358979323846f;
+// One 32-bit surface large enough for an 8K/8192-wide primary. Wider virtual
+// desktops still fall back to the primary monitor, while the low-performance
+// tier halves the cadence and drops decorative work at this size.
+constexpr std::uint64_t kMaximumSurfacePixels = 40'000'000ULL;
 std::atomic<HWND> gShellOverlayWindow{nullptr};
 
 struct ForegroundMonitorContext {
@@ -368,6 +372,7 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
                            std::wstring& error) {
   instance_ = instance;
   preview_ = preview;
+  requestedPrimaryMonitorOnly_ = primaryMonitorOnly;
   primaryMonitorOnly_ = primaryMonitorOnly;
   tickHandler_ = std::move(tickHandler);
   closeHandler_ = std::move(closeHandler);
@@ -399,12 +404,25 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
   if (preview_) {
     style = WS_OVERLAPPEDWINDOW;
     extendedStyle = WS_EX_APPWINDOW;
+    RECT work{};
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+      work = {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    }
+    const int workWidth = std::max(1L, work.right - work.left);
+    const int workHeight = std::max(1L, work.bottom - work.top);
+    width = std::min(1600, std::max(360, workWidth * 4 / 5));
+    height = width * 9 / 16;
+    const int maximumClientHeight = std::max(240, workHeight * 4 / 5);
+    if (height > maximumClientHeight) {
+      height = maximumClientHeight;
+      width = height * 16 / 9;
+    }
     RECT desired{0, 0, width, height};
     AdjustWindowRectEx(&desired, style, FALSE, extendedStyle);
     width = desired.right - desired.left;
     height = desired.bottom - desired.top;
-    x = CW_USEDEFAULT;
-    y = CW_USEDEFAULT;
+    x = work.left + (workWidth - width) / 2;
+    y = work.top + (workHeight - height) / 2;
   } else {
     style = WS_POPUP;
     extendedStyle = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST;
@@ -418,6 +436,18 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
       screenOriginY_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
       width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
       height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+      const std::uint64_t virtualPixels = static_cast<std::uint64_t>(std::max(0, width)) *
+                                          static_cast<std::uint64_t>(std::max(0, height));
+      if (virtualPixels > kMaximumSurfacePixels) {
+        // A single 32-bit DIB spanning several 4K monitors would exceed the
+        // renderer's safety bound. Falling back to the primary display keeps
+        // every mode usable instead of failing during startup.
+        primaryMonitorOnly_ = true;
+        screenOriginX_ = 0;
+        screenOriginY_ = 0;
+        width = GetSystemMetrics(SM_CXSCREEN);
+        height = GetSystemMetrics(SM_CYSCREEN);
+      }
     }
     x = screenOriginX_;
     y = screenOriginY_;
@@ -432,7 +462,24 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
 
   RECT client{};
   GetClientRect(window_, &client);
-  if (!RecreateSurface(client.right - client.left, client.bottom - client.top)) {
+  bool surfaceReady = RecreateSurface(client.right - client.left,
+                                      client.bottom - client.top);
+  if (!surfaceReady && !preview_ && !primaryMonitorOnly_) {
+    // A fragmented or memory-constrained machine can reject a large virtual
+    // DIB even below the nominal pixel ceiling. Retry on the primary display
+    // so all modes still start with the same reduced-performance policy.
+    const int primaryWidth = GetSystemMetrics(SM_CXSCREEN);
+    const int primaryHeight = GetSystemMetrics(SM_CYSCREEN);
+    surfaceReady = RecreateSurface(primaryWidth, primaryHeight);
+    if (surfaceReady) {
+      primaryMonitorOnly_ = true;
+      screenOriginX_ = 0;
+      screenOriginY_ = 0;
+      SetWindowPos(window_, HWND_TOPMOST, 0, 0, primaryWidth, primaryHeight,
+                   SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+  }
+  if (!surfaceReady) {
     error = L"Unable to create the 32-bit rendering surface.";
     return false;
   }
@@ -474,7 +521,6 @@ bool OverlayWindow::Create(HINSTANCE instance, bool preview, bool primaryMonitor
 
 bool OverlayWindow::RecreateSurface(int width, int height) {
   if (width <= 0 || height <= 0) return false;
-  constexpr std::uint64_t kMaximumSurfacePixels = 30'000'000ULL;
   const std::uint64_t pixels = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
   if (pixels > kMaximumSurfacePixels) return false;
 
@@ -783,7 +829,8 @@ void OverlayWindow::Render(const RenderState& state) {
   const std::size_t spriteCount = state.sprites ? state.sprites->size() : 0U;
   const std::uint64_t surfacePixels = static_cast<std::uint64_t>(width_) *
                                       static_cast<std::uint64_t>(height_);
-  heavyScene_ = (state.geese && state.geese->size() > 12U) ||
+  heavyScene_ = state.performanceTier == PerformanceTier::Low ||
+                (state.geese && state.geese->size() > 12U) ||
                 spriteCount > 8U || surfacePixels > 3'000'000ULL;
   const bool heavyScene = heavyScene_;
   graphics.SetSmoothingMode(heavyScene ? SmoothingModeHighSpeed : SmoothingModeAntiAlias);
@@ -832,7 +879,7 @@ void OverlayWindow::Render(const RenderState& state) {
     sceneSampleMs_ += markProfile();
     if (state.geese) {
       for (std::size_t index = 0; index < state.geese->size(); ++index) {
-        if (heavyScene && index >= 3U) {
+        if (heavyScene && index >= state.detailedGooseLimit) {
           DrawGooseCompact(graphics, (*state.geese)[index], static_cast<int>(index));
         } else {
           DrawGoose(graphics, (*state.geese)[index], static_cast<int>(index));
@@ -895,24 +942,38 @@ void OverlayWindow::DrawPreviewDesktop(Graphics& graphics) {
                 pixelCount * sizeof(std::uint32_t));
     return;
   }
+  const float scale = ResponsiveLayoutScale(CanvasBounds());
   LinearGradientBrush background(Point(0, 0), Point(width_, height_),
                                   Color(255, 18, 77, 126), Color(255, 54, 155, 161));
   graphics.FillRectangle(&background, 0, 0, width_, height_);
   SolidBrush hill(Color(150, 32, 100, 86));
-  graphics.FillEllipse(&hill, -120, height_ / 2, width_ * 3 / 4, height_ / 2);
-  graphics.FillEllipse(&hill, width_ / 3, height_ / 2 - 40, width_, height_ / 2 + 80);
+  graphics.FillEllipse(&hill, -120.0f * scale, height_ * 0.5f, width_ * 0.75f,
+                       height_ * 0.5f);
+  graphics.FillEllipse(&hill, width_ / 3.0f, height_ * 0.5f - 40.0f * scale,
+                       static_cast<float>(width_), height_ * 0.5f + 80.0f * scale);
+  const float taskbarHeight = 42.0f * scale;
   SolidBrush taskbar(Color(235, 24, 29, 38));
-  graphics.FillRectangle(&taskbar, 0, height_ - 42, width_, 42);
+  graphics.FillRectangle(&taskbar, 0.0f, height_ - taskbarHeight,
+                         static_cast<float>(width_), taskbarHeight);
   SolidBrush start(Color(255, 58, 170, 225));
-  graphics.FillEllipse(&start, 10, height_ - 34, 26, 26);
+  graphics.FillEllipse(&start, 10.0f * scale, height_ - 34.0f * scale,
+                       26.0f * scale, 26.0f * scale);
 
   SolidBrush windowBrush(Color(235, 245, 247, 250));
   SolidBrush titleBrush(Color(245, 37, 92, 145));
-  graphics.FillRectangle(&windowBrush, 54, 62, 350, 220);
-  graphics.FillRectangle(&titleBrush, 54, 62, 350, 30);
-  Font font(UiFamily(), 12.0f, FontStyleRegular, UnitPixel);
+  const float mockX = 54.0f * scale;
+  const float mockY = 62.0f * scale;
+  const float mockWidth = std::max(80.0f, std::min(350.0f * scale,
+                                                   width_ - mockX - 18.0f * scale));
+  const float mockHeight = std::max(60.0f, std::min(220.0f * scale,
+                                                    height_ - taskbarHeight - mockY -
+                                                        12.0f * scale));
+  graphics.FillRectangle(&windowBrush, mockX, mockY, mockWidth, mockHeight);
+  graphics.FillRectangle(&titleBrush, mockX, mockY, mockWidth, 30.0f * scale);
+  Font font(UiFamily(), 12.0f * scale, FontStyleRegular, UnitPixel);
   SolidBrush titleText(Color::White);
-  graphics.DrawString(L"Preview desktop — no system effects", -1, &font, PointF(65.0f, 69.0f), &titleText);
+  graphics.DrawString(L"Preview desktop — no system effects", -1, &font,
+                      PointF(mockX + 11.0f * scale, mockY + 7.0f * scale), &titleText);
   if (surfacePixels_) {
     graphics.Flush(FlushIntentionSync);
     previewBackgroundCache_.assign(static_cast<const std::uint32_t*>(surfacePixels_),
@@ -925,6 +986,10 @@ void OverlayWindow::DrawPreviewDesktop(Graphics& graphics) {
 void OverlayWindow::DrawGoose(Graphics& graphics, const GooseEntity& goose, int index) const {
   const Vec2 position = goose.Position();
   const GooseRig& rig = goose.Rig();
+  const GraphicsState responsiveState = graphics.Save();
+  graphics.TranslateTransform(position.x, position.y);
+  graphics.ScaleTransform(goose.VisualScale(), goose.VisualScale());
+  graphics.TranslateTransform(-position.x, -position.y);
   const float angle = goose.DirectionRadians() * 180.0f / kPi;
   const Vec2 forward{std::cos(goose.DirectionRadians()), std::sin(goose.DirectionRadians())};
   const Vec2 side{-forward.y, forward.x};
@@ -1156,11 +1221,16 @@ void OverlayWindow::DrawGoose(Graphics& graphics, const GooseEntity& goose, int 
     FillCircle(graphics, badge, spot, 5.0f);
     StrokeCircle(graphics, badgeRim, spot, 5.0f);
   }
+  graphics.Restore(responsiveState);
 }
 
 void OverlayWindow::DrawGooseCompact(Graphics& graphics, const GooseEntity& goose, int index) const {
   const Vec2 position = goose.Position();
   const GooseRig& rig = goose.Rig();
+  const GraphicsState responsiveState = graphics.Save();
+  graphics.TranslateTransform(position.x, position.y);
+  graphics.ScaleTransform(goose.VisualScale(), goose.VisualScale());
+  graphics.TranslateTransform(-position.x, -position.y);
   const Vec2 forward{std::cos(goose.DirectionRadians()), std::sin(goose.DirectionRadians())};
   const Vec2 side{-forward.y, forward.x};
   const Color bodyColor = index % 3 == 0 ? kGooseWhite
@@ -1186,17 +1256,26 @@ void OverlayWindow::DrawGooseCompact(Graphics& graphics, const GooseEntity& goos
       ToPointF(rig.headCenter + forward * 7.0f + side * 6.0f)};
   graphics.FillPolygon(&beak, bill.data(), static_cast<INT>(bill.size()));
   FillCircle(graphics, ink, rig.leftEye, 2.4f);
+  graphics.Restore(responsiveState);
 }
 
 void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& text, Vec2 anchor) const {
   int lines = 1;
   for (const wchar_t character : text) if (character == L'\n') ++lines;
-  const float width = std::clamp(190.0f + static_cast<float>(text.size()) * 3.2f, 230.0f, 470.0f);
-  const float height = 34.0f + lines * 24.0f + (text.size() > 55 ? 22.0f : 0.0f);
+  const float scale = ResponsiveLayoutScale(CanvasBounds());
+  const float maximumWidth = std::max(80.0f, width_ - 24.0f * scale);
+  const float minimumWidth = std::min(230.0f * scale, maximumWidth);
+  const float width = std::clamp(
+      (190.0f + static_cast<float>(text.size()) * 3.2f) * scale,
+      minimumWidth, std::min(470.0f * scale, maximumWidth));
+  const float wantedHeight = (34.0f + lines * 24.0f +
+                              (text.size() > 55 ? 22.0f : 0.0f)) * scale;
+  const float height = std::min(wantedHeight, std::max(50.0f, height_ - 24.0f * scale));
   float x = anchor.x - width * 0.5f;
-  float y = anchor.y - height - 86.0f;
-  x = std::clamp(x, 12.0f, std::max(12.0f, static_cast<float>(width_) - width - 12.0f));
-  y = std::clamp(y, 12.0f, std::max(12.0f, static_cast<float>(height_) - height - 12.0f));
+  float y = anchor.y - height - 86.0f * scale;
+  const float edge = 12.0f * scale;
+  x = std::clamp(x, edge, std::max(edge, static_cast<float>(width_) - width - edge));
+  y = std::clamp(y, edge, std::max(edge, static_cast<float>(height_) - height - edge));
 
   // Marker-drawn balloon: a lumpy outline that boils, not a rounded rectangle.
   const std::uint32_t seed = 4211U + frame_ / 5U % 3U;
@@ -1212,47 +1291,55 @@ void OverlayWindow::DrawSpeechBubble(Graphics& graphics, const std::wstring& tex
   }
   path.AddClosedCurve(outline.data(), static_cast<INT>(outline.size()), 0.35f);
 
-  const float tailBase = std::clamp(anchor.x, x + 26.0f, x + width - 26.0f);
-  std::array<PointF, 3> tail = {PointF(tailBase - 16.0f, y + height * 0.86f),
-                                PointF(anchor.x, std::min(anchor.y - 40.0f, y + height + 46.0f)),
-                                PointF(tailBase + 12.0f, y + height * 0.9f)};
+  const float tailInset = std::min(26.0f * scale, width * 0.25f);
+  const float tailBase = std::clamp(anchor.x, x + tailInset, x + width - tailInset);
+  std::array<PointF, 3> tail = {
+      PointF(tailBase - 16.0f * scale, y + height * 0.86f),
+      PointF(anchor.x, std::min(anchor.y - 40.0f * scale,
+                                y + height + 46.0f * scale)),
+      PointF(tailBase + 12.0f * scale, y + height * 0.9f)};
 
   SolidBrush shadow(Color(70, 0, 0, 0));
   const GraphicsState shadowState = graphics.Save();
-  graphics.TranslateTransform(4.0f, 5.0f);
+  graphics.TranslateTransform(4.0f * scale, 5.0f * scale);
   graphics.FillPath(&shadow, &path);
   graphics.Restore(shadowState);
 
   SolidBrush fill(kBubbleWhite);
-  Pen outlinePen(kInk, 3.4f);
+  Pen outlinePen(kInk, 3.4f * scale);
   outlinePen.SetLineJoin(LineJoinRound);
   graphics.FillPolygon(&fill, tail.data(), static_cast<INT>(tail.size()));
   graphics.FillPath(&fill, &path);
   graphics.DrawPath(&outlinePen, &path);
   graphics.DrawLines(&outlinePen, tail.data(), static_cast<INT>(tail.size()));
 
-  Font font(UiFamily(), 19.0f, FontStyleBold, UnitPixel);
+  Font font(UiFamily(), 19.0f * scale, FontStyleBold, UnitPixel);
   SolidBrush ink(Color(255, 28, 28, 34));
-  RectF textRectangle{x + 22.0f, y + 10.0f, x + width - 22.0f, y + height - 10.0f};
+  RectF textRectangle{x + 22.0f * scale, y + 10.0f * scale,
+                      x + width - 22.0f * scale, y + height - 10.0f * scale};
   DrawCenteredText(graphics, text, font, textRectangle, ink);
 }
 
 void OverlayWindow::DrawEmergencyExitOverlay(Graphics& graphics,
                                                const RenderState& state) const {
   if (state.emergencyProgress <= 0.0f) return;
-  const float width = std::min(560.0f, static_cast<float>(width_) - 40.0f);
+  const float scale = state.layoutScale;
+  const float width = std::max(40.0f, std::min(560.0f * scale,
+                                               static_cast<float>(width_) - 40.0f * scale));
   const float x = (width_ - width) * 0.5f;
-  const float y = height_ - 38.0f;
+  const float barHeight = 24.0f * scale;
+  const float y = height_ - 38.0f * scale;
   SolidBrush track(Color(245, 20, 20, 26));
   SolidBrush progress(kMatrixGreen);
-  graphics.FillRectangle(&track, x, y, width, 24.0f);
-  graphics.FillRectangle(&progress, x + 3.0f, y + 3.0f,
-                         (width - 6.0f) * std::clamp(state.emergencyProgress, 0.0f, 1.0f),
-                         18.0f);
-  Font font(UiFamily(), 14.0f, FontStyleBold, UnitPixel);
+  graphics.FillRectangle(&track, x, y, width, barHeight);
+  graphics.FillRectangle(&progress, x + 3.0f * scale, y + 3.0f * scale,
+                         (width - 6.0f * scale) *
+                             std::clamp(state.emergencyProgress, 0.0f, 1.0f),
+                         18.0f * scale);
+  Font font(UiFamily(), 14.0f * scale, FontStyleBold, UnitPixel);
   SolidBrush light(Color(255, 255, 255, 255));
   DrawCenteredText(graphics, L"Hold Esc to close everything and restore the desktop", font,
-                   {x, y - 26.0f, x + width, y - 2.0f}, light);
+                   {x, y - 26.0f * scale, x + width, y - 2.0f * scale}, light);
 }
 
 
@@ -1442,12 +1529,15 @@ void OverlayWindow::DrawClipboardBadge(Graphics& graphics, const RenderState& st
   if (!state.clipboardBadge) return;
   const float age = static_cast<float>(state.logicalTime - phase::kClipboard);
   const float travel = std::clamp(age / 5.0f, 0.0f, 1.0f);
+  const float scale = state.layoutScale;
   // Settle in a protected lower-left lane, away from the aura counter and the
   // toast stack. Drawing after sprites keeps the certification legible.
-  const float x = (1.0f - travel) * width_ * 0.5f + travel * 220.0f;
-  const float y = (1.0f - travel) * height_ * 0.5f + travel * (height_ - 148.0f);
+  const float x = (1.0f - travel) * width_ * 0.5f + travel * 220.0f * scale;
+  const float y = (1.0f - travel) * height_ * 0.5f +
+                  travel * (height_ - 148.0f * scale);
   const GraphicsState saved = graphics.Save();
   graphics.TranslateTransform(x, y);
+  graphics.ScaleTransform(scale, scale);
   graphics.RotateTransform(-5.0f + std::sin(static_cast<float>(state.logicalTime) * 2.4f) * 1.5f);
   GraphicsPath badge;
   AddWobblyRectangle(badge, -196.0f, -46.0f, 392.0f, 92.0f, 3.0f,
@@ -1693,42 +1783,51 @@ void OverlayWindow::DrawGraffitiUncached(Graphics& graphics, const RenderState& 
 
 void OverlayWindow::DrawCursorLatch(Graphics& graphics, const RenderState& state) const {
   if (!state.cursorLatched || !state.geese || state.geese->empty()) return;
-  const Vec2 beak = state.geese->front().Rig().beakTip;
+  const Vec2 beak = state.geese->front().VisualBeakTip();
   const Vec2 cursor = ScreenToCanvas(state.cursor);
+  const float scale = state.layoutScale;
 
   // A visible clamp between beak and pointer: the drag is happening, and it is
   // obvious who is doing it.
-  Pen grip(Color(220, 255, 45, 170), 5.0f);
+  Pen grip(Color(220, 255, 45, 170), 5.0f * scale);
   grip.SetStartCap(LineCapRound);
   grip.SetEndCap(LineCapRound);
   graphics.DrawLine(&grip, beak.x, beak.y, cursor.x, cursor.y);
-  Pen ring(Color(230, 255, 45, 170), 3.5f);
-  const float pulse = 12.0f + std::sin(static_cast<float>(state.logicalTime) * 22.0f) * 3.0f;
+  Pen ring(Color(230, 255, 45, 170), 3.5f * scale);
+  const float pulse = (12.0f + std::sin(static_cast<float>(state.logicalTime) * 22.0f) * 3.0f) *
+                      scale;
   StrokeCircle(graphics, ring, cursor, pulse);
 
-  Font font(PosterFamily(), 22.0f, FontStyleBold, UnitPixel);
+  Font font(PosterFamily(), 22.0f * scale, FontStyleBold, UnitPixel);
   DrawSplitText(graphics, L"GRABBED", font,
-                {cursor.x - 90.0f, cursor.y + 27.0f, cursor.x + 90.0f, cursor.y + 57.0f},
-                kNeonPink, 2.0f);
+                {cursor.x - 90.0f * scale, cursor.y + 27.0f * scale,
+                 cursor.x + 90.0f * scale, cursor.y + 57.0f * scale},
+                kNeonPink, 2.0f * scale);
 }
 
 void OverlayWindow::DrawToasts(Graphics& graphics, const RenderState& state) const {
   if (!state.toasts) return;
+  const float scale = state.layoutScale;
   int slot = 0;
   for (const ToastNotice& toast : *state.toasts) {
     const double age = state.logicalTime - toast.createdAt;
     if (age < 0.0 || age > toast.lifetime) continue;
     const float slide = static_cast<float>(std::clamp(age / 0.35, 0.0, 1.0));
     const float fade = static_cast<float>(std::clamp((toast.lifetime - age) / 0.6, 0.0, 1.0));
-    const float width = 372.0f;
-    const float height = 104.0f;
-    const float x = width_ - width - 22.0f + (1.0f - slide) * (width + 40.0f);
-    const float y = height_ - 70.0f - (slot + 1) * (height + 12.0f);
-    if (y < 10.0f) break;
+    constexpr float width = 372.0f;
+    constexpr float height = 104.0f;
+    const float physicalWidth = width * scale;
+    const float physicalHeight = height * scale;
+    const float x = width_ - physicalWidth - 22.0f * scale +
+                    (1.0f - slide) * (physicalWidth + 40.0f * scale);
+    const float y = height_ - 70.0f * scale -
+                    (slot + 1) * (physicalHeight + 12.0f * scale);
+    if (y < 10.0f * scale) break;
     ++slot;
 
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(x, y);
+    graphics.ScaleTransform(scale, scale);
     graphics.RotateTransform(NoiseSigned(static_cast<std::uint32_t>(toast.createdAt * 13.0) + 3U) * 1.6f);
     GraphicsPath frame;
     AddWobblyRectangle(frame, 0.0f, 0.0f, width, height, 2.4f,
@@ -1799,8 +1898,10 @@ void OverlayWindow::DrawGlitch(Graphics& graphics, const RenderState& state) con
     // most expensive thing on screen and would change nothing visually.
     const SmoothingMode previous = graphics.GetSmoothingMode();
     graphics.SetSmoothingMode(SmoothingModeNone);
-    const bool heavyScene = state.geese && state.geese->size() > 12U;
-    const int step = heavyScene ? 10 : 4;
+    const bool heavyScene = heavyScene_ || state.performanceTier != PerformanceTier::High;
+    const int step = state.performanceTier == PerformanceTier::Low ? 12
+                     : heavyScene ? 9
+                                  : 4;
     const int offset = static_cast<int>(frame_ % static_cast<unsigned>(step));
     if (heavyScene && surfacePixels_) {
       graphics.Flush(FlushIntentionSync);
@@ -1936,6 +2037,7 @@ void OverlayWindow::ApplyFaultRibbons(const RenderState& state) {
 
 void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const {
   const std::uint32_t boil = frame_ / 6U % 3U;
+  const float scale = state.layoutScale;
   SolidBrush dark(Color(226, 18, 18, 24));
   SolidBrush light(Color(245, 255, 255, 255));
 
@@ -1954,8 +2056,11 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     const float drop = (1.0f - settle) * -140.0f +
                        std::sin(reveal * 3.14159265f) * (1.0f - reveal) * 26.0f;
     const GraphicsState saved = graphics.Save();
-    graphics.TranslateTransform(static_cast<float>(width_ - 286) + NoiseSigned(frame_ * 7U) * punch * 7.0f,
-                                14.0f + drop + NoiseSigned(frame_ * 7U + 3U) * punch * 6.0f);
+    graphics.TranslateTransform(static_cast<float>(width_) - 286.0f * scale,
+                                14.0f * scale);
+    graphics.ScaleTransform(scale, scale);
+    graphics.TranslateTransform(NoiseSigned(frame_ * 7U) * punch * 7.0f,
+                                drop + NoiseSigned(frame_ * 7U + 3U) * punch * 6.0f);
     graphics.RotateTransform(1.6f + (1.0f - settle) * -9.0f +
                              punch * NoiseSigned(frame_ * 11U) * 3.0f);
     GraphicsPath auraBox;
@@ -1975,27 +2080,30 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     if (punch > 0.0f && state.auraDelta != 0) {
       std::wostringstream delta;
       delta << (state.auraDelta > 0 ? L"+" : L"") << state.auraDelta;
-      Font deltaFont(PosterFamily(), 30.0f, FontStyleBold, UnitPixel);
+      Font deltaFont(PosterFamily(), 30.0f * scale, FontStyleBold, UnitPixel);
       SolidBrush deltaBrush(WithAlpha(state.auraDelta > 0 ? kMatrixGreen : kCriticalRed, punch));
-      const float rise = (1.0f - punch) * 46.0f;
+      const float rise = (1.0f - punch) * 46.0f * scale;
       DrawCenteredText(graphics, delta.str(), deltaFont,
-                       {static_cast<float>(width_ - 286), 70.0f - rise,
-                        static_cast<float>(width_ - 18), 108.0f - rise},
+                       {static_cast<float>(width_) - 286.0f * scale,
+                        70.0f * scale - rise,
+                        static_cast<float>(width_) - 18.0f * scale,
+                        108.0f * scale - rise},
                        deltaBrush);
     }
   }
 
-  float hudRow = 112.0f;
+  float hudRow = 112.0f * scale;
   if (state.auraVisible && state.propsClosed > 0) {
     std::wostringstream counter;
     counter << L"EXHIBITS DESTROYED: " << state.propsClosed;
-    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
+    Font font(MonoFamily(), 15.0f * scale, FontStyleBold, UnitPixel);
     SolidBrush ink(Color(200, 255, 36, 56));
     DrawCenteredText(graphics, counter.str(), font,
-                     {static_cast<float>(width_ - 286), hudRow,
-                      static_cast<float>(width_ - 18), hudRow + 24.0f},
+                     {static_cast<float>(width_) - 286.0f * scale, hudRow,
+                      static_cast<float>(width_) - 18.0f * scale,
+                      hudRow + 24.0f * scale},
                      ink);
-    hudRow += 24.0f;
+    hudRow += 24.0f * scale;
   }
 
   // During the storm the pointer alternates between seized and released. Saying
@@ -2003,11 +2111,12 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
   // stretch of dead input.
   if (state.cursorStormPhase && !state.cursorLatched) {
     const bool seized = state.cursorChaos > 0.02f;
-    Font font(MonoFamily(), 15.0f, FontStyleBold, UnitPixel);
+    Font font(MonoFamily(), 15.0f * scale, FontStyleBold, UnitPixel);
     SolidBrush ink(seized ? Color(220, 255, 36, 56) : Color(210, 57, 255, 20));
     DrawCenteredText(graphics, seized ? L"CURSOR: SEIZED" : L"CURSOR: YOURS", font,
-                     {static_cast<float>(width_ - 286), hudRow,
-                      static_cast<float>(width_ - 18), hudRow + 24.0f},
+                     {static_cast<float>(width_) - 286.0f * scale, hudRow,
+                      static_cast<float>(width_) - 18.0f * scale,
+                      hudRow + 24.0f * scale},
                      ink);
   }
 
@@ -2017,7 +2126,9 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
     const auto index = static_cast<std::size_t>(state.logicalTime / 4.0) % subtitles.size();
     Font subtitleFont(UiFamily(), 25.0f, FontStyleBold, UnitPixel);
     const GraphicsState saved = graphics.Save();
-    graphics.TranslateTransform(width_ * 0.5f - 214.0f, height_ - 104.0f);
+    graphics.TranslateTransform(width_ * 0.5f - 214.0f * scale,
+                                height_ - 104.0f * scale);
+    graphics.ScaleTransform(scale, scale);
     graphics.RotateTransform(-0.9f);
     GraphicsPath box;
     AddWobblyRectangle(box, 0.0f, 0.0f, 428.0f, 50.0f, 2.4f, 1201U + boil);
@@ -2029,10 +2140,11 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
   }
 
   if (state.finalMonologue) {
-    Font criticalFont(PosterFamily(), 46.0f, FontStyleBold, UnitPixel);
+    Font criticalFont(PosterFamily(), 46.0f * scale, FontStyleBold, UnitPixel);
     DrawSplitText(graphics, L"VERDICT: NON-COMPLIANT. SITE CONDEMNED.", criticalFont,
-                  {20.0f, height_ * 0.16f, static_cast<float>(width_ - 20), height_ * 0.28f},
-                  kCriticalRed, 3.0f + state.glitch * 6.0f);
+                  {20.0f * scale, height_ * 0.16f,
+                   static_cast<float>(width_) - 20.0f * scale, height_ * 0.28f},
+                  kCriticalRed, (3.0f + state.glitch * 6.0f) * scale);
   }
 
   if (state.countdown) {
@@ -2041,21 +2153,24 @@ void OverlayWindow::DrawHud(Graphics& graphics, const RenderState& state) const 
         std::clamp(static_cast<int>(std::ceil(phase::kEnd - state.logicalTime)), 0, span);
     wchar_t countdown[16]{};
     swprintf(countdown, std::size(countdown), L"00:%02d", remaining);
-    Font countdownFont(MonoFamily(), 72.0f, FontStyleBold, UnitPixel);
+    Font countdownFont(MonoFamily(), 72.0f * scale, FontStyleBold, UnitPixel);
     const float beat = static_cast<float>(std::fmod(state.logicalTime, 1.0));
     const float kick = beat < 0.12f ? 1.0f - beat / 0.12f : 0.0f;
     DrawSplitText(graphics, countdown, countdownFont,
-                  {width_ * 0.5f - 200.0f, 18.0f - kick * 4.0f, width_ * 0.5f + 200.0f,
-                   112.0f - kick * 4.0f},
-                  kCriticalRed, 2.0f + kick * 6.0f);
+                  {width_ * 0.5f - 200.0f * scale,
+                   (18.0f - kick * 4.0f) * scale,
+                   width_ * 0.5f + 200.0f * scale,
+                   (112.0f - kick * 4.0f) * scale},
+                  kCriticalRed, (2.0f + kick * 6.0f) * scale);
   }
 
   if (state.resetButton) {
     const float buttonWidth = 268.0f;
-    const float x = width_ * 0.5f - buttonWidth * 0.5f;
-    const float y = height_ - 136.0f;
+    const float x = width_ * 0.5f - buttonWidth * scale * 0.5f;
+    const float y = height_ - 136.0f * scale;
     const GraphicsState saved = graphics.Save();
     graphics.TranslateTransform(x, y);
+    graphics.ScaleTransform(scale, scale);
     graphics.RotateTransform(-1.2f);
     GraphicsPath button;
     AddWobblyRectangle(button, 0.0f, 0.0f, buttonWidth, 68.0f, 3.0f, 1607U + boil);
@@ -2167,9 +2282,12 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
 
   const float entrance = static_cast<float>(std::clamp((age - 1.6) / 2.6, 0.0, 1.0));
   const float eased = 1.0f - std::pow(1.0f - entrance, 3.0f);
-  const Vec2 goosePosition = Lerp({-110.0f, height_ * 0.72f},
-                                  {std::min(width_ * 0.30f, 360.0f), height_ * 0.72f}, eased);
+  const float scale = state.layoutScale;
+  const Vec2 goosePosition = Lerp({-110.0f * scale, height_ * 0.72f},
+                                  {std::min(width_ * 0.30f, 360.0f * scale),
+                                   height_ * 0.72f}, eased);
   GooseEntity farewell(goosePosition);
+  farewell.SetVisualScale(scale);
   // Head turned to camera, beak shut: it is not honking, it is filing.
   DrawGoose(graphics, farewell, 0);
 
@@ -2178,7 +2296,7 @@ void OverlayWindow::DrawFakeShutdown(Graphics& graphics, const RenderState& stat
     if (appear > 0.15f) {
       DrawSpeechBubble(graphics,
                        L"CASE 67 CLOSED.\nTHE SITE HAS BEEN CONDEMNED.\nHAVE A NICE DAY.",
-                       farewell.Rig().beakTip);
+                       farewell.VisualBeakTip());
     }
   }
 }
@@ -2353,8 +2471,8 @@ LRESULT OverlayWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
     case WM_GETMINMAXINFO:
       if (preview_) {
         auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
-        limits->ptMinTrackSize.x = 640;
-        limits->ptMinTrackSize.y = 400;
+        limits->ptMinTrackSize.x = 360;
+        limits->ptMinTrackSize.y = 240;
         return 0;
       }
       break;
@@ -2366,13 +2484,41 @@ LRESULT OverlayWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
         RecreateSurface(LOWORD(lParam), HIWORD(lParam));
       }
       return 0;
+    case WM_DPICHANGED:
+      if (preview_ && lParam) {
+        const RECT& suggested = *reinterpret_cast<const RECT*>(lParam);
+        SetWindowPos(window_, nullptr, suggested.left, suggested.top,
+                     suggested.right - suggested.left, suggested.bottom - suggested.top,
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+        return 0;
+      }
+      break;
     case WM_DISPLAYCHANGE:
       if (!preview_) {
-        const int newOriginX = primaryMonitorOnly_ ? 0 : GetSystemMetrics(SM_XVIRTUALSCREEN);
-        const int newOriginY = primaryMonitorOnly_ ? 0 : GetSystemMetrics(SM_YVIRTUALSCREEN);
-        const int newWidth = GetSystemMetrics(primaryMonitorOnly_ ? SM_CXSCREEN : SM_CXVIRTUALSCREEN);
-        const int newHeight = GetSystemMetrics(primaryMonitorOnly_ ? SM_CYSCREEN : SM_CYVIRTUALSCREEN);
-        if (RecreateSurface(newWidth, newHeight)) {
+        const int virtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        const int virtualHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        const std::uint64_t virtualPixels =
+            static_cast<std::uint64_t>(std::max(0, virtualWidth)) *
+            static_cast<std::uint64_t>(std::max(0, virtualHeight));
+        bool targetPrimaryOnly =
+            requestedPrimaryMonitorOnly_ || virtualPixels > kMaximumSurfacePixels;
+        int newOriginX = targetPrimaryOnly ? 0 : GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int newOriginY = targetPrimaryOnly ? 0 : GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int newWidth = GetSystemMetrics(targetPrimaryOnly ? SM_CXSCREEN : SM_CXVIRTUALSCREEN);
+        int newHeight = GetSystemMetrics(targetPrimaryOnly ? SM_CYSCREEN : SM_CYVIRTUALSCREEN);
+        bool surfaceReady = RecreateSurface(newWidth, newHeight);
+        if (!surfaceReady && !targetPrimaryOnly) {
+          targetPrimaryOnly = true;
+          newOriginX = 0;
+          newOriginY = 0;
+          newWidth = GetSystemMetrics(SM_CXSCREEN);
+          newHeight = GetSystemMetrics(SM_CYSCREEN);
+          surfaceReady = RecreateSurface(newWidth, newHeight);
+        }
+        if (surfaceReady) {
+          // Commit the effective policy only after the replacement surface is
+          // live. The app observes this value on the next budget update.
+          primaryMonitorOnly_ = targetPrimaryOnly;
           screenOriginX_ = newOriginX;
           screenOriginY_ = newOriginY;
           SetWindowPos(window_, HWND_TOPMOST, newOriginX, newOriginY, newWidth, newHeight,

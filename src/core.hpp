@@ -62,6 +62,41 @@ struct RectF {
 
 enum class RunMode { Safe, Normal, Lab };
 
+// A deliberately small hardware classification. It is not intended to name a
+// CPU model; it only gives the experience enough information to avoid filling
+// a modest machine with the same amount of composited artwork as a fast one.
+enum class PerformanceTier { Low, Medium, High };
+
+struct ExperienceBudget {
+  // Shared spatial scale for props, geese and fixed-pixel interface furniture.
+  float layoutScale = 1.0f;
+  // Maximum number of decoded image instances kept active in the scene.
+  std::size_t imageLimit = 12U;
+  // Modeless notice windows are density-bound too, so a small screen never
+  // becomes an unreadable stack before the narrative reaches its finale.
+  std::size_t popupLimit = 12U;
+  // Remaining geese use the compact renderer once this many detailed birds
+  // have been drawn.
+  std::size_t detailedGooseLimit = 3U;
+  // Keeps the finale legible and bounded on small or modest configurations.
+  std::size_t gooseLimit = 24U;
+};
+
+// Uses only stable, widely available values so the Win32 application can run
+// the same check on every supported Windows version. Unknown values (zero)
+// choose Medium rather than guessing that the machine is fast.
+PerformanceTier ClassifyPerformance(std::uint64_t physicalMemoryBytes,
+                                    unsigned logicalProcessorCount,
+                                    std::uint64_t renderPixels);
+
+// Scales gently: a 4K display gets readable furniture without making a 960x540
+// preview microscopic, and an ultrawide display is governed by its short edge.
+float ResponsiveLayoutScale(RectF canvas);
+
+// One density policy is shared by Safe, Normal, Lab and preview launches.
+ExperienceBudget ComputeExperienceBudget(RectF canvas, RunMode mode,
+                                         PerformanceTier performance);
+
 struct AppConfig {
   RunMode mode = RunMode::Safe;
   // Standalone profile executables set this before parsing. The shared core
@@ -292,6 +327,7 @@ class GooseEntity {
 
   void SetTarget(Vec2 target, SpeedTier tier = SpeedTier::Walk, bool extendNeck = false);
   void SetPosition(Vec2 position);
+  void SetVisualScale(float scale);
   void Update(float deltaSeconds, RectF bounds);
 
   // Opens the beak and throws honk rings for the requested duration.
@@ -311,6 +347,7 @@ class GooseEntity {
   SpeedTier Tier() const { return tier_; }
   const GooseRig& Rig() const { return rig_; }
   const GooseParameters& Parameters() const { return parameters_; }
+  float VisualScale() const { return visualScale_; }
 
   float NeckExtension() const { return neckExtension_; }
   float BeakOpen() const { return beakOpen_; }
@@ -324,9 +361,12 @@ class GooseEntity {
   // Converts a desired beak-tip position into the body target that keeps the
   // current procedural rig aligned with it.
   Vec2 BodyTargetForBeak(Vec2 desiredBeakTip) const {
-    return desiredBeakTip - (rig_.beakTip - position_);
+    return desiredBeakTip - (rig_.beakTip - position_) * visualScale_;
   }
-  float BeakDistanceTo(Vec2 target) const { return Distance(rig_.beakTip, target); }
+  Vec2 VisualBeakTip() const {
+    return position_ + (rig_.beakTip - position_) * visualScale_;
+  }
+  float BeakDistanceTo(Vec2 target) const { return Distance(VisualBeakTip(), target); }
 
   static constexpr float kBoundsMargin = 48.0f;
   // How far past the canvas an offstage goose may walk before it is clamped.
@@ -349,6 +389,7 @@ class GooseEntity {
   float wingFlap_ = 0.0f;
   float honkTimer_ = 0.0f;
   SpeedTier tier_ = SpeedTier::Walk;
+  float visualScale_ = 1.0f;
   bool extendNeck_ = false;
   bool latched_ = false;
   bool offstage_ = false;

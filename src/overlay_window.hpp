@@ -69,6 +69,9 @@ struct RenderState {
   double logicalTime = 0.0;
   double shutdownAge = -1.0;
   RunMode mode = RunMode::Safe;
+  PerformanceTier performanceTier = PerformanceTier::Medium;
+  float layoutScale = 1.0f;
+  std::size_t detailedGooseLimit = 2U;
   std::uint32_t seed = 67;
   const std::vector<GooseEntity>* geese = nullptr;
   const std::vector<VisualSprite>* sprites = nullptr;
@@ -139,6 +142,7 @@ class OverlayWindow {
   // where something happened on the canvas.
   POINT CanvasToScreen(Vec2 canvasPoint) const;
   bool IsPreview() const { return preview_; }
+  bool IsPrimaryMonitorOnly() const { return primaryMonitorOnly_; }
   // Where the spray can currently is, so the geese can follow their own tag.
   Vec2 GraffitiPaintHead(float progress) const;
 
@@ -207,6 +211,10 @@ class OverlayWindow {
   int screenOriginX_ = 0;
   int screenOriginY_ = 0;
   bool preview_ = false;
+  // Keep the caller's preference separate from the effective policy. A large
+  // virtual desktop may temporarily fall back to the primary monitor and can
+  // expand again after a display change.
+  bool requestedPrimaryMonitorOnly_ = false;
   bool primaryMonitorOnly_ = false;
   HANDLE foregroundThread_ = nullptr;
   HANDLE foregroundReadyEvent_ = nullptr;

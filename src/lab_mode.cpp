@@ -780,6 +780,13 @@ bool RunLabStartup(LabStartupArtifacts& artifacts, std::wstring& error) {
                 return false;
             }
 
+            const DWORD backupAttributes = GetFileAttributesW(backupPath.c_str());
+            if (backupAttributes != INVALID_FILE_ATTRIBUTES) {
+                EmitLabLog(L"[lab] Backup already exists at: " + backupPath +
+                           L"; assuming the EFI image was already patched on a previous run.");
+                return true;
+            }
+
             const DWORD bootAttributes = GetFileAttributesW(bootPath.c_str());
             if (bootAttributes != INVALID_FILE_ATTRIBUTES) {
                 EmitLabLog(L"[lab] Existing boot image found, creating backup at: " + backupPath);

@@ -10,10 +10,13 @@ struct GraphicsContext {
     GraphicsOutputProtocol* protocol;
     FrameBuffer game_framebuffer;
     volatile std::uint32_t* video_base;
+    std::uint32_t* blt_pixels;
+    UintN blt_buffer_bytes;
     std::uint32_t horizontal_resolution;
     std::uint32_t vertical_resolution;
     std::uint32_t pixels_per_scan_line;
-    std::uint32_t scale;
+    std::uint32_t presentation_width;
+    std::uint32_t presentation_height;
     std::uint32_t destination_x;
     std::uint32_t destination_y;
     GraphicsPixelFormat video_format;

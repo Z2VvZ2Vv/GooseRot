@@ -89,6 +89,14 @@ using LocateProtocol = Status (AURA67_EFIAPI *)(const Guid*, void*, void**);
 using FreePool = Status (AURA67_EFIAPI *)(void*);
 using SetWatchdogTimer = Status (AURA67_EFIAPI *)(UintN, std::uint64_t, UintN, Char16*);
 
+enum class MemoryType : std::uint32_t {
+    Reserved,
+    LoaderCode,
+    LoaderData,
+};
+
+using AllocatePool = Status (AURA67_EFIAPI *)(MemoryType, UintN, void**);
+
 // The ordering below is part of the UEFI ABI.  Do not remove opaque fields.
 struct BootServices {
     TableHeader header;
@@ -97,7 +105,7 @@ struct BootServices {
     void* allocate_pages;
     void* free_pages;
     void* get_memory_map;
-    void* allocate_pool;
+    AllocatePool allocate_pool;
     FreePool free_pool;
     CreateEvent create_event;
     SetTimer set_timer;
@@ -139,6 +147,7 @@ struct BootServices {
 };
 
 static_assert(sizeof(TableHeader) == 24U);
+static_assert(offsetof(BootServices, allocate_pool) == 64U);
 static_assert(offsetof(BootServices, create_event) == 80U);
 static_assert(offsetof(BootServices, free_pool) == 72U);
 static_assert(offsetof(BootServices, set_timer) == 88U);

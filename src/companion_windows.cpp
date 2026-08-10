@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 namespace gooserot {
@@ -10,6 +11,89 @@ namespace {
 
 constexpr int kPrimaryButtonId = 6701;
 constexpr int kSecondaryButtonId = 6702;
+constexpr UINT kDefaultDpi = 96U;
+
+RECT PrimaryWorkArea() {
+  RECT work{};
+  if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) ||
+      work.right <= work.left || work.bottom <= work.top) {
+    work = {0, 0, std::max(1, GetSystemMetrics(SM_CXSCREEN)),
+            std::max(1, GetSystemMetrics(SM_CYSCREEN))};
+  }
+  return work;
+}
+
+UINT SystemDpi() {
+  HDC screen = GetDC(nullptr);
+  if (!screen) return kDefaultDpi;
+  const int dpi = GetDeviceCaps(screen, LOGPIXELSY);
+  ReleaseDC(nullptr, screen);
+  return dpi > 0 ? static_cast<UINT>(dpi) : kDefaultDpi;
+}
+
+UINT MonitorDpi(HMONITOR monitor) {
+  using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+  static GetDpiForMonitorFn getDpiForMonitor = []() {
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    const FARPROC address = shcore ? GetProcAddress(shcore, "GetDpiForMonitor") : nullptr;
+    GetDpiForMonitorFn function = nullptr;
+    static_assert(sizeof(function) == sizeof(address), "Win32 procedure pointers must fit");
+    std::memcpy(&function, &address, sizeof(function));
+    return function;
+  }();
+  if (getDpiForMonitor && monitor) {
+    UINT dpiX = 0;
+    UINT dpiY = 0;
+    if (SUCCEEDED(getDpiForMonitor(monitor, 0, &dpiX, &dpiY)) && dpiY > 0U) {
+      return dpiY;
+    }
+  }
+  return SystemDpi();
+}
+
+RECT MonitorWorkArea(HMONITOR monitor) {
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (monitor && GetMonitorInfoW(monitor, &info) &&
+      info.rcWork.right > info.rcWork.left && info.rcWork.bottom > info.rcWork.top) {
+    return info.rcWork;
+  }
+  return PrimaryWorkArea();
+}
+
+float LayoutScaleForRect(const RECT& rectangle, UINT dpi) {
+  const float dpiScale = static_cast<float>(std::max(1U, dpi)) /
+                         static_cast<float>(kDefaultDpi);
+  const float logicalWidth = static_cast<float>(std::max(1L, rectangle.right - rectangle.left)) /
+                             dpiScale;
+  const float logicalHeight = static_cast<float>(std::max(1L, rectangle.bottom - rectangle.top)) /
+                              dpiScale;
+  return ResponsiveLayoutScale({0.0f, 0.0f, logicalWidth, logicalHeight}) * dpiScale;
+}
+
+struct BoundsScaleProbe {
+  RECT bounds{};
+  float maximum = 0.0f;
+};
+
+BOOL CALLBACK AccumulateBoundsScale(HMONITOR monitor, HDC, LPRECT, LPARAM data) {
+  auto* probe = reinterpret_cast<BoundsScaleProbe*>(data);
+  if (!probe) return FALSE;
+  probe->maximum = std::max(
+      probe->maximum, LayoutScaleForRect(probe->bounds, MonitorDpi(monitor)));
+  return TRUE;
+}
+
+float MaximumLayoutScaleForBounds(RECT bounds) {
+  if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) {
+    bounds = PrimaryWorkArea();
+  }
+  BoundsScaleProbe probe{bounds, 0.0f};
+  EnumDisplayMonitors(nullptr, &bounds, &AccumulateBoundsScale,
+                      reinterpret_cast<LPARAM>(&probe));
+  if (probe.maximum > 0.0f) return probe.maximum;
+  return LayoutScaleForRect(bounds, SystemDpi());
+}
 
 void CenterWindow(HWND window) {
   RECT rectangle{};
@@ -74,30 +158,76 @@ bool PromptWindow::Show(HINSTANCE instance, const wchar_t* title, const wchar_t*
   cursorWasOverPrimary_ = false;
   moveIndex_ = 0;
 
+  const RECT work = PrimaryWorkArea();
+  layoutScale_ = LayoutScaleForRect(
+      work, MonitorDpi(MonitorFromRect(&work, MONITOR_DEFAULTTOPRIMARY)));
+  const int availableWidth = std::max(1L, work.right - work.left - 24L);
+  const int availableHeight = std::max(1L, work.bottom - work.top - 24L);
+  const int windowWidth = std::min(
+      availableWidth, std::max(420, static_cast<int>(std::lround(620.0f * layoutScale_))));
+  const int windowHeight = std::min(
+      availableHeight, std::max(220, static_cast<int>(std::lround(260.0f * layoutScale_))));
+
   window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"GooseRotPrompt", title,
                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-                            CW_USEDEFAULT, CW_USEDEFAULT, 620, 260, nullptr, nullptr, instance, this);
+                            CW_USEDEFAULT, CW_USEDEFAULT, windowWidth, windowHeight,
+                            nullptr, nullptr, instance, this);
   if (!window_) return false;
   message_ = CreateWindowExW(0, L"STATIC", message, WS_CHILD | WS_VISIBLE | SS_CENTER,
-                             25, 26, 555, 92, window_, nullptr, instance, nullptr);
+                             0, 0, 0, 0, window_, nullptr, instance, nullptr);
   primaryButton_ = CreateWindowExW(0, L"BUTTON", primaryLabel,
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                   90, 150, 140, 34, window_,
+                                   0, 0, 0, 0, window_,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPrimaryButtonId)), instance, nullptr);
   secondaryButton_ = CreateWindowExW(0, L"BUTTON", secondaryLabel,
                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                     390, 150, 140, 34, window_,
+                                     0, 0, 0, 0, window_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSecondaryButtonId)), instance, nullptr);
-  font_ = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  for (HWND control : {message_, primaryButton_, secondaryButton_}) {
-    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
-  }
+  RefreshFont();
+  LayoutControls();
   CenterWindow(window_);
   ShowWindow(window_, SW_SHOWNORMAL);
   UpdateWindow(window_);
   return true;
+}
+
+void PromptWindow::RefreshFont() {
+  const int height = std::max(14, static_cast<int>(std::lround(17.0f * layoutScale_)));
+  HFONT replacement = CreateFontW(-height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (!replacement) return;
+  for (HWND control : {message_, primaryButton_, secondaryButton_}) {
+    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+  }
+  if (font_) DeleteObject(font_);
+  font_ = replacement;
+}
+
+void PromptWindow::LayoutControls() {
+  if (!window_) return;
+  RECT client{};
+  GetClientRect(window_, &client);
+  const auto scaled = [this](int value) {
+    return std::max(1, static_cast<int>(std::lround(value * layoutScale_)));
+  };
+  const int width = std::max(1L, client.right - client.left);
+  const int height = std::max(1L, client.bottom - client.top);
+  const int margin = scaled(24);
+  const int buttonWidth = std::min(scaled(140), std::max(100, (width - margin * 3) / 2));
+  const int buttonHeight = scaled(34);
+  const int buttonY = std::max(scaled(104), height - buttonHeight - scaled(22));
+  if (message_) {
+    MoveWindow(message_, margin, scaled(18), std::max(1, width - margin * 2),
+               std::max(scaled(54), buttonY - scaled(30)), TRUE);
+  }
+  if (primaryButton_) {
+    MoveWindow(primaryButton_, margin, buttonY, buttonWidth, buttonHeight, TRUE);
+  }
+  if (secondaryButton_) {
+    MoveWindow(secondaryButton_, width - margin - buttonWidth, buttonY,
+               buttonWidth, buttonHeight, TRUE);
+  }
 }
 
 void PromptWindow::Tick(double logicalTime) {
@@ -135,14 +265,19 @@ void PromptWindow::MovePrimaryButton() {
   GetWindowRect(primaryButton_, &button);
   MapWindowPoints(HWND_DESKTOP, window_, reinterpret_cast<POINT*>(&button), 2);
   GetClientRect(window_, &client);
-  constexpr std::array<POINT, 2> offsets = {{{100, 0}, {-100, 0}}};
+  const int movement = std::max(48, static_cast<int>(std::lround(100.0f * layoutScale_)));
+  const std::array<POINT, 2> offsets = {{{movement, 0}, {-movement, 0}}};
   POINT offset = offsets[static_cast<std::size_t>(moveIndex_++) % offsets.size()];
   int x = button.left + offset.x;
   int y = button.top + offset.y;
   const int width = button.right - button.left;
   const int height = button.bottom - button.top;
-  x = std::clamp(x, 12, std::max(12, static_cast<int>(client.right) - width - 12));
-  y = std::clamp(y, 118, std::max(118, static_cast<int>(client.bottom) - height - 10));
+  const int edge = std::max(8, static_cast<int>(std::lround(12.0f * layoutScale_)));
+  const int minimumY = std::max(edge, static_cast<int>(std::lround(104.0f * layoutScale_)));
+  x = std::clamp(x, edge,
+                 std::max(edge, static_cast<int>(client.right) - width - edge));
+  y = std::clamp(y, minimumY,
+                 std::max(minimumY, static_cast<int>(client.bottom) - height - edge));
   SetWindowPos(primaryButton_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
@@ -194,6 +329,38 @@ LRESULT PromptWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_CLOSE:
       Finish(PromptResult::Dismissed);
       return 0;
+    case WM_SIZE:
+      LayoutControls();
+      return 0;
+    case WM_DPICHANGED:
+      if (lParam) {
+        const RECT& suggested = *reinterpret_cast<const RECT*>(lParam);
+        const HMONITOR monitor = MonitorFromRect(&suggested, MONITOR_DEFAULTTONEAREST);
+        const RECT work = MonitorWorkArea(monitor);
+        const UINT dpi = LOWORD(wParam) > 0U ? LOWORD(wParam) : MonitorDpi(monitor);
+        layoutScale_ = LayoutScaleForRect(work, dpi);
+        const int availableWidth = std::max(1L, work.right - work.left - 24L);
+        const int availableHeight = std::max(1L, work.bottom - work.top - 24L);
+        const int width = std::min(
+            availableWidth,
+            std::max(420, static_cast<int>(std::lround(620.0f * layoutScale_))));
+        const int height = std::min(
+            availableHeight,
+            std::max(220, static_cast<int>(std::lround(260.0f * layoutScale_))));
+        const int x = std::clamp(
+            static_cast<int>(suggested.left), static_cast<int>(work.left),
+            std::max(static_cast<int>(work.left), static_cast<int>(work.right) - width));
+        const int y = std::clamp(
+            static_cast<int>(suggested.top), static_cast<int>(work.top),
+            std::max(static_cast<int>(work.top), static_cast<int>(work.bottom) - height));
+        SetWindowPos(window_, nullptr, x, y, width, height,
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+        RefreshFont();
+        LayoutControls();
+        cursorWasOverPrimary_ = false;
+        return 0;
+      }
+      break;
     case WM_DESTROY:
       window_ = nullptr;
       message_ = nullptr;
@@ -229,11 +396,27 @@ bool NotepadWindow::Show(HINSTANCE instance, const POINT* anchor) {
   pendingRefusalReports_ = 0;
   pendingMinimiseReports_ = 0;
   respawnQueued_ = false;
+  RECT work = PrimaryWorkArea();
+  if (anchor) {
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromPoint(*anchor, MONITOR_DEFAULTTONEAREST), &monitor)) {
+      work = monitor.rcWork;
+    }
+  }
+  layoutScale_ = LayoutScaleForRect(
+      work, MonitorDpi(MonitorFromRect(&work, MONITOR_DEFAULTTOPRIMARY)));
+  const int availableWidth = std::max(1L, work.right - work.left - 24L);
+  const int availableHeight = std::max(1L, work.bottom - work.top - 24L);
+  const int windowWidth = std::min(
+      availableWidth, std::max(420, static_cast<int>(std::lround(650.0f * layoutScale_))));
+  const int windowHeight = std::min(
+      availableHeight, std::max(250, static_cast<int>(std::lround(420.0f * layoutScale_))));
   // WS_OVERLAPPEDWINDOW minus WS_MINIMIZEBOX and WS_MAXIMIZEBOX: the brainrot
   // stream is the show, so it does not get to hide as a taskbar button.
   window_ = CreateWindowExW(WS_EX_APPWINDOW, L"GooseRotNotepad", L"AURA INSPECTION - case 67 - working copy",
                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME,
-                            CW_USEDEFAULT, CW_USEDEFAULT, 650, 420,
+                            CW_USEDEFAULT, CW_USEDEFAULT, windowWidth, windowHeight,
                             nullptr, nullptr, instance, this);
   if (!window_) return false;
   if (HMENU systemMenu = GetSystemMenu(window_, FALSE)) {
@@ -245,10 +428,7 @@ bool NotepadWindow::Show(HINSTANCE instance, const POINT* anchor) {
                           WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE |
                               ES_AUTOVSCROLL | ES_READONLY,
                           0, 0, 0, 0, window_, nullptr, instance, nullptr);
-  font_ = CreateFontW(-19, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                      FIXED_PITCH | FF_MODERN, L"Consolas");
-  SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+  RefreshFont();
   if (anchor) {
     PlaceWindowNear(window_, *anchor);
   } else {
@@ -257,6 +437,17 @@ bool NotepadWindow::Show(HINSTANCE instance, const POINT* anchor) {
   ShowWindow(window_, SW_SHOWNORMAL);
   UpdateWindow(window_);
   return true;
+}
+
+void NotepadWindow::RefreshFont() {
+  const int height = std::max(15, static_cast<int>(std::lround(19.0f * layoutScale_)));
+  HFONT replacement = CreateFontW(-height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+  if (!replacement) return;
+  if (edit_) SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(replacement), TRUE);
+  if (font_) DeleteObject(font_);
+  font_ = replacement;
 }
 
 void NotepadWindow::SetText(const std::wstring& text) {
@@ -399,6 +590,20 @@ LRESULT NotepadWindow::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
       }
       if (edit_) MoveWindow(edit_, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
       return 0;
+    case WM_DPICHANGED:
+      if (lParam) {
+        const RECT& suggested = *reinterpret_cast<const RECT*>(lParam);
+        const HMONITOR monitor = MonitorFromRect(&suggested, MONITOR_DEFAULTTONEAREST);
+        const RECT work = MonitorWorkArea(monitor);
+        const UINT dpi = LOWORD(wParam) > 0U ? LOWORD(wParam) : MonitorDpi(monitor);
+        layoutScale_ = LayoutScaleForRect(work, dpi);
+        SetWindowPos(window_, nullptr, suggested.left, suggested.top,
+                     suggested.right - suggested.left, suggested.bottom - suggested.top,
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+        RefreshFont();
+        return 0;
+      }
+      break;
     case WM_CLOSE:
       RefuseClose();
       return 0;
@@ -631,8 +836,8 @@ void OwnedWindowsApps::CloseAll() {
 namespace {
 
 constexpr int kPopupCloseButtonId = 6711;
-constexpr int kPopupWidth = 348;
-constexpr int kPopupHeight = 186;
+constexpr int kPopupBaseWidth = 348;
+constexpr int kPopupBaseHeight = 186;
 
 // One coherent notice per entry. Cycling a title, a body and a button through
 // three independent tables produced combinations that read as noise; stepping a
@@ -707,24 +912,87 @@ ATOM PopupSwarm::Register(HINSTANCE instance) {
 
 void PopupSwarm::SetBounds(RECT bounds) {
   if (!slotOrder_.empty() && EqualRect(&bounds_, &bounds)) return;
-  // SetBounds is a setup operation. Rebuilding a live grid would invalidate
-  // every occupied slot, so retain the current geometry until cleanup.
-  if (!popups_.empty()) return;
   bounds_ = bounds;
+  RebuildLayout();
+}
+
+void PopupSwarm::SetCapacity(std::size_t capacity) {
+  const std::size_t clamped = std::clamp<std::size_t>(capacity, 1U, kMaximumPopups);
+  if (clamped == capacity_) return;
+  capacity_ = clamped;
+  while (popups_.size() > capacity_) CloseNewest();
+  RebuildLayout();
+}
+
+void PopupSwarm::RebuildLayout() {
   const int boundsWidth = std::max(1L, bounds_.right - bounds_.left);
   const int boundsHeight = std::max(1L, bounds_.bottom - bounds_.top);
-  const double aspect = static_cast<double>(boundsWidth) /
-                        static_cast<double>(boundsHeight);
-  columns_ = std::max(
-      1, static_cast<int>(std::ceil(std::sqrt(
-             static_cast<double>(kMaximumPopups) * aspect))));
-  rows_ = std::max(
-      1, static_cast<int>((kMaximumPopups + static_cast<std::size_t>(columns_) - 1U) /
-                          static_cast<std::size_t>(columns_)));
+  layoutScale_ = MaximumLayoutScaleForBounds(bounds_);
+  popupWidth_ = std::max(220, static_cast<int>(std::lround(
+                                       kPopupBaseWidth * layoutScale_)));
+  popupHeight_ = std::max(126, static_cast<int>(std::lround(
+                                        kPopupBaseHeight * layoutScale_)));
+  int bestColumns = 1;
+  int bestRows = static_cast<int>(capacity_);
+  bool foundNonOverlapping = false;
+  double bestAspectError = std::numeric_limits<double>::max();
+  double bestFitScale = -1.0;
+  std::size_t bestUnused = std::numeric_limits<std::size_t>::max();
+  const double popupAspect = static_cast<double>(popupWidth_) /
+                             static_cast<double>(popupHeight_);
+  for (std::size_t candidateColumns = 1U; candidateColumns <= capacity_;
+       ++candidateColumns) {
+    const std::size_t candidateRows =
+        (capacity_ + candidateColumns - 1U) / candidateColumns;
+    const double cellWidth = static_cast<double>(boundsWidth) /
+                             static_cast<double>(candidateColumns);
+    const double cellHeight = static_cast<double>(boundsHeight) /
+                              static_cast<double>(candidateRows);
+    const bool nonOverlapping = cellWidth >= popupWidth_ && cellHeight >= popupHeight_;
+    const double cellAspect = cellWidth / std::max(1.0, cellHeight);
+    const double aspectError = std::fabs(std::log(cellAspect / popupAspect));
+    const double fitScale = std::min(cellWidth / popupWidth_, cellHeight / popupHeight_);
+    const std::size_t unused = candidateColumns * candidateRows - capacity_;
+    const bool betterNonOverlapping =
+        nonOverlapping &&
+        (!foundNonOverlapping || aspectError < bestAspectError - 0.000001 ||
+         (std::fabs(aspectError - bestAspectError) <= 0.000001 && unused < bestUnused));
+    const bool betterFallback =
+        !nonOverlapping && !foundNonOverlapping &&
+        (fitScale > bestFitScale + 0.000001 ||
+         (std::fabs(fitScale - bestFitScale) <= 0.000001 &&
+          (aspectError < bestAspectError - 0.000001 ||
+           (std::fabs(aspectError - bestAspectError) <= 0.000001 && unused < bestUnused))));
+    if (!betterNonOverlapping && !betterFallback) continue;
+    bestColumns = static_cast<int>(candidateColumns);
+    bestRows = static_cast<int>(candidateRows);
+    foundNonOverlapping = nonOverlapping || foundNonOverlapping;
+    bestAspectError = aspectError;
+    bestFitScale = fitScale;
+    bestUnused = unused;
+  }
+  columns_ = bestColumns;
+  rows_ = bestRows;
   slotOrder_.clear();
   slotTaken_.assign(static_cast<std::size_t>(columns_) *
                         static_cast<std::size_t>(rows_),
                     0U);
+  EnsureSlotOrder();
+  for (const std::unique_ptr<Popup>& popup : popups_) {
+    popup->slot = AcquireSlot();
+    if (popup->slot < 0) continue;
+    popup->to = SlotPosition(popup->slot);
+    const POINT centre{popup->to.x + popupWidth_ / 2,
+                       popup->to.y + popupHeight_ / 2};
+    const HMONITOR monitor = MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST);
+    popup->dpi = MonitorDpi(monitor);
+    popup->layoutScale = LayoutScaleForRect(bounds_, popup->dpi);
+    popup->width = std::max(
+        220, static_cast<int>(std::lround(kPopupBaseWidth * popup->layoutScale)));
+    popup->height = std::max(
+        126, static_cast<int>(std::lround(kPopupBaseHeight * popup->layoutScale)));
+    LayoutPopup(*popup);
+  }
 }
 
 POINT PopupSwarm::SlotPosition(int slot) const {
@@ -738,12 +1006,12 @@ POINT PopupSwarm::SlotPosition(int slot) const {
   const int centreY = static_cast<int>(bounds_.top) +
                       static_cast<int>((static_cast<double>(row) + 0.5) * boundsHeight /
                                        static_cast<double>(rows_));
-  return {std::clamp(centreX - kPopupWidth / 2, static_cast<int>(bounds_.left),
+  return {std::clamp(centreX - popupWidth_ / 2, static_cast<int>(bounds_.left),
                      std::max(static_cast<int>(bounds_.left),
-                              static_cast<int>(bounds_.right) - kPopupWidth)),
-          std::clamp(centreY - kPopupHeight / 2, static_cast<int>(bounds_.top),
+                              static_cast<int>(bounds_.right) - popupWidth_)),
+          std::clamp(centreY - popupHeight_ / 2, static_cast<int>(bounds_.top),
                      std::max(static_cast<int>(bounds_.top),
-                              static_cast<int>(bounds_.bottom) - kPopupHeight))};
+                              static_cast<int>(bounds_.bottom) - popupHeight_))};
 }
 
 void PopupSwarm::EnsureSlotOrder() {
@@ -758,8 +1026,8 @@ void PopupSwarm::EnsureSlotOrder() {
 
   const auto centre = [this](int slot) {
     const POINT topLeft = SlotPosition(slot);
-    return POINT{topLeft.x + kPopupWidth / 2,
-                 topLeft.y + kPopupHeight / 2};
+    return POINT{topLeft.x + popupWidth_ / 2,
+                 topLeft.y + popupHeight_ / 2};
   };
   const auto distanceSquared = [](POINT left, POINT right) {
     const double dx = static_cast<double>(left.x - right.x);
@@ -832,6 +1100,55 @@ double PopupSwarm::SpawnInterval(double logicalTime) const {
   return 0.90 - eased * 0.58;
 }
 
+void PopupSwarm::LayoutPopup(Popup& popup) {
+  if (!popup.window) return;
+  const auto scaled = [&popup](int value) {
+    return std::max(1, static_cast<int>(std::lround(value * popup.layoutScale)));
+  };
+  const int windowX = popup.to.x + (popupWidth_ - popup.width) / 2;
+  const int windowY = popup.to.y + (popupHeight_ - popup.height) / 2;
+  SetWindowPos(popup.window, HWND_TOPMOST, windowX, windowY,
+               popup.width, popup.height, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+  RECT client{};
+  GetClientRect(popup.window, &client);
+  const int clientWidth = std::max(1L, client.right - client.left);
+  const int clientHeight = std::max(1L, client.bottom - client.top);
+  const int horizontalMargin = std::min(scaled(16), std::max(1, clientWidth / 6));
+  const int buttonHeight = std::min(scaled(32), std::max(20, clientHeight / 3));
+  const int bottomMargin = std::min(scaled(10), std::max(2, clientHeight / 12));
+  const int buttonY = std::max(1, clientHeight - buttonHeight - bottomMargin);
+  if (popup.label) {
+    const int labelY = std::min(scaled(16), std::max(1, buttonY / 3));
+    const int labelHeight = std::max(1, buttonY - labelY - scaled(8));
+    MoveWindow(popup.label, horizontalMargin, labelY,
+               std::max(1, clientWidth - horizontalMargin * 2), labelHeight, TRUE);
+  }
+  if (popup.button) {
+    const int buttonWidth = std::min(scaled(140),
+                                     std::max(1, clientWidth - horizontalMargin * 2));
+    MoveWindow(popup.button, (clientWidth - buttonWidth) / 2, buttonY,
+               buttonWidth, buttonHeight, TRUE);
+  }
+  const int fontHeight = scaled(16);
+  if (popup.font && popup.fontHeight == fontHeight) {
+    for (HWND control : {popup.label, popup.button}) {
+      if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(popup.font), TRUE);
+    }
+    return;
+  }
+  HFONT newFont = CreateFontW(-fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (newFont) {
+    for (HWND control : {popup.label, popup.button}) {
+      if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(newFont), TRUE);
+    }
+    if (popup.font) DeleteObject(popup.font);
+    popup.font = newFont;
+    popup.fontHeight = fontHeight;
+  }
+}
+
 bool PopupSwarm::CreatePopup(HINSTANCE instance) {
   if (AtCap() || !Register(instance)) return false;
   if (bounds_.right <= bounds_.left || bounds_.bottom <= bounds_.top) {
@@ -846,31 +1163,37 @@ bool PopupSwarm::CreatePopup(HINSTANCE instance) {
   popup->owner = this;
   popup->slot = slot;
   popup->to = SlotPosition(slot);
+  const POINT centre{popup->to.x + popupWidth_ / 2,
+                     popup->to.y + popupHeight_ / 2};
+  const HMONITOR monitor = MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST);
+  popup->dpi = MonitorDpi(monitor);
+  popup->layoutScale = LayoutScaleForRect(bounds_, popup->dpi);
+  popup->width = std::max(
+      220, static_cast<int>(std::lround(kPopupBaseWidth * popup->layoutScale)));
+  popup->height = std::max(
+      126, static_cast<int>(std::lround(kPopupBaseHeight * popup->layoutScale)));
 
   const std::size_t index = static_cast<std::size_t>(spawnCounter_);
   const NoticeText& notice = kNotices[index % kNotices.size()];
   popup->window = CreateWindowExW(
       WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
       L"GooseRotPopup", notice.title,
-      WS_POPUP | WS_CAPTION | WS_SYSMENU, popup->to.x, popup->to.y,
-      kPopupWidth, kPopupHeight, nullptr, nullptr, instance, popup.get());
+      WS_POPUP | WS_CAPTION | WS_SYSMENU,
+      popup->to.x + (popupWidth_ - popup->width) / 2,
+      popup->to.y + (popupHeight_ - popup->height) / 2,
+      popup->width, popup->height, nullptr, nullptr, instance, popup.get());
   if (!popup->window) {
     ReleaseSlot(slot);
     return false;
   }
-  popup->label = CreateWindowExW(0, L"STATIC", notice.body, WS_CHILD | WS_VISIBLE | SS_CENTER, 16,
-                                 20, kPopupWidth - 40, 74, popup->window, nullptr, instance,
+  popup->label = CreateWindowExW(0, L"STATIC", notice.body, WS_CHILD | WS_VISIBLE | SS_CENTER, 0,
+                                 0, 0, 0, popup->window, nullptr, instance,
                                  nullptr);
   popup->button = CreateWindowExW(
       0, L"BUTTON", notice.button, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-      kPopupWidth / 2 - 70, 104, 140, 32, popup->window,
+      0, 0, 0, 0, popup->window,
       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPopupCloseButtonId)), instance, nullptr);
-  popup->font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-  for (HWND control : {popup->label, popup->button}) {
-    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(popup->font), TRUE);
-  }
+  LayoutPopup(*popup);
   ShowWindow(popup->window, SW_SHOWNOACTIVATE);
   UpdateWindow(popup->window);
   popups_.push_back(std::move(popup));
@@ -906,9 +1229,14 @@ void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTi
   ReapClosed();
 
   const std::size_t rawScheduled = DesiredPopupCount(logicalTime);
+  // Capacity is a ceiling, not a time dilation. Keeping the original early
+  // beats means even the smallest budget still receives the first notice when
+  // the story schedules it, then simply plateaus sooner.
+  const std::size_t scaledScheduled = std::min(rawScheduled, capacity_);
   const std::size_t dismissed = static_cast<std::size_t>(
-      std::clamp(permanentDismissals_, 0, static_cast<int>(kMaximumPopups)));
-  const std::size_t scheduled = rawScheduled - std::min(rawScheduled, dismissed);
+      std::clamp(permanentDismissals_, 0, static_cast<int>(capacity_)));
+  const std::size_t scheduled = scaledScheduled -
+                                std::min(scaledScheduled, dismissed);
   if (closing_) pendingSpawns_ = 0;
 
   if (!closing_) {
@@ -916,7 +1244,7 @@ void PopupSwarm::Tick(HINSTANCE instance, std::mt19937& random, double logicalTi
     if (pendingSpawns_ > 0) {
       target = std::max(
           target,
-          std::min(kMaximumPopups,
+          std::min(capacity_,
                    popups_.size() + static_cast<std::size_t>(pendingSpawns_)));
     }
     const bool due = nextSpawnAt_ < 0.0 || logicalTime >= nextSpawnAt_;
@@ -955,10 +1283,10 @@ void PopupSwarm::RequestClose(Popup& popup) {
     // Early paperwork behaves like an ordinary window: closing it is final and
     // has no sound, glitch, refusal or replacement side effect.
     permanentDismissals_ = std::min(
-        static_cast<int>(kMaximumPopups), permanentDismissals_ + 1);
+        static_cast<int>(capacity_), permanentDismissals_ + 1);
   } else {
     ++closeAttempts_;
-    pendingSpawns_ = std::min(static_cast<int>(kMaximumPopups),
+    pendingSpawns_ = std::min(static_cast<int>(capacity_),
                               pendingSpawns_ + 2);
   }
   popup.dead = true;
@@ -1022,6 +1350,31 @@ LRESULT PopupSwarm::HandleMessage(Popup& popup, HWND window, UINT message, WPARA
     case WM_CLOSE:
       RequestClose(popup);
       return 0;
+    case WM_DPICHANGED:
+      if (lParam) {
+        const RECT& suggested = *reinterpret_cast<const RECT*>(lParam);
+        const HMONITOR monitor = MonitorFromRect(&suggested, MONITOR_DEFAULTTONEAREST);
+        const RECT work = MonitorWorkArea(monitor);
+        popup.dpi = LOWORD(wParam) > 0U ? LOWORD(wParam) : MonitorDpi(monitor);
+        popup.layoutScale = LayoutScaleForRect(bounds_, popup.dpi);
+        popup.width = std::max(
+            220, static_cast<int>(std::lround(kPopupBaseWidth * popup.layoutScale)));
+        popup.height = std::max(
+            126, static_cast<int>(std::lround(kPopupBaseHeight * popup.layoutScale)));
+        const int windowX = std::clamp(
+            static_cast<int>(suggested.left), static_cast<int>(work.left),
+            std::max(static_cast<int>(work.left),
+                     static_cast<int>(work.right) - popup.width));
+        const int windowY = std::clamp(
+            static_cast<int>(suggested.top), static_cast<int>(work.top),
+            std::max(static_cast<int>(work.top),
+                     static_cast<int>(work.bottom) - popup.height));
+        popup.to.x = windowX - (popupWidth_ - popup.width) / 2;
+        popup.to.y = windowY - (popupHeight_ - popup.height) / 2;
+        LayoutPopup(popup);
+        return 0;
+      }
+      break;
     case WM_DESTROY:
       popup.window = nullptr;
       popup.label = nullptr;

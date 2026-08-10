@@ -56,6 +56,8 @@ class GooseRotApp {
   void UpdateCursorChaos();
   void UpdateToasts();
   void UpdateGlitch(double logicalDelta);
+  void UpdateExperienceBudget(bool force = false);
+  void TrimSceneToBudget();
   void EnsureGooseCount();
   void ScheduleCursorAction(bool userTriggered);
   void ScheduleWindowAction();
@@ -82,6 +84,7 @@ class GooseRotApp {
   bool LaunchBootPreview();
   RenderState BuildRenderState() const;
   Vec2 RandomCanvasPoint(float margin);
+  Vec2 RandomCanvasPoint(float margin, std::mt19937& generator);
   float GraffitiProgress() const;
   std::size_t DesiredGooseCount() const;
 
@@ -104,8 +107,14 @@ class GooseRotApp {
   TaskbarGuard taskbarGuard_;
   WindowsKeyGuard windowsKeyGuard_;
   std::mt19937 random_;
+  std::mt19937 visualRandom_;
   std::mt19937 audioRandom_;
   std::mt19937 keyboardRandom_;
+
+  PerformanceTier performanceTier_ = PerformanceTier::Medium;
+  ExperienceBudget experienceBudget_{};
+  int budgetCanvasWidth_ = 0;
+  int budgetCanvasHeight_ = 0;
 
   LARGE_INTEGER performanceFrequency_{};
   LARGE_INTEGER lastCounter_{};

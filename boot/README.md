@@ -2,7 +2,9 @@
 
 This directory contains the deterministic mini-game core, its 640×360 software
 renderer, fixed-memory helpers, core tests, a safe windowed Win32 Preview, and
-experimental freestanding adapters for UEFI x64 and legacy BIOS.
+experimental freestanding adapters for UEFI x64 and legacy BIOS. The Preview
+fits continuously to its client area and opens at roughly 80% of the available
+work area, so it remains usable on both compact and high-resolution displays.
 
 The firmware artifacts compile, pass the static layout checks, and now boot in
 an emulator: both targets were run under QEMU 8.2.2 (TCG, no KVM) with OVMF
@@ -163,7 +165,11 @@ stops the keypress that caused the crash from skipping the panel.
 - framebuffer storage belongs to the platform and must be exactly 640×360,
   32-bit BGRA or RGBA;
 - the Win32 Preview uses one static 640×360 pixel array allocated before entry
-  to the message loop.
+  to the message loop;
+- every platform chooses detailed or reduced presentation independently of game
+  state. Reduced presentation removes only background furniture, scrolling POST
+  text, ground decoration, dust and ROOT after-images; the goose, hazards,
+  pickups, popups, HUD and panic screen are always drawn.
 
 Runs never re-seed the generator, so a whole session — crash, restart, crash
 again — replays identically from one seed while each individual run still gets a
@@ -196,8 +202,11 @@ The UEFI x64 adapter stays in Boot Services and uses GOP, Simple Text Input, a
 periodic timer, and `ResetSystem` only for the reset the panic screen offers.
 If the active GOP mode is smaller than 640×360 it enumerates modes, selects the
 smallest compatible one, and restores the original mode on return. Direct
-32-bit modes use integer scaling and letterboxing; a Blt-only fallback is
-centered at 1:1 because GOP Blt does not scale. Simple Text Input has no key-up
+32-bit modes use continuous nearest-neighbour fitting and letterboxing;
+presentation surfaces above 1280×720 automatically use reduced decorative
+detail. A Blt-only GOP receives a Boot Services software-scaling buffer bounded
+to 1920×1080 (about 8 MiB), with a centered 1:1 fallback if allocation is not
+available. Simple Text Input has no key-up
 events, so directional keys use a bounded repeat lease and one explicit Escape
 press returns to firmware. A bounded `GetTime` catch-up compensates for timer
 event coalescing. The inherited image watchdog is disabled before the game.
@@ -208,7 +217,9 @@ Stage 1 uses EDD read command `INT 13h/AH=42h` only to load its own stage 2; it
 contains no disk-write path and retries its fixed 127-sector EDD transfer up to
 three times. Stage 2 requires at least 2 MiB RAM, A20, VBE 2.0, and a linear 32-bit
 direct-color mode of at least 640×360 with 8-bit RGB/BGR channels and a
-framebuffer at or above 2 MiB. It enters 32-bit protected mode, assumes a PS/2
+framebuffer at or above 2 MiB. BIOS presentations use the same continuous
+nearest-neighbour fit and 1280×720 decorative-detail budget as UEFI. It enters
+32-bit protected mode, assumes a PS/2
 keyboard or firmware legacy emulation using scan-code set 1, and derives 30 Hz
 ticks by polling PIT channel 2 without enabling the speaker.
 

@@ -1,4 +1,5 @@
 #include "game/game.h"
+#include "common/render_policy.h"
 
 #include <windows.h>
 
@@ -20,11 +21,46 @@ aura67::FrameBuffer g_framebuffer{
     aura67::kFrameHeight,
     aura67::kFrameWidth * aura67::kBytesPerPixel,
     aura67::PixelFormat::Bgra8888,
+    aura67::RenderDetail::Detailed,
 };
 std::uint32_t g_held = 0U;
 std::uint32_t g_pressed = 0U;
 std::uint32_t g_released = 0U;
 bool g_running = true;
+std::uint32_t g_logical_processors = 0U;
+std::uint64_t g_physical_memory_bytes = 0U;
+
+void detect_machine_capabilities() noexcept {
+    SYSTEM_INFO system_info{};
+    GetNativeSystemInfo(&system_info);
+    g_logical_processors =
+        static_cast<std::uint32_t>(system_info.dwNumberOfProcessors);
+
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = static_cast<DWORD>(sizeof(memory));
+    if (GlobalMemoryStatusEx(&memory) != FALSE) {
+        g_physical_memory_bytes =
+            static_cast<std::uint64_t>(memory.ullTotalPhys);
+    }
+}
+
+void update_render_detail_for_client(HWND window) noexcept {
+    RECT client{};
+    if (GetClientRect(window, &client) == FALSE) {
+        g_framebuffer.detail = aura67::RenderDetail::Reduced;
+        return;
+    }
+    const int client_width = client.right - client.left;
+    const int client_height = client.bottom - client.top;
+    const aura67::PresentationSize fitted = aura67::fit_frame_to_bounds(
+        client_width > 0 ? static_cast<std::uint32_t>(client_width) : 0U,
+        client_height > 0 ? static_cast<std::uint32_t>(client_height) : 0U);
+    g_framebuffer.detail = aura67::render_detail_for_machine_and_surface(
+        g_logical_processors,
+        g_physical_memory_bytes,
+        fitted.width,
+        fitted.height);
+}
 
 std::uint32_t button_for_key(WPARAM key) noexcept {
     switch (key) {
@@ -57,22 +93,15 @@ void paint_frame(HWND window) noexcept {
     const int client_height = client.bottom - client.top;
     FillRect(device, &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
 
-    int destination_width = client_width;
-    int destination_height = MulDiv(client_width, static_cast<int>(aura67::kFrameHeight),
-                                    static_cast<int>(aura67::kFrameWidth));
-    if (destination_height > client_height) {
-        destination_height = client_height;
-        destination_width = MulDiv(client_height, static_cast<int>(aura67::kFrameWidth),
-                                   static_cast<int>(aura67::kFrameHeight));
+    const aura67::PresentationSize fitted = aura67::fit_frame_to_bounds(
+        client_width > 0 ? static_cast<std::uint32_t>(client_width) : 0U,
+        client_height > 0 ? static_cast<std::uint32_t>(client_height) : 0U);
+    if (fitted.width == 0U || fitted.height == 0U) {
+        EndPaint(window, &paint);
+        return;
     }
-    const int integer_scale = client_width / static_cast<int>(aura67::kFrameWidth) <
-                                  client_height / static_cast<int>(aura67::kFrameHeight)
-                              ? client_width / static_cast<int>(aura67::kFrameWidth)
-                              : client_height / static_cast<int>(aura67::kFrameHeight);
-    if (integer_scale >= 1) {
-        destination_width = static_cast<int>(aura67::kFrameWidth) * integer_scale;
-        destination_height = static_cast<int>(aura67::kFrameHeight) * integer_scale;
-    }
+    const int destination_width = static_cast<int>(fitted.width);
+    const int destination_height = static_cast<int>(fitted.height);
 
     const int destination_x = (client_width - destination_width) / 2;
     const int destination_y = (client_height - destination_height) / 2;
@@ -109,6 +138,7 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM w_param, LPA
         paint_frame(window);
         return 0;
     case WM_SIZE:
+        update_render_detail_for_client(window);
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_KEYDOWN:
@@ -164,20 +194,37 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show_command) {
         return 1;
     }
 
+    detect_machine_capabilities();
+
     RECT work_area{};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0U, &work_area, 0U);
-    int scale = 2;
-    RECT desired{0, 0,
-                 static_cast<LONG>(aura67::kFrameWidth * static_cast<std::uint32_t>(scale)),
-                 static_cast<LONG>(aura67::kFrameHeight * static_cast<std::uint32_t>(scale))};
-    AdjustWindowRect(&desired, WS_OVERLAPPEDWINDOW, FALSE);
-    if (desired.right - desired.left > work_area.right - work_area.left ||
-        desired.bottom - desired.top > work_area.bottom - work_area.top) {
-        scale = 1;
-        desired = RECT{0, 0, static_cast<LONG>(aura67::kFrameWidth),
-                       static_cast<LONG>(aura67::kFrameHeight)};
-        AdjustWindowRect(&desired, WS_OVERLAPPEDWINDOW, FALSE);
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0U, &work_area, 0U) == FALSE) {
+        work_area.right = GetSystemMetrics(SM_CXSCREEN);
+        work_area.bottom = GetSystemMetrics(SM_CYSCREEN);
     }
+    const int work_width = work_area.right - work_area.left;
+    const int work_height = work_area.bottom - work_area.top;
+    const int outer_limit_width = work_width > 0 ? work_width * 4 / 5 : 1;
+    const int outer_limit_height = work_height > 0 ? work_height * 4 / 5 : 1;
+
+    RECT reference{0, 0, static_cast<LONG>(aura67::kFrameWidth),
+                   static_cast<LONG>(aura67::kFrameHeight)};
+    AdjustWindowRect(&reference, WS_OVERLAPPEDWINDOW, FALSE);
+    const int chrome_width = (reference.right - reference.left) -
+                             static_cast<int>(aura67::kFrameWidth);
+    const int chrome_height = (reference.bottom - reference.top) -
+                              static_cast<int>(aura67::kFrameHeight);
+    const int client_limit_width = outer_limit_width > chrome_width
+                                       ? outer_limit_width - chrome_width
+                                       : 1;
+    const int client_limit_height = outer_limit_height > chrome_height
+                                        ? outer_limit_height - chrome_height
+                                        : 1;
+    const aura67::PresentationSize initial_client = aura67::fit_frame_to_bounds(
+        static_cast<std::uint32_t>(client_limit_width),
+        static_cast<std::uint32_t>(client_limit_height));
+    RECT desired{0, 0, static_cast<LONG>(initial_client.width),
+                 static_cast<LONG>(initial_client.height)};
+    AdjustWindowRect(&desired, WS_OVERLAPPEDWINDOW, FALSE);
     const int window_width = desired.right - desired.left;
     const int window_height = desired.bottom - desired.top;
     const int window_x = work_area.left + ((work_area.right - work_area.left) - window_width) / 2;
@@ -200,6 +247,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show_command) {
         return 2;
     }
 
+    update_render_detail_for_client(window);
     aura67::game_initialize(&g_game, 67U);
     aura67::game_render(g_game, g_framebuffer);
     ShowWindow(window, show_command);
@@ -270,4 +318,3 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show_command) {
 
     return 0;
 }
-

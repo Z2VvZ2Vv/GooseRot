@@ -14,6 +14,14 @@ enum class PixelFormat : std::uint8_t {
     Rgba8888,
 };
 
+// Rendering detail is presentation policy, not game state. Platforms can
+// reduce decorative work without changing simulation, collision visibility or
+// deterministic replay.
+enum class RenderDetail : std::uint8_t {
+    Detailed,
+    Reduced,
+};
+
 // The owner supplies the storage. The game never allocates or frees it.
 struct FrameBuffer {
     std::uint8_t* base;
@@ -21,6 +29,7 @@ struct FrameBuffer {
     std::uint32_t height;
     std::uint32_t stride_bytes;
     PixelFormat format;
+    RenderDetail detail = RenderDetail::Detailed;
 };
 
 inline bool framebuffer_is_valid(const FrameBuffer& framebuffer) noexcept {
@@ -31,4 +40,3 @@ inline bool framebuffer_is_valid(const FrameBuffer& framebuffer) noexcept {
 }
 
 } // namespace aura67
-

@@ -32,6 +32,8 @@ class PromptWindow {
   LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
   void Finish(PromptResult result);
   void MovePrimaryButton();
+  void LayoutControls();
+  void RefreshFont();
 
   HWND window_ = nullptr;
   HWND message_ = nullptr;
@@ -44,6 +46,7 @@ class PromptWindow {
   double shownAt_ = 0.0;
   double nextAutomaticMove_ = 0.0;
   int moveIndex_ = 0;
+  float layoutScale_ = 1.0f;
 };
 
 // The inspector's case file: a text window that belongs to GooseRot, opens
@@ -80,6 +83,7 @@ class NotepadWindow {
   LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
   void RefuseClose();
   void RefuseMinimise();
+  void RefreshFont();
 
   HINSTANCE instance_ = nullptr;
   HWND window_ = nullptr;
@@ -88,6 +92,7 @@ class NotepadWindow {
   int refusals_ = 0;
   int pendingRefusalReports_ = 0;
   int pendingMinimiseReports_ = 0;
+  float layoutScale_ = 1.0f;
   bool respawnQueued_ = false;
   bool respawnUsed_ = false;
 };
@@ -145,11 +150,13 @@ class PopupSwarm {
   PopupSwarm& operator=(const PopupSwarm&) = delete;
 
   void SetBounds(RECT bounds);
+  void SetCapacity(std::size_t capacity);
   void SetOrigin(POINT origin) { origin_ = origin; }
   void Tick(HINSTANCE instance, std::mt19937& random, double logicalTime);
   void CloseAll();
   int Count() const { return static_cast<int>(popups_.size()); }
-  bool AtCap() const { return Count() >= static_cast<int>(kMaximumPopups); }
+  bool AtCap() const { return Count() >= static_cast<int>(capacity_); }
+  std::size_t Capacity() const { return capacity_; }
   bool ConsumeCloseAttempt();
 
  private:
@@ -161,6 +168,11 @@ class PopupSwarm {
     HFONT font = nullptr;
     POINT to{};
     int slot = -1;
+    int fontHeight = 0;
+    int width = 348;
+    int height = 186;
+    UINT dpi = 96U;
+    float layoutScale = 1.0f;
     bool dead = false;
   };
 
@@ -172,6 +184,8 @@ class PopupSwarm {
   void ReapClosed();
   void CloseNewest();
   void ReleaseSlot(int slot);
+  void RebuildLayout();
+  void LayoutPopup(Popup& popup);
   void EnsureSlotOrder();
   int AcquireSlot();
   POINT SlotPosition(int slot) const;
@@ -192,6 +206,10 @@ class PopupSwarm {
   int closeAttempts_ = 0;
   int permanentDismissals_ = 0;
   int spawnCounter_ = 0;
+  std::size_t capacity_ = kMaximumPopups;
+  float layoutScale_ = 1.0f;
+  int popupWidth_ = 348;
+  int popupHeight_ = 186;
   bool closing_ = false;
 };
 

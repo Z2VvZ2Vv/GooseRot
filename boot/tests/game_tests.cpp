@@ -1,4 +1,5 @@
 #include "common/arena.h"
+#include "common/render_policy.h"
 #include "game/game.h"
 
 #include <cstddef>
@@ -473,6 +474,223 @@ void test_escape_hold() {
     CHECK(aura67::game_tick(&game, input) == aura67::GameSignal::QuitRequested);
 }
 
+void test_render_policy() {
+    const aura67::PresentationSize exact =
+        aura67::fit_frame_to_bounds(1280U, 720U);
+    CHECK(exact.width == 1280U);
+    CHECK(exact.height == 720U);
+
+    const aura67::PresentationSize awkward =
+        aura67::fit_frame_to_bounds(1279U, 719U);
+    CHECK(awkward.width == 1278U);
+    CHECK(awkward.height == 719U);
+
+    const aura67::PresentationSize tall =
+        aura67::fit_frame_to_bounds(800U, 600U);
+    CHECK(tall.width == 800U);
+    CHECK(tall.height == 450U);
+
+    const aura67::PresentationSize empty =
+        aura67::fit_frame_to_bounds(0U, 720U);
+    CHECK(empty.width == 0U);
+    CHECK(empty.height == 0U);
+
+    const aura67::PresentationSize tiny =
+        aura67::fit_frame_to_bounds(1U, 1U);
+    CHECK(tiny.width == 1U);
+    CHECK(tiny.height == 1U);
+
+    const aura67::PresentationSize firmware =
+        aura67::fit_frame_to_bounds(1024U, 768U);
+    CHECK(firmware.width == 1024U);
+    CHECK(firmware.height == 576U);
+    const aura67::PresentationSize legacy_firmware =
+        aura67::fit_frame_to_bounds(
+            static_cast<std::uint16_t>(1024U),
+            static_cast<std::uint16_t>(768U));
+    CHECK(legacy_firmware.width == firmware.width);
+    CHECK(legacy_firmware.height == firmware.height);
+
+    const aura67::PresentationSize maximum =
+        aura67::fit_frame_to_bounds(0xffffffffU, 0xffffffffU);
+    constexpr std::uint32_t kExpectedMaximumHeight = static_cast<std::uint32_t>(
+        static_cast<std::uint64_t>(0xffffffffU) * aura67::kFrameHeight /
+        aura67::kFrameWidth);
+    CHECK(maximum.width == 0xffffffffU);
+    CHECK(maximum.height == kExpectedMaximumHeight);
+
+    const aura67::PresentationSize bounded =
+        aura67::fit_frame_to_bounded_surface(
+            3840U,
+            2160U,
+            aura67::kMaximumSoftwarePresentationWidth,
+            aura67::kMaximumSoftwarePresentationHeight);
+    CHECK(bounded.width == 1920U);
+    CHECK(bounded.height == 1080U);
+
+    const std::uint32_t expected_upscale[] = {0U, 0U, 1U, 1U, 2U, 2U, 3U};
+    aura67::NearestNeighborAxis upscale(4U, 7U);
+    for (std::size_t index = 0U;
+         index < sizeof(expected_upscale) / sizeof(expected_upscale[0]);
+         ++index) {
+        CHECK(upscale.source_index == expected_upscale[index]);
+        upscale.advance();
+    }
+
+    const std::uint32_t expected_downscale[] = {0U, 2U, 4U, 6U};
+    aura67::NearestNeighborAxis downscale(8U, 4U);
+    for (std::size_t index = 0U;
+         index < sizeof(expected_downscale) / sizeof(expected_downscale[0]);
+         ++index) {
+        CHECK(downscale.source_index == expected_downscale[index]);
+        downscale.advance();
+    }
+
+    aura67::NearestNeighborAxis firmware_x(aura67::kFrameWidth, 1365U);
+    for (std::uint32_t destination_x = 0U; destination_x < 1365U;
+         ++destination_x) {
+        const std::uint32_t expected_source_x = static_cast<std::uint32_t>(
+            static_cast<std::uint64_t>(destination_x) * aura67::kFrameWidth /
+            1365U);
+        CHECK(firmware_x.source_index == expected_source_x);
+        firmware_x.advance();
+    }
+
+    constexpr std::uint64_t kSixteenGibibytes =
+        16ULL * 1024ULL * 1024ULL * 1024ULL;
+    constexpr std::uint64_t kTwelveGibibytes =
+        12ULL * 1024ULL * 1024ULL * 1024ULL;
+    constexpr std::uint64_t kEightGibibytes =
+        8ULL * 1024ULL * 1024ULL * 1024ULL;
+    CHECK(aura67::render_detail_for_machine(12U, kSixteenGibibytes) ==
+          aura67::RenderDetail::Detailed);
+    CHECK(aura67::render_detail_for_machine(12U, kTwelveGibibytes) ==
+          aura67::RenderDetail::Detailed);
+    CHECK(aura67::render_detail_for_machine(12U, kTwelveGibibytes - 1U) ==
+          aura67::RenderDetail::Reduced);
+    CHECK(aura67::render_detail_for_machine(8U, kSixteenGibibytes) ==
+          aura67::RenderDetail::Reduced);
+    CHECK(aura67::render_detail_for_machine(16U, kEightGibibytes) ==
+          aura67::RenderDetail::Reduced);
+
+    CHECK(aura67::render_detail_for_surface(1280U, 720U) ==
+          aura67::RenderDetail::Detailed);
+    CHECK(aura67::render_detail_for_surface(1281U, 720U) ==
+          aura67::RenderDetail::Reduced);
+    CHECK(aura67::render_detail_for_surface(1920U, 1080U) ==
+          aura67::RenderDetail::Reduced);
+
+    CHECK(aura67::render_detail_for_machine_and_surface(
+              12U, kSixteenGibibytes, 1280U, 720U) ==
+          aura67::RenderDetail::Detailed);
+    CHECK(aura67::render_detail_for_machine_and_surface(
+              8U, kSixteenGibibytes, 1280U, 720U) ==
+          aura67::RenderDetail::Reduced);
+    CHECK(aura67::render_detail_for_machine_and_surface(
+              12U, kSixteenGibibytes, 1920U, 1080U) ==
+          aura67::RenderDetail::Reduced);
+}
+
+void test_reduced_render_keeps_gameplay_visible() {
+    aura67::GameState game{};
+    aura67::game_initialize(&game, 67U);
+    game.tick = 100U;
+    place_test_obstacle(&game, aura67::ObstacleKind::RamStick, 400, 254, 24, 46);
+    game.pickups[0].x_fp = aura67::pixels_to_fixed(300);
+    game.pickups[0].y = 210;
+    game.pickups[0].kind = aura67::PickupKind::Badge;
+    game.pickups[0].active = 1U;
+    game.popups[0].x_fp = aura67::pixels_to_fixed(220);
+    game.popups[0].y = 90;
+    game.popups[0].value = 67;
+    game.popups[0].kind = aura67::PopupKind::Clutch;
+    game.popups[0].ticks = 10U;
+
+    g_render_a[0] = 0x11223344U;
+    g_render_a[kPixelCount + 1U] = 0x55667788U;
+    g_render_b[0] = 0x99AABBCCU;
+    g_render_b[kPixelCount + 1U] = 0xDDEEFF00U;
+    aura67::FrameBuffer detailed{
+        reinterpret_cast<std::uint8_t*>(&g_render_a[1]),
+        aura67::kFrameWidth,
+        aura67::kFrameHeight,
+        aura67::kFrameWidth * aura67::kBytesPerPixel,
+        aura67::PixelFormat::Bgra8888,
+        aura67::RenderDetail::Detailed,
+    };
+    aura67::FrameBuffer reduced{
+        reinterpret_cast<std::uint8_t*>(&g_render_b[1]),
+        aura67::kFrameWidth,
+        aura67::kFrameHeight,
+        aura67::kFrameWidth * aura67::kBytesPerPixel,
+        aura67::PixelFormat::Bgra8888,
+        aura67::RenderDetail::Reduced,
+    };
+
+    const std::uint64_t before = aura67::game_checksum(game);
+    CHECK(aura67::game_render(game, detailed));
+    CHECK(aura67::game_render(game, reduced));
+    CHECK(aura67::game_checksum(game) == before);
+    CHECK(g_render_a[0] == 0x11223344U);
+    CHECK(g_render_a[kPixelCount + 1U] == 0x55667788U);
+    CHECK(g_render_b[0] == 0x99AABBCCU);
+    CHECK(g_render_b[kPixelCount + 1U] == 0xDDEEFF00U);
+
+    bool backgrounds_differ = false;
+    for (std::size_t index = 0U; index < kPixelCount; ++index) {
+        if (g_render_a[index + 1U] != g_render_b[index + 1U]) {
+            backgrounds_differ = true;
+            break;
+        }
+    }
+    CHECK(backgrounds_differ);
+
+    const auto pixel_at = [](const std::uint32_t* guarded,
+                             std::uint32_t x,
+                             std::uint32_t y) noexcept {
+        return guarded[static_cast<std::size_t>(y) * aura67::kFrameWidth + x + 1U];
+    };
+    const std::size_t obstacle_pixel =
+        static_cast<std::size_t>(254U) * aura67::kFrameWidth + 400U + 1U;
+    const std::size_t pickup_pixel =
+        static_cast<std::size_t>(210U) * aura67::kFrameWidth + 300U + 1U;
+    const std::size_t popup_pixel =
+        static_cast<std::size_t>(90U) * aura67::kFrameWidth + 222U + 1U;
+    const std::size_t hud_pixel =
+        static_cast<std::size_t>(6U) * aura67::kFrameWidth + 15U + 1U;
+    const std::size_t goose_pixel =
+        static_cast<std::size_t>(aura67::kGroundY - 25) * aura67::kFrameWidth +
+        static_cast<std::size_t>(aura67::kRunnerX) + 1U;
+    CHECK(g_render_a[obstacle_pixel] == g_render_b[obstacle_pixel]);
+    CHECK(g_render_a[pickup_pixel] == g_render_b[pickup_pixel]);
+    CHECK(g_render_a[popup_pixel] == g_render_b[popup_pixel]);
+    CHECK(g_render_a[hud_pixel] == g_render_b[hud_pixel]);
+    CHECK(g_render_a[goose_pixel] == g_render_b[goose_pixel]);
+
+    constexpr std::uint32_t kBgraTrace = 0xff1a4434U;
+    constexpr std::uint32_t kBgraMatrixGreen = 0xff39ff14U;
+    constexpr std::uint32_t kBgraNeonPink = 0xffff2daaU;
+    constexpr std::uint32_t kBgraCriticalRed = 0xffff2438U;
+    CHECK(g_render_b[obstacle_pixel] == kBgraTrace);
+    CHECK(g_render_b[pickup_pixel] == kBgraMatrixGreen);
+    CHECK(g_render_b[popup_pixel] == kBgraNeonPink);
+    CHECK(g_render_b[hud_pixel] == kBgraMatrixGreen);
+
+    aura67::GameState panic = game;
+    panic.phase = aura67::GamePhase::Finished;
+    panic.death_ticks = 20U;
+    CHECK(aura67::game_render(panic, detailed));
+    CHECK(aura67::game_render(panic, reduced));
+    CHECK(pixel_at(g_render_a, 78U, 88U) == kBgraCriticalRed);
+    CHECK(pixel_at(g_render_b, 78U, 88U) == kBgraCriticalRed);
+    CHECK(pixel_at(g_render_a, 212U, 114U) ==
+          pixel_at(g_render_b, 212U, 114U));
+    CHECK(g_render_a[0] == 0x11223344U);
+    CHECK(g_render_a[kPixelCount + 1U] == 0x55667788U);
+    CHECK(g_render_b[0] == 0x99AABBCCU);
+    CHECK(g_render_b[kPixelCount + 1U] == 0xDDEEFF00U);
+}
+
 void test_framebuffer_contract_and_guards() {
     aura67::GameState game{};
     aura67::game_initialize(&game, 67U);
@@ -486,6 +704,7 @@ void test_framebuffer_contract_and_guards() {
         aura67::kFrameHeight,
         aura67::kFrameWidth * aura67::kBytesPerPixel,
         aura67::PixelFormat::Bgra8888,
+        aura67::RenderDetail::Detailed,
     };
     CHECK(aura67::game_render(game, framebuffer));
     CHECK(g_render_a[0] == 0x11223344U);
@@ -501,6 +720,7 @@ void test_framebuffer_contract_and_guards() {
         aura67::kFrameHeight,
         aura67::kFrameWidth * aura67::kBytesPerPixel,
         aura67::PixelFormat::Bgra8888,
+        aura67::RenderDetail::Detailed,
     };
     CHECK(aura67::game_render(game, second));
     bool same = true;
@@ -517,6 +737,7 @@ void test_framebuffer_contract_and_guards() {
                         aura67::kRunnerX - 10, aura67::kGroundY - 46, 24, 46);
     aura67::game_tick(&game, aura67::no_input());
     CHECK(game.phase == aura67::GamePhase::Finished);
+    framebuffer.detail = aura67::RenderDetail::Reduced;
     CHECK(aura67::game_render(game, framebuffer));
     CHECK(g_render_a[0] == 0x11223344U);
     CHECK(g_render_a[kPixelCount + 1U] == 0x55667788U);
@@ -556,6 +777,8 @@ int main() {
     test_death_restart_keeps_the_record();
     test_platform_reset_is_only_offered_after_a_crash();
     test_escape_hold();
+    test_render_policy();
+    test_reduced_render_keeps_gameplay_visible();
     test_framebuffer_contract_and_guards();
     test_fixed_arena();
 

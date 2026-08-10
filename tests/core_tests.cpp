@@ -203,6 +203,76 @@ void TestFrameAdvanceAtLowFps() {
          "invalid frame deltas fail closed");
 }
 
+void TestResponsiveExperienceBudget() {
+  constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
+  using gooserot::PerformanceTier;
+  Expect(gooserot::ClassifyPerformance(0U, 0U, 0U) == PerformanceTier::Medium,
+         "unknown hardware uses the conservative medium tier");
+  Expect(gooserot::ClassifyPerformance(4U * gib, 2U, 1280U * 720U) ==
+             PerformanceTier::Low,
+         "small memory and CPU select the low tier");
+  Expect(gooserot::ClassifyPerformance(8U * gib, 4U, 1920U * 1080U) ==
+             PerformanceTier::Medium,
+         "a mid-range machine selects the medium tier");
+  Expect(gooserot::ClassifyPerformance(32U * gib, 16U, 1920U * 1080U) ==
+             PerformanceTier::High,
+         "a capable machine at a moderate resolution selects high");
+  Expect(gooserot::ClassifyPerformance(32U * gib, 16U, 3840U * 2160U) ==
+             PerformanceTier::Medium,
+         "a costly software-rendered 4K surface is included in the check");
+
+  constexpr gooserot::RectF hd{0.0f, 0.0f, 1920.0f, 1080.0f};
+  for (const gooserot::RunMode mode : {gooserot::RunMode::Safe,
+                                       gooserot::RunMode::Normal,
+                                       gooserot::RunMode::Lab}) {
+    const auto low = gooserot::ComputeExperienceBudget(hd, mode, PerformanceTier::Low);
+    const auto medium = gooserot::ComputeExperienceBudget(hd, mode, PerformanceTier::Medium);
+    const auto high = gooserot::ComputeExperienceBudget(hd, mode, PerformanceTier::High);
+    Expect(low.imageLimit < medium.imageLimit && medium.imageLimit < high.imageLimit,
+           "every mode displays fewer images on medium and low hardware");
+    Expect(low.popupLimit <= medium.popupLimit && medium.popupLimit <= high.popupLimit,
+           "notice density follows the same tier in every mode");
+    Expect(low.gooseLimit <= medium.gooseLimit && medium.gooseLimit <= high.gooseLimit,
+           "flock density follows the same tier in every mode");
+  }
+
+  const auto tiny = gooserot::ComputeExperienceBudget(
+      {0.0f, 0.0f, 640.0f, 400.0f}, gooserot::RunMode::Normal, PerformanceTier::High);
+  const auto large = gooserot::ComputeExperienceBudget(
+      {0.0f, 0.0f, 3840.0f, 2160.0f}, gooserot::RunMode::Normal,
+      PerformanceTier::High);
+  Expect(tiny.layoutScale >= 0.78f && tiny.layoutScale < 1.0f,
+         "small displays use the bounded compact scale");
+  Expect(large.layoutScale > 1.0f && large.layoutScale <= 1.50f,
+         "large displays use a bounded readable scale");
+  Expect(tiny.imageLimit < large.imageLimit,
+         "screen density allows fewer images on a small canvas");
+  Expect(tiny.imageLimit >= 2U && large.imageLimit <= 36U,
+         "responsive image limits retain a narrative floor and mode ceiling");
+
+  constexpr gooserot::RectF eightK{0.0f, 0.0f, 7680.0f, 4320.0f};
+  for (const gooserot::RunMode mode : {gooserot::RunMode::Safe,
+                                       gooserot::RunMode::Normal,
+                                       gooserot::RunMode::Lab}) {
+    const auto low = gooserot::ComputeExperienceBudget(
+        eightK, mode, PerformanceTier::Low);
+    const auto medium = gooserot::ComputeExperienceBudget(
+        eightK, mode, PerformanceTier::Medium);
+    const auto high = gooserot::ComputeExperienceBudget(
+        eightK, mode, PerformanceTier::High);
+    Expect(low.imageLimit < medium.imageLimit && medium.imageLimit < high.imageLimit,
+           "hardware image ceilings remain distinct even on an 8K canvas");
+    Expect(low.popupLimit < medium.popupLimit && medium.popupLimit < high.popupLimit,
+           "hardware popup ceilings remain distinct even on an 8K canvas");
+    Expect(low.gooseLimit < medium.gooseLimit && medium.gooseLimit < high.gooseLimit,
+           "hardware flock ceilings remain distinct even on an 8K canvas");
+  }
+  Expect(std::isfinite(gooserot::ResponsiveLayoutScale(
+             {0.0f, 0.0f, std::numeric_limits<float>::infinity(), 10.0f})) &&
+             gooserot::ResponsiveLayoutScale({}) == 1.0f,
+         "invalid viewport dimensions have a finite fallback");
+}
+
 void TestInitialEntranceDelay() {
   const double delay = gooserot::InitialEntranceDelaySeconds(67U);
   Expect(delay >= 10.0 && delay < 30.0,
@@ -577,6 +647,15 @@ void TestGooseAnimationState() {
   const gooserot::Vec2 projectedBeak = bodyTarget + (goose.Rig().beakTip - goose.Position());
   Expect(gooserot::Distance(projectedBeak, desiredBeak) < 0.01f,
          "beak targeting converts the desired tip into a body target");
+  goose.SetVisualScale(1.5f);
+  const gooserot::Vec2 scaledTarget{640.0f, 220.0f};
+  const gooserot::Vec2 scaledBody = goose.BodyTargetForBeak(scaledTarget);
+  const gooserot::Vec2 scaledProjected =
+      scaledBody + (goose.Rig().beakTip - goose.Position()) * goose.VisualScale();
+  Expect(gooserot::Distance(scaledProjected, scaledTarget) < 0.01f &&
+             goose.Parameters().runSpeed > 200.0f,
+         "responsive goose geometry keeps its visible beak and motion aligned");
+  goose.SetVisualScale(1.0f);
   goose.SetLatched(false);
 
   constexpr gooserot::Vec2 beakTargets[] = {
@@ -615,6 +694,7 @@ void TestWindowClamp() {
 
 int main() {
   TestTimestampParsing();
+  TestResponsiveExperienceBudget();
   TestArgumentParsing();
   TestChaosVisualCues();
   TestFrameAdvanceAtLowFps();

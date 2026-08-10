@@ -1,4 +1,5 @@
 #include "platform/uefi/uefi_graphics.h"
+#include "common/render_policy.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,10 +11,40 @@ constexpr std::size_t kPixelCount =
     static_cast<std::size_t>(kFrameWidth) * static_cast<std::size_t>(kFrameHeight);
 constexpr std::uint32_t kMaximumEnumeratedModes = 4096U;
 
-// Fixed storage keeps the adapter heap-free.  Its byte layout is also exactly
+// The logical surface remains fixed storage. Its byte layout is also exactly
 // EFI_GRAPHICS_OUTPUT_BLT_PIXEL (B, G, R, reserved), so GOP::Blt can consume it
-// directly on firmware that exposes no linear framebuffer.
+// directly when a software-scaled transfer buffer is unavailable.
 alignas(16) std::uint32_t g_game_pixels[kPixelCount];
+
+void scale_bgra_nearest(const std::uint32_t* source,
+                        std::uint32_t source_width,
+                        std::uint32_t source_height,
+                        std::uint32_t* destination,
+                        std::uint32_t destination_width,
+                        std::uint32_t destination_height) noexcept {
+    if (source == nullptr || destination == nullptr || source_width == 0U ||
+        source_height == 0U || destination_width == 0U || destination_height == 0U) {
+        return;
+    }
+
+    NearestNeighborAxis source_y(source_height, destination_height);
+    for (std::uint32_t destination_y = 0U;
+         destination_y < destination_height;
+         ++destination_y) {
+        const std::uint32_t* const source_row = source +
+            static_cast<std::size_t>(source_y.source_index) * source_width;
+        std::uint32_t* const destination_row = destination +
+            static_cast<std::size_t>(destination_y) * destination_width;
+        NearestNeighborAxis source_x(source_width, destination_width);
+        for (std::uint32_t destination_x = 0U;
+             destination_x < destination_width;
+             ++destination_x) {
+            destination_row[destination_x] = source_row[source_x.source_index];
+            source_x.advance();
+        }
+        source_y.advance();
+    }
+}
 
 std::uint32_t channel_to_mask(std::uint8_t channel, std::uint32_t mask) noexcept {
     if (mask == 0U) {
@@ -97,6 +128,58 @@ Status clear_blt_framebuffer(GraphicsContext* context) noexcept {
         context->horizontal_resolution,
         context->vertical_resolution,
         0U);
+}
+
+void configure_blt_presentation(GraphicsContext* context) noexcept {
+    if (context == nullptr) {
+        return;
+    }
+
+    // The always-available fallback needs no additional firmware allocation.
+    context->presentation_width = kFrameWidth;
+    context->presentation_height = kFrameHeight;
+    context->destination_x = (context->horizontal_resolution - kFrameWidth) / 2U;
+    context->destination_y = (context->vertical_resolution - kFrameHeight) / 2U;
+    context->blt_pixels = nullptr;
+    context->blt_buffer_bytes = 0U;
+
+    const PresentationSize bounded = fit_frame_to_bounded_surface(
+        context->horizontal_resolution,
+        context->vertical_resolution,
+        kMaximumSoftwarePresentationWidth,
+        kMaximumSoftwarePresentationHeight);
+    if (bounded.width <= kFrameWidth && bounded.height <= kFrameHeight) {
+        return;
+    }
+    if (context->boot_services == nullptr ||
+        context->boot_services->allocate_pool == nullptr ||
+        context->boot_services->free_pool == nullptr) {
+        return;
+    }
+
+    const std::uint64_t buffer_bytes =
+        static_cast<std::uint64_t>(bounded.width) * bounded.height *
+        sizeof(GraphicsOutputBltPixel);
+    void* allocation = nullptr;
+    const Status allocation_status = context->boot_services->allocate_pool(
+        MemoryType::LoaderData,
+        static_cast<UintN>(buffer_bytes),
+        &allocation);
+    if (efi_error(allocation_status) || allocation == nullptr) {
+        if (allocation != nullptr) {
+            context->boot_services->free_pool(allocation);
+        }
+        return;
+    }
+
+    context->blt_pixels = static_cast<std::uint32_t*>(allocation);
+    context->blt_buffer_bytes = static_cast<UintN>(buffer_bytes);
+    context->presentation_width = bounded.width;
+    context->presentation_height = bounded.height;
+    context->destination_x =
+        (context->horizontal_resolution - context->presentation_width) / 2U;
+    context->destination_y =
+        (context->vertical_resolution - context->presentation_height) / 2U;
 }
 
 bool mode_supports_game(const GraphicsOutputModeInformation* info) noexcept {
@@ -211,7 +294,11 @@ Status graphics_initialize(SystemTable* system_table, GraphicsContext* context) 
         kFrameHeight,
         kFrameWidth * kBytesPerPixel,
         PixelFormat::Bgra8888,
+        RenderDetail::Detailed,
     };
+    context->video_base = nullptr;
+    context->blt_pixels = nullptr;
+    context->blt_buffer_bytes = 0U;
     context->horizontal_resolution = info->horizontal_resolution;
     context->vertical_resolution = info->vertical_resolution;
     context->pixels_per_scan_line = info->pixels_per_scan_line;
@@ -219,17 +306,18 @@ Status graphics_initialize(SystemTable* system_table, GraphicsContext* context) 
     context->pixel_masks = info->pixel_information;
     context->original_mode = original_mode;
     context->mode_changed = mode_changed;
-    const std::uint32_t horizontal_scale = info->horizontal_resolution / kFrameWidth;
-    const std::uint32_t vertical_scale = info->vertical_resolution / kFrameHeight;
-    context->scale = horizontal_scale < vertical_scale ? horizontal_scale : vertical_scale;
-    if (context->scale == 0U) {
+    const PresentationSize presentation = fit_frame_to_bounds(
+        info->horizontal_resolution, info->vertical_resolution);
+    if (presentation.width < kFrameWidth || presentation.height < kFrameHeight) {
         const Status restore_status = graphics_shutdown(context);
         return efi_error(restore_status) ? restore_status : kUnsupported;
     }
-    const std::uint32_t presented_width = kFrameWidth * context->scale;
-    const std::uint32_t presented_height = kFrameHeight * context->scale;
-    context->destination_x = (info->horizontal_resolution - presented_width) / 2U;
-    context->destination_y = (info->vertical_resolution - presented_height) / 2U;
+    context->presentation_width = presentation.width;
+    context->presentation_height = presentation.height;
+    context->destination_x =
+        (info->horizontal_resolution - context->presentation_width) / 2U;
+    context->destination_y =
+        (info->vertical_resolution - context->presentation_height) / 2U;
 
     const bool directly_addressable =
         info->pixel_format == GraphicsPixelFormat::RedGreenBlueReserved8BitPerColor ||
@@ -250,15 +338,18 @@ Status graphics_initialize(SystemTable* system_table, GraphicsContext* context) 
                               : nullptr;
 
     if (context->direct_framebuffer) {
+        context->game_framebuffer.detail = render_detail_for_surface(
+            context->presentation_width, context->presentation_height);
         clear_direct_framebuffer(*context);
         return kSuccess;
     }
 
-    // GOP Blt has no scaling operation.  A Blt-only mode therefore receives a
-    // centered 1:1 image while directly addressable modes use integer scaling.
-    context->scale = 1U;
-    context->destination_x = (info->horizontal_resolution - kFrameWidth) / 2U;
-    context->destination_y = (info->vertical_resolution - kFrameHeight) / 2U;
+    // GOP Blt cannot scale by itself. Allocate a bounded software-scaled buffer
+    // when Boot Services can provide one; allocation failure safely falls back
+    // to the centered logical frame configured by this helper.
+    configure_blt_presentation(context);
+    context->game_framebuffer.detail = render_detail_for_surface(
+        context->presentation_width, context->presentation_height);
     const Status clear_status = clear_blt_framebuffer(context);
     if (efi_error(clear_status)) {
         const Status restore_status = graphics_shutdown(context);
@@ -269,7 +360,15 @@ Status graphics_initialize(SystemTable* system_table, GraphicsContext* context) 
 
 Status graphics_present(GraphicsContext* context) noexcept {
     if (context == nullptr || !framebuffer_is_valid(context->game_framebuffer) ||
-        context->protocol == nullptr) {
+        context->protocol == nullptr ||
+        context->presentation_width < kFrameWidth ||
+        context->presentation_height < kFrameHeight ||
+        context->presentation_width > context->horizontal_resolution ||
+        context->presentation_height > context->vertical_resolution ||
+        context->destination_x >
+            context->horizontal_resolution - context->presentation_width ||
+        context->destination_y >
+            context->vertical_resolution - context->presentation_height) {
         return kInvalidParameter;
     }
 
@@ -278,37 +377,67 @@ Status graphics_present(GraphicsContext* context) noexcept {
             return kUnsupported;
         }
         static_assert(sizeof(GraphicsOutputBltPixel) == sizeof(std::uint32_t));
+        std::uint32_t* transfer_pixels = g_game_pixels;
+        if (context->blt_pixels != nullptr) {
+            const std::uint64_t required_bytes =
+                static_cast<std::uint64_t>(context->presentation_width) *
+                context->presentation_height * sizeof(GraphicsOutputBltPixel);
+            if (context->blt_buffer_bytes < required_bytes) {
+                return kInvalidParameter;
+            }
+            scale_bgra_nearest(
+                g_game_pixels,
+                kFrameWidth,
+                kFrameHeight,
+                context->blt_pixels,
+                context->presentation_width,
+                context->presentation_height);
+            transfer_pixels = context->blt_pixels;
+        } else if (context->presentation_width != kFrameWidth ||
+                   context->presentation_height != kFrameHeight) {
+            return kInvalidParameter;
+        }
         return context->protocol->blt(
             context->protocol,
-            reinterpret_cast<GraphicsOutputBltPixel*>(g_game_pixels),
+            reinterpret_cast<GraphicsOutputBltPixel*>(transfer_pixels),
             GraphicsOutputBltOperation::BufferToVideo,
             0U,
             0U,
             context->destination_x,
             context->destination_y,
-            kFrameWidth,
-            kFrameHeight,
-            kFrameWidth * sizeof(GraphicsOutputBltPixel));
+            context->presentation_width,
+            context->presentation_height,
+            static_cast<UintN>(context->presentation_width) *
+                sizeof(GraphicsOutputBltPixel));
     }
 
-    for (std::uint32_t source_y = 0U; source_y < kFrameHeight; ++source_y) {
-        const std::uint32_t* source =
-            g_game_pixels + static_cast<std::size_t>(source_y) * kFrameWidth;
-        for (std::uint32_t repeat_y = 0U; repeat_y < context->scale; ++repeat_y) {
-            const std::uint32_t destination_y =
-                context->destination_y + source_y * context->scale + repeat_y;
-            volatile std::uint32_t* destination =
-                context->video_base +
-                static_cast<std::size_t>(destination_y) * context->pixels_per_scan_line +
-                context->destination_x;
-            for (std::uint32_t source_x = 0U; source_x < kFrameWidth; ++source_x) {
-                const std::uint32_t pixel = convert_pixel(source[source_x], *context);
-                const std::uint32_t destination_x = source_x * context->scale;
-                for (std::uint32_t repeat_x = 0U; repeat_x < context->scale; ++repeat_x) {
-                    destination[destination_x + repeat_x] = pixel;
-                }
+    if (context->video_base == nullptr) {
+        return kInvalidParameter;
+    }
+    NearestNeighborAxis source_y(kFrameHeight, context->presentation_height);
+    for (std::uint32_t destination_y = 0U;
+         destination_y < context->presentation_height;
+         ++destination_y) {
+        const std::uint32_t* const source_row = g_game_pixels +
+            static_cast<std::size_t>(source_y.source_index) * kFrameWidth;
+        volatile std::uint32_t* const destination_row = context->video_base +
+            static_cast<std::size_t>(context->destination_y + destination_y) *
+                context->pixels_per_scan_line +
+            context->destination_x;
+        NearestNeighborAxis source_x(kFrameWidth, context->presentation_width);
+        std::uint32_t cached_source_x = kFrameWidth;
+        std::uint32_t pixel = 0U;
+        for (std::uint32_t destination_x = 0U;
+             destination_x < context->presentation_width;
+             ++destination_x) {
+            if (source_x.source_index != cached_source_x) {
+                cached_source_x = source_x.source_index;
+                pixel = convert_pixel(source_row[cached_source_x], *context);
             }
+            destination_row[destination_x] = pixel;
+            source_x.advance();
         }
+        source_y.advance();
     }
     return kSuccess;
 }
@@ -317,6 +446,18 @@ Status graphics_shutdown(GraphicsContext* context) noexcept {
     if (context == nullptr) {
         return kInvalidParameter;
     }
+    Status free_status = kSuccess;
+    if (context->blt_pixels != nullptr) {
+        if (context->boot_services == nullptr ||
+            context->boot_services->free_pool == nullptr) {
+            free_status = kUnsupported;
+        } else {
+            free_status = context->boot_services->free_pool(context->blt_pixels);
+        }
+    }
+    context->blt_pixels = nullptr;
+    context->blt_buffer_bytes = 0U;
+
     Status restore_status = kSuccess;
     if (context->mode_changed && context->protocol != nullptr &&
         context->protocol->set_mode != nullptr) {
@@ -327,7 +468,7 @@ Status graphics_shutdown(GraphicsContext* context) noexcept {
     context->protocol = nullptr;
     context->boot_services = nullptr;
     context->mode_changed = false;
-    return restore_status;
+    return efi_error(restore_status) ? restore_status : free_status;
 }
 
 } // namespace aura67::uefi

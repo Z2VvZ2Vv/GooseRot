@@ -129,6 +129,7 @@ function(gooserot_add_profile target_name output_name profile_id)
     ole32
     comctl32
     winmm
+    advapi32
   )
   if(MSVC)
     set_property(TARGET ${target_name} PROPERTY
@@ -164,6 +165,7 @@ target_link_libraries(GooseRotLabDebug PRIVATE
   ole32
   comctl32
   winmm
+  advapi32
 )
 if(MSVC)
   set_property(TARGET GooseRotLabDebug PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

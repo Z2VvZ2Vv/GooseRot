@@ -192,19 +192,21 @@ Les deux adaptateurs appellent directement le même cœur AURA 67 freestanding �
 
 ## Performance VM
 
-- boucle Win32 cadencée par QPC à 60 images/seconde, avec résolution d'attente de 1 ms ;
+- profil matériel commun calculé avec le nombre de processeurs logiques, la mémoire physique et le nombre de pixels à composer : `high`, `medium` ou `low`, avec repli conservateur sur `medium` si la détection échoue ;
+- budget responsive partagé par `safe`, `normal`, `lab` et `--preview` : l’échelle visuelle est bornée entre `0,78×` et `1,50×`, tandis que les images, avis et oies sont plafonnés d’après la surface disponible et par un plafond matériel absolu qui reste effectif jusqu’en 8K ;
+- boucle Win32 cadencée par QPC à 60 images/seconde (`30` sur le profil `low`), avec résolution d'attente de 1 ms ;
 - pompe de messages bornée à 64 messages ou 2 ms avant de rendre, afin qu'aucune fenêtre compagnon ne puisse affamer la frame suivante ;
 - plancher visé en scène saturée : 10 images/seconde ;
 - aucune boucle active sans attente ;
-- surface virtuelle unique plafonnée à 30 millions de pixels, ou écran principal seul sur demande ;
+- surface virtuelle unique plafonnée à 40 millions de pixels (écran 8K compris) ; au-delà, ou si l’allocation échoue, le rendu se replie automatiquement sur l’écran principal ;
 - assets décodés une seule fois puis mis en cache, avec un LRU borné à 64 géométries et deux millions de pixels de sprites (environ 16 Mo pour Bitmap + ARGB) ;
 - images pré-réduites dans un carré transparent de 256 px sans déformer leur ratio, rotations finales pré-rastérisées et compositées directement en ARGB prémultiplié ;
 - graffiti terminé mis en cache et filtre couleur plein écran rempli directement dans la surface ;
-- nombre maximal d’overlays image simultanés : 36 en `safe/normal`, 48 en `lab` ;
+- plafond narratif des overlays image : 36 en `safe/normal`, 48 en `lab`, toujours réduit par le budget écran/matériel avant la première image ;
 - croix `[x]` des images tracée à main levée en scène légère et en rectangle simple en scène dense ;
 - nombre maximal d’oies : 67 ; nombre de fausses fenêtres système : zéro ;
 - effets de glitch vectoriels ; les seuls accès pixel directs sont le filtre uni, les cadres virtuels opaques, les rubans locaux et le composite ARGB des caches, sans aucune relecture du bureau ;
-- mémoire cible : moins de 150 Mo sur un bureau courant ; sous le plafond extrême de 30 millions de pixels, la surface principale représente déjà environ 120 Mo et le processus reste borné sous environ 200 Mo ;
+- mémoire cible : moins de 150 Mo sur un bureau courant ; sous le plafond extrême de 40 millions de pixels, la surface principale représente environ 160 Mo et le processus reste borné sous environ 240 Mo ;
 - usage CPU non plafonné : le rendu peut saturer un cœur ou davantage pour protéger la fluidité ;
 - absence de réseau après le lancement.
 

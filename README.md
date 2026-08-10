@@ -45,6 +45,7 @@ Over a seeded **7.5-minute interactive story timeline**, the inspector conducts 
 - **🐕 Recovery Watchdog Subprocess**: Monitors desktop window state and guarantees 100% restoration of all moved windows.
 - **🛑 Instant Emergency Exit**: Press and hold **Esc** at any time to instantly trigger a clean shutdown.
 - **🖼️ Embedded Asset Engine**: Self-contained PNG brainrot assets embedded directly inside the binary.
+- **📐 Adaptive Visual Budget**: Safe, Normal, Lab and both previews scale their layout to the display and automatically reduce image density on modest hardware.
 - **🎬 Deterministic Timeline Engine**: Seeded wall-clock preamble, timeline scaling (`--duration-scale`), and deterministic physics.
 
 ---
@@ -57,7 +58,7 @@ GooseRot compiles into single-binary runtime profiles tailored for safety, daily
 | :--- | :--- | :--- | :--- |
 | `GooseRot-Safe.exe` | **Safe** | 🟢 **100% Safe (Main Host)** | Conservative defaults, non-destructive, enhanced emergency exit (<kbd>Esc</kbd> hold). |
 | `GooseRot-Normal.exe` | **Normal** | 🟢 **Non-Destructive (Main Host)** | Default production release for regular users. Feature-complete full desktop directorship. |
-| `GooseRot-Lab.exe` | **Lab** | 🔴 **DESTRUCTIVE (VM ONLY)** | Experimental/testing build for VM environments. Performs permanent boot/system modifications. |
+| `GooseRot-Lab.exe` | **Lab** | 🔴 **DESTRUCTIVE (VM ONLY)** | Experimental/testing build for VM environments. Installs a local Windows service that relaunches the worker if it is killed. |
 | `GooseRot-Lab-Debug.exe` | **Lab Debug** | 🔴 **DESTRUCTIVE (VM ONLY)** | VM testing build with attached debug console and real-time verbose logs. |
 | `GooseBootPreview.exe` | **Boot Preview** | 🟢 **100% Safe (Main Host)** | Standalone safe Win32 preview of the AURA 67 engine. |
 

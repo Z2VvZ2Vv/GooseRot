@@ -1,4 +1,5 @@
 #include "platform/bios/bios_platform.h"
+#include "common/render_policy.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +18,8 @@ static_assert(kRenderBufferEnd < 0x00200000U, "render target must fit below 2 Mi
 
 FrameBuffer g_render_target{};
 
-std::uint32_t g_scale = 1U;
+std::uint32_t g_presentation_width = kFrameWidth;
+std::uint32_t g_presentation_height = kFrameHeight;
 std::uint32_t g_offset_x = 0U;
 std::uint32_t g_offset_y = 0U;
 
@@ -81,17 +83,21 @@ bool graphics_initialize() noexcept {
         kFrameHeight,
         kFrameWidth * kBytesPerPixel,
         PixelFormat::Bgra8888,
+        RenderDetail::Detailed,
     };
 
-    const std::uint32_t horizontal_scale = bios_boot_info.width / kFrameWidth;
-    const std::uint32_t vertical_scale = bios_boot_info.height / kFrameHeight;
-    g_scale = horizontal_scale < vertical_scale ? horizontal_scale : vertical_scale;
-    if (g_scale == 0U) {
+    const PresentationSize presentation = fit_frame_to_bounds(
+        bios_boot_info.width, bios_boot_info.height);
+    if (presentation.width < kFrameWidth || presentation.height < kFrameHeight) {
         return false;
     }
+    g_presentation_width = presentation.width;
+    g_presentation_height = presentation.height;
+    g_render_target.detail = render_detail_for_surface(
+        g_presentation_width, g_presentation_height);
 
-    g_offset_x = (bios_boot_info.width - kFrameWidth * g_scale) / 2U;
-    g_offset_y = (bios_boot_info.height - kFrameHeight * g_scale) / 2U;
+    g_offset_x = (bios_boot_info.width - g_presentation_width) / 2U;
+    g_offset_y = (bios_boot_info.height - g_presentation_height) / 2U;
     clear_physical_framebuffer();
     return true;
 }
@@ -102,29 +108,37 @@ const FrameBuffer& graphics_render_target() noexcept {
 
 void graphics_present() noexcept {
     volatile std::uint8_t* const output = physical_framebuffer();
-    for (std::uint32_t source_y = 0U; source_y < kFrameHeight; ++source_y) {
+    NearestNeighborAxis source_y(kFrameHeight, g_presentation_height);
+    for (std::uint32_t destination_y = 0U;
+         destination_y < g_presentation_height;
+         ++destination_y) {
         const std::uint8_t* const source_row = g_render_target.base +
-            static_cast<std::size_t>(source_y) * g_render_target.stride_bytes;
-        const std::uint32_t destination_y = g_offset_y + source_y * g_scale;
+            static_cast<std::size_t>(source_y.source_index) *
+                g_render_target.stride_bytes;
+        volatile std::uint8_t* const destination_row = output +
+            static_cast<std::size_t>(g_offset_y + destination_y) *
+                bios_boot_info.pitch_bytes +
+            static_cast<std::size_t>(g_offset_x) * kBytesPerPixel;
 
-        for (std::uint32_t repeat_y = 0U; repeat_y < g_scale; ++repeat_y) {
-            volatile std::uint8_t* destination_row = output +
-                static_cast<std::size_t>(destination_y + repeat_y) *
-                    bios_boot_info.pitch_bytes +
-                static_cast<std::size_t>(g_offset_x) * kBytesPerPixel;
-
-            for (std::uint32_t source_x = 0U; source_x < kFrameWidth; ++source_x) {
-                const std::uint32_t pixel = pack_pixel(
-                    source_row + static_cast<std::size_t>(source_x) * kBytesPerPixel);
-                for (std::uint32_t repeat_x = 0U; repeat_x < g_scale; ++repeat_x) {
-                    write_pixel(
-                        destination_row +
-                            static_cast<std::size_t>(source_x * g_scale + repeat_x) *
-                                kBytesPerPixel,
-                        pixel);
-                }
+        NearestNeighborAxis source_x(kFrameWidth, g_presentation_width);
+        std::uint32_t cached_source_x = kFrameWidth;
+        std::uint32_t pixel = 0U;
+        for (std::uint32_t destination_x = 0U;
+             destination_x < g_presentation_width;
+             ++destination_x) {
+            if (source_x.source_index != cached_source_x) {
+                cached_source_x = source_x.source_index;
+                pixel = pack_pixel(
+                    source_row +
+                    static_cast<std::size_t>(cached_source_x) * kBytesPerPixel);
             }
+            write_pixel(
+                destination_row +
+                    static_cast<std::size_t>(destination_x) * kBytesPerPixel,
+                pixel);
+            source_x.advance();
         }
+        source_y.advance();
     }
 }
 

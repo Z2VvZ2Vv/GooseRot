@@ -40,6 +40,9 @@ class DesktopDirector {
   void PollPendingMutations();
   bool Restore();
   bool Enabled() const { return enabled_; }
+  void SetPrimaryMonitorOnly(bool primaryMonitorOnly) {
+    primaryMonitorOnly_ = primaryMonitorOnly;
+  }
   bool RecoveryHealthy() const { return !enabled_ || restored_ || (watchdog_ && watchdog_->IsHealthy()); }
 
  private:

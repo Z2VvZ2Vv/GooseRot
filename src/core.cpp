@@ -95,6 +95,102 @@ Vec2 Lerp(Vec2 from, Vec2 to, float amount) {
   return from * (1.0f - clamped) + to * clamped;
 }
 
+PerformanceTier ClassifyPerformance(std::uint64_t physicalMemoryBytes,
+                                    unsigned logicalProcessorCount,
+                                    std::uint64_t renderPixels) {
+  constexpr std::uint64_t kGiB = 1024ULL * 1024ULL * 1024ULL;
+  if (physicalMemoryBytes == 0U || logicalProcessorCount == 0U) {
+    return PerformanceTier::Medium;
+  }
+  // GooseRot composites a full 32-bit software surface. A very large virtual
+  // desktop is therefore a real part of the hardware budget, even on a CPU
+  // with plenty of threads.
+  if (physicalMemoryBytes < 6ULL * kGiB || logicalProcessorCount <= 2U ||
+      renderPixels > 12'000'000ULL) {
+    return PerformanceTier::Low;
+  }
+  if (physicalMemoryBytes < 16ULL * kGiB || logicalProcessorCount < 8U ||
+      renderPixels > 5'000'000ULL) {
+    return PerformanceTier::Medium;
+  }
+  return PerformanceTier::High;
+}
+
+float ResponsiveLayoutScale(RectF canvas) {
+  if (!std::isfinite(canvas.Width()) || !std::isfinite(canvas.Height()) ||
+      canvas.Width() <= 0.0f || canvas.Height() <= 0.0f) {
+    return 1.0f;
+  }
+  constexpr float kReferenceWidth = 1920.0f;
+  constexpr float kReferenceHeight = 1080.0f;
+  const float shortEdgeRatio = std::min(canvas.Width() / kReferenceWidth,
+                                        canvas.Height() / kReferenceHeight);
+  return std::clamp(std::sqrt(std::max(0.0f, shortEdgeRatio)), 0.78f, 1.50f);
+}
+
+ExperienceBudget ComputeExperienceBudget(RectF canvas, RunMode mode,
+                                         PerformanceTier performance) {
+  ExperienceBudget budget;
+  budget.layoutScale = ResponsiveLayoutScale(canvas);
+
+  const auto safeDimension = [](float value) {
+    return std::isfinite(value) && value > 0.0f ? static_cast<double>(value) : 1.0;
+  };
+  const double width = safeDimension(canvas.Width());
+  const double height = safeDimension(canvas.Height());
+  const double area = width * height;
+  const double scaleSquared = static_cast<double>(budget.layoutScale) *
+                              static_cast<double>(budget.layoutScale);
+  const double tierFactor = performance == PerformanceTier::High     ? 1.0
+                            : performance == PerformanceTier::Medium ? 0.62
+                                                                      : 0.38;
+
+  // About a quarter of the usable wall may be occupied by photos at the peak.
+  // Using the scaled average footprint keeps density stable from a small
+  // preview to 4K instead of merely multiplying the old fixed ceiling.
+  constexpr double kAverageImagePixels = 150.0 * 150.0;
+  const double imageSlots = (area * 0.25) / (kAverageImagePixels * scaleSquared);
+  const std::size_t narrativeImageCeiling = mode == RunMode::Lab ? 48U : 36U;
+  const std::size_t hardwareImageCeiling =
+      performance == PerformanceTier::High
+          ? narrativeImageCeiling
+          : performance == PerformanceTier::Medium
+                ? (narrativeImageCeiling * 2U) / 3U
+                : (narrativeImageCeiling * 2U) / 5U;
+  budget.imageLimit = std::clamp<std::size_t>(
+      static_cast<std::size_t>(std::floor(imageSlots * tierFactor)), 2U,
+      std::max<std::size_t>(2U, hardwareImageCeiling));
+
+  constexpr double kPopupPixels = 348.0 * 186.0;
+  const double popupSlots = area / (kPopupPixels * scaleSquared);
+  const double popupDensity = performance == PerformanceTier::High     ? 0.78
+                              : performance == PerformanceTier::Medium ? 0.58
+                                                                        : 0.40;
+  const std::size_t hardwarePopupCeiling =
+      performance == PerformanceTier::High     ? kMaximumPopups
+      : performance == PerformanceTier::Medium ? 60U
+                                                : 32U;
+  budget.popupLimit = std::clamp<std::size_t>(
+      static_cast<std::size_t>(std::floor(popupSlots * popupDensity)), 1U,
+      hardwarePopupCeiling);
+  budget.detailedGooseLimit = performance == PerformanceTier::High     ? 3U
+                              : performance == PerformanceTier::Medium ? 2U
+                                                                        : 1U;
+  const double gooseTierFactor = performance == PerformanceTier::High     ? 1.0
+                                 : performance == PerformanceTier::Medium ? 0.72
+                                                                           : 0.46;
+  constexpr double kAverageGoosePixels = 100.0 * 100.0;
+  const double gooseSlots = (area * 0.16) / (kAverageGoosePixels * scaleSquared);
+  const std::size_t hardwareGooseCeiling =
+      performance == PerformanceTier::High     ? 67U
+      : performance == PerformanceTier::Medium ? 40U
+                                                : 24U;
+  budget.gooseLimit = std::clamp<std::size_t>(
+      static_cast<std::size_t>(std::floor(gooseSlots * gooseTierFactor)), 3U,
+      hardwareGooseCeiling);
+  return budget;
+}
+
 bool ParseTimestamp(const std::wstring& value, double& seconds) {
   const auto separator = value.find(L':');
   if (separator == std::wstring::npos) {
@@ -247,7 +343,7 @@ Options:
   --fake-reboot              Launch GooseBootPreview after the finale (lab)
   --boot-game                Reserved: unavailable without verified firmware artifacts
   --vm-confirmed             Development-build compatibility flag
-  --preview                  960x540 window with no desktop effects
+  --preview                  Responsive window with no desktop effects
   --no-desktop-effects       Disable cursor and external-window movement
   --mute                     Disable system-style alert sounds
   --no-flashes               Disable full-frame flash pulses
@@ -458,6 +554,16 @@ void GooseEntity::SetPosition(Vec2 position) {
   UpdateRig(0.0f);
 }
 
+void GooseEntity::SetVisualScale(float scale) {
+  visualScale_ = std::clamp(scale, 0.65f, 1.75f);
+  parameters_ = GooseParameters{};
+  parameters_.walkSpeed *= visualScale_;
+  parameters_.runSpeed *= visualScale_;
+  parameters_.chargeSpeed *= visualScale_;
+  parameters_.accelerationNormal *= visualScale_;
+  parameters_.accelerationCharged *= visualScale_;
+}
+
 float GooseEntity::MaximumSpeed() const {
   switch (tier_) {
     case SpeedTier::Walk: return parameters_.walkSpeed;
@@ -493,7 +599,8 @@ void GooseEntity::Update(float deltaSeconds, RectF bounds) {
 
   // An offstage goose is allowed well past the edge so it can leave the frame
   // entirely; a negative margin turns the clamp into an outer safety rail.
-  const float margin = offstage_ ? -kOffstageMargin : kBoundsMargin;
+  const float margin = offstage_ ? -kOffstageMargin * visualScale_
+                                 : kBoundsMargin * visualScale_;
   if (bounds.Width() <= margin * 2.0f) position_.x = bounds.Center().x;
   else position_.x = std::clamp(position_.x, bounds.left + margin, bounds.right - margin);
   if (bounds.Height() <= margin * 2.0f) position_.y = bounds.Center().y;

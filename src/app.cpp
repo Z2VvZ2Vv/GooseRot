@@ -21,8 +21,21 @@ constexpr double kShutdownVisualDuration = 9.5;
 // The scenario's own ceiling: sixty-seven geese, never one more.
 constexpr std::size_t kMaximumGeese = 67U;
 
-// Photos the scene keeps on the desktop at once.
-std::size_t PropLimit(RunMode mode) { return mode == RunMode::Lab ? 48U : 36U; }
+PerformanceTier DetectPerformanceTier(RectF canvas) {
+  MEMORYSTATUSEX memory{};
+  memory.dwLength = sizeof(memory);
+  const std::uint64_t physicalMemory = GlobalMemoryStatusEx(&memory)
+                                           ? memory.ullTotalPhys
+                                           : 0ULL;
+  SYSTEM_INFO system{};
+  GetNativeSystemInfo(&system);
+  const std::uint64_t width = static_cast<std::uint64_t>(
+      std::max(0.0f, std::floor(canvas.Width())));
+  const std::uint64_t height = static_cast<std::uint64_t>(
+      std::max(0.0f, std::floor(canvas.Height())));
+  return ClassifyPerformance(physicalMemory, system.dwNumberOfProcessors,
+                             width * height);
+}
 
 // How long a goose is given to walk a leg of a delivery before the photo is
 // released on its own. Derived from the actual distance so a long walk across a
@@ -44,6 +57,7 @@ GooseRotApp::GooseRotApp(HINSTANCE instance, AppConfig config,
       config_(config),
       conclusionHook_(std::move(conclusionHook)),
       random_(config.seed),
+      visualRandom_(config.seed ^ 0x1A667U),
       audioRandom_(config.seed ^ 0xA71067U),
       keyboardRandom_(config.seed ^ 0xBADC067U) {}
 
@@ -65,23 +79,20 @@ bool GooseRotApp::Initialize(std::wstring& error) {
                        [this]() { Tick(); }, [this]() { exiting_ = true; Cleanup(); }, error)) {
     return false;
   }
+  UpdateExperienceBudget(true);
   const bool desktopEffects = config_.desktopEffects && !config_.preview;
   if (desktopEffects && !watchdog_.Start(error)) return false;
-  desktop_ = std::make_unique<DesktopDirector>(desktopEffects, config_.primaryMonitorOnly,
+  desktop_ = std::make_unique<DesktopDirector>(desktopEffects,
+                                               overlay_.IsPrimaryMonitorOnly(),
                                                desktopEffects ? &watchdog_ : nullptr);
 
   const RectF bounds = overlay_.CanvasBounds();
-  const POINT popupTopLeft = overlay_.CanvasToScreen({bounds.left, bounds.top});
-  const POINT popupBottomRight = overlay_.CanvasToScreen({bounds.right, bounds.bottom});
-  popups_.SetBounds({std::min(popupTopLeft.x, popupBottomRight.x),
-                     std::min(popupTopLeft.y, popupBottomRight.y),
-                     std::max(popupTopLeft.x, popupBottomRight.x),
-                     std::max(popupTopLeft.y, popupBottomRight.y)});
   patrolFocus_ = bounds.Center();
   if (initialEntrancePending_) {
     std::uniform_int_distribution<int> edge(0, 3);
     std::uniform_real_distribution<float> along(0.28f, 0.72f);
-    const float clearance = GooseEntity::kBoundsMargin + 28.0f;
+    const float clearance = (GooseEntity::kBoundsMargin + 28.0f) *
+                            experienceBudget_.layoutScale;
     Vec2 entrance;
     switch (edge(random_)) {
       case 0:
@@ -102,10 +113,12 @@ bool GooseRotApp::Initialize(std::wstring& error) {
         break;
     }
     geese_.emplace_back(entrance);
+    geese_.back().SetVisualScale(experienceBudget_.layoutScale);
     geese_.front().SetOffstage(true);
     geese_.front().SetTarget(entrance);
   } else {
     geese_.emplace_back(bounds.Center());
+    geese_.back().SetVisualScale(experienceBudget_.layoutScale);
   }
   auraReferenceCursor_ = desktop_->CursorPosition();
   leftMouseWasDown_ = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
@@ -132,7 +145,14 @@ int GooseRotApp::Run() {
 
   LARGE_INTEGER frequency{};
   QueryPerformanceFrequency(&frequency);
-  const LONGLONG framePeriod = frequency.QuadPart / 60;  // ticks per 60 Hz frame
+  // Low-tier machines also get a 30 Hz presentation budget. The story clock
+  // remains QPC-based, so this halves compositing pressure without slowing the
+  // experience or changing any deadline.
+  const auto framePeriodForTier = [this, &frequency]() {
+    const unsigned targetFrameRate =
+        performanceTier_ == PerformanceTier::Low ? 30U : 60U;
+    return std::max<LONGLONG>(1, frequency.QuadPart / targetFrameRate);
+  };
   LARGE_INTEGER nextFrame{};
   QueryPerformanceCounter(&nextFrame);
 
@@ -182,7 +202,9 @@ int GooseRotApp::Run() {
       break;
     }
 
-    nextFrame.QuadPart += framePeriod;
+    // A preview resize or display change can move the software surface into or
+    // out of the low tier while the process is running.
+    nextFrame.QuadPart += framePeriodForTier();
     QueryPerformanceCounter(&now);
     if (nextFrame.QuadPart < now.QuadPart) nextFrame = now;  // dropped frames: don't spiral
   }
@@ -254,7 +276,7 @@ void GooseRotApp::ApplyBaseline(double logicalTime) {
   }
   if (logicalTime >= phase::kGooseReturn) {
     const std::size_t baselineProps = std::min<std::size_t>(
-        PropLimit(config_.mode),
+        experienceBudget_.imageLimit,
         1U + static_cast<std::size_t>((logicalTime - phase::kGooseReturn) / 7.0));
     // Nothing was carried in before the resume point: these are already pinned,
     // and the goose that would have fetched them never left.
@@ -303,6 +325,7 @@ void GooseRotApp::Tick() {
                                                      config_.durationScale);
   realTime_ += advance.wallDelta;
   logicalTime_ += advance.logicalDelta;
+  UpdateExperienceBudget();
 
   if (desktop_) desktop_->PollPendingMutations();
   if (UpdateEmergencyExit(advance.wallDelta) || !overlay_.Handle()) return;
@@ -409,7 +432,7 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
       // The file does not appear from nowhere: the goose stops, stamps the
       // desktop, and the window opens under its beak.
       const Vec2 beak = geese_.empty() ? overlay_.CanvasBounds().Center()
-                                       : geese_.front().Rig().beakTip;
+                                       : geese_.front().VisualBeakTip();
       const POINT anchor = overlay_.CanvasToScreen(beak);
       notepadText_.clear();
       typist_.Reset(logicalTime_);
@@ -607,16 +630,16 @@ void GooseRotApp::PollMouseButton() {
 // does not turn every errand into a hike across the whole screen.
 Vec2 GooseRotApp::OffstagePointNear(Vec2 origin) const {
   const RectF bounds = overlay_.CanvasBounds();
-  constexpr float kClearance = 150.0f;
+  const float clearance = 150.0f * experienceBudget_.layoutScale;
   const float toLeft = origin.x - bounds.left;
   const float toRight = bounds.right - origin.x;
   const float toTop = origin.y - bounds.top;
   const float toBottom = bounds.bottom - origin.y;
   const float nearest = std::min({toLeft, toRight, toTop, toBottom});
-  if (nearest == toLeft) return {bounds.left - kClearance, origin.y};
-  if (nearest == toRight) return {bounds.right + kClearance, origin.y};
-  if (nearest == toTop) return {origin.x, bounds.top - kClearance};
-  return {origin.x, bounds.bottom + kClearance};
+  if (nearest == toLeft) return {bounds.left - clearance, origin.y};
+  if (nearest == toRight) return {bounds.right + clearance, origin.y};
+  if (nearest == toTop) return {origin.x, bounds.top - clearance};
+  return {origin.x, bounds.bottom + clearance};
 }
 
 // The staged walk-out, as opposed to a prop errand: the flock always leaves
@@ -626,7 +649,8 @@ void GooseRotApp::SendFlockOffstage() {
   flockOffstage_ = true;
   for (GooseEntity& goose : geese_) {
     const bool exitLeft = goose.Position().x < bounds.Center().x;
-    const float x = exitLeft ? bounds.left - 220.0f : bounds.right + 220.0f;
+    const float clearance = 220.0f * experienceBudget_.layoutScale;
+    const float x = exitLeft ? bounds.left - clearance : bounds.right + clearance;
     goose.SetOffstage(true);
     goose.SetTarget({x, goose.Position().y}, SpeedTier::Run, false);
   }
@@ -643,8 +667,9 @@ void GooseRotApp::BringFlockBack() {
     // reposition happens entirely off screen, so nothing visibly teleports.
     const float rank = static_cast<float>(index);
     const bool fromLeft = goose.Position().x > bounds.Center().x;
-    const float entranceX = fromLeft ? bounds.left - 90.0f - rank * 70.0f
-                                     : bounds.right + 90.0f + rank * 70.0f;
+    const float scale = experienceBudget_.layoutScale;
+    const float entranceX = fromLeft ? bounds.left - 90.0f * scale - rank * 70.0f * scale
+                                     : bounds.right + 90.0f * scale + rank * 70.0f * scale;
     goose.SetPosition({entranceX, bounds.top + bounds.Height() * (0.42f + 0.1f * rank)});
     goose.SetTarget({bounds.left + bounds.Width() * (fromLeft ? 0.34f : 0.66f),
                      bounds.top + bounds.Height() * 0.56f},
@@ -737,6 +762,97 @@ void GooseRotApp::UpdateGlitch(double logicalDelta) {
   }
 }
 
+void GooseRotApp::UpdateExperienceBudget(bool force) {
+  const RectF bounds = overlay_.CanvasBounds();
+  // WM_DISPLAYCHANGE can switch the overlay to a primary-only safety surface.
+  // Keep the desktop-effects target policy in lockstep even if the new canvas
+  // happens to have the same pixel dimensions as the previous one.
+  if (desktop_) {
+    desktop_->SetPrimaryMonitorOnly(overlay_.IsPrimaryMonitorOnly());
+  }
+  // Canvas coordinates can retain the same width and height while a monitor
+  // is moved to another virtual-desktop origin. Refresh the screen-space
+  // companion bounds before the size-only budget fast path.
+  const POINT topLeft = overlay_.CanvasToScreen({bounds.left, bounds.top});
+  const POINT bottomRight = overlay_.CanvasToScreen({bounds.right, bounds.bottom});
+  popups_.SetBounds({std::min(topLeft.x, bottomRight.x),
+                     std::min(topLeft.y, bottomRight.y),
+                     std::max(topLeft.x, bottomRight.x),
+                     std::max(topLeft.y, bottomRight.y)});
+  const int width = std::max(0, static_cast<int>(std::lround(bounds.Width())));
+  const int height = std::max(0, static_cast<int>(std::lround(bounds.Height())));
+  if (!force && width == budgetCanvasWidth_ && height == budgetCanvasHeight_) return;
+
+  budgetCanvasWidth_ = width;
+  budgetCanvasHeight_ = height;
+  const float previousScale = std::max(0.01f, experienceBudget_.layoutScale);
+  performanceTier_ = DetectPerformanceTier(bounds);
+  experienceBudget_ = ComputeExperienceBudget(bounds, config_.mode, performanceTier_);
+  const float scaleRatio = experienceBudget_.layoutScale / previousScale;
+  for (VisualSprite& sprite : sprites_) {
+    sprite.size = std::clamp(sprite.size * scaleRatio,
+                             72.0f * experienceBudget_.layoutScale,
+                             190.0f * experienceBudget_.layoutScale);
+    const float margin = std::min(sprite.size * 0.55f,
+                                  std::min(bounds.Width(), bounds.Height()) * 0.5f);
+    if (bounds.Width() > margin * 2.0f) {
+      sprite.targetCenter.x = std::clamp(sprite.targetCenter.x,
+                                         bounds.left + margin, bounds.right - margin);
+    } else {
+      sprite.targetCenter.x = bounds.Center().x;
+    }
+    if (bounds.Height() > margin * 2.0f) {
+      sprite.targetCenter.y = std::clamp(sprite.targetCenter.y,
+                                         bounds.top + margin, bounds.bottom - margin);
+    } else {
+      sprite.targetCenter.y = bounds.Center().y;
+    }
+    if (sprite.stage == PropStage::Placed) sprite.center = sprite.targetCenter;
+  }
+  for (GooseEntity& goose : geese_) {
+    goose.SetVisualScale(experienceBudget_.layoutScale);
+  }
+
+  popups_.SetCapacity(experienceBudget_.popupLimit);
+  TrimSceneToBudget();
+}
+
+void GooseRotApp::TrimSceneToBudget() {
+  while (sprites_.size() > experienceBudget_.imageLimit) {
+    // Prefer retiring a settled image. Removing an in-flight image is safe as
+    // a fallback, but keeping deliveries intact makes a display change read as
+    // a density adjustment rather than a broken animation.
+    auto candidate = std::find_if(
+        sprites_.begin(), sprites_.end(),
+        [](const VisualSprite& sprite) { return !sprite.HasCarrier(); });
+    if (candidate == sprites_.end()) candidate = std::prev(sprites_.end());
+    if (candidate->HasCarrier() && candidate->carrierIndex < geese_.size()) {
+      GooseEntity& carrier = geese_[candidate->carrierIndex];
+      carrier.SetOffstage(false);
+      carrier.SetTarget(overlay_.CanvasBounds().Center(), SpeedTier::Run);
+    }
+    sprites_.erase(candidate);
+  }
+
+  const std::size_t gooseLimit = std::max<std::size_t>(1U, experienceBudget_.gooseLimit);
+  if (geese_.size() > gooseLimit) {
+    for (VisualSprite& sprite : sprites_) {
+      if (!sprite.HasCarrier() || sprite.carrierIndex < gooseLimit) continue;
+      sprite.stage = PropStage::Placed;
+      sprite.stageChangedAt = logicalTime_;
+      sprite.center = sprite.targetCenter;
+      sprite.everPlaced = true;
+      sprite.carrierIndex = 0U;
+    }
+    geese_.resize(gooseLimit);
+  }
+  const std::size_t freeImageSlots = experienceBudget_.imageLimit > sprites_.size()
+                                         ? experienceBudget_.imageLimit - sprites_.size()
+                                         : 0U;
+  pendingPropOrders_ = std::min(pendingPropOrders_,
+                                static_cast<int>(freeImageSlots));
+}
+
 float GooseRotApp::GraffitiProgress() const {
   if (logicalTime_ < phase::kGraffiti) return 0.0f;
   return static_cast<float>(
@@ -775,7 +891,7 @@ void GooseRotApp::UpdateNotepad() {
     // It was destroyed after too many refusals: the inspector reopens it and
     // picks the file back up exactly where the typing stopped.
     const Vec2 beak = geese_.empty() ? overlay_.CanvasBounds().Center()
-                                     : geese_.front().Rig().beakTip;
+                                     : geese_.front().VisualBeakTip();
     const POINT anchor = overlay_.CanvasToScreen(beak);
     notepad_.Show(instance_, &anchor);
     if (notepad_.IsOpen()) notepad_.SetText(notepadText_);
@@ -870,7 +986,7 @@ void GooseRotApp::UpdatePopups() {
   POINT issuePoint{};
   if (!notepad_.TryGetIssuePoint(issuePoint)) {
     const RectF bounds = overlay_.CanvasBounds();
-    const Vec2 anchor = geese_.empty() ? bounds.Center() : geese_.front().Rig().beakTip;
+    const Vec2 anchor = geese_.empty() ? bounds.Center() : geese_.front().VisualBeakTip();
     issuePoint = overlay_.CanvasToScreen(anchor);
   }
   popups_.SetOrigin(issuePoint);
@@ -882,9 +998,9 @@ void GooseRotApp::UpdatePopups() {
         L"YOU CANNOT OUT-CLICK THE PAPERWORK.",
         L"EVERY DISMISSAL REQUIRES TWO FOLLOW-UPS."};
     std::uniform_int_distribution<std::size_t> pick(0, lines.size() - 1U);
-    SetBubble(popups_.AtCap() ? L"100 NOTICES. ADMINISTRATIVE CAP REACHED."
-                              : lines[pick(random_)],
-              4.5);
+    const std::wstring capMessage = std::to_wstring(popups_.Capacity()) +
+                                    L" NOTICES. DISPLAY CAP REACHED.";
+    SetBubble(popups_.AtCap() ? capMessage : lines[pick(random_)], 4.5);
     if (!geese_.empty()) geese_.front().Honk(0.45f);
     KickGlitch(0.18f);
   }
@@ -1100,7 +1216,8 @@ void GooseRotApp::UpdateCursorChaos() {
 void GooseRotApp::ScheduleWindowAction() {
   const auto target = desktop_->PickRandomWindow(random_);
   if (!target) {
-    geese_.front().SetTarget(RandomCanvasPoint(90.0f), SpeedTier::Run, true);
+    geese_.front().SetTarget(RandomCanvasPoint(90.0f * experienceBudget_.layoutScale),
+                             SpeedTier::Run, true);
     pendingAction_ = {PendingActionKind::FauxPanel, logicalTime_ + 3.5, {}, 0};
     return;
   }
@@ -1200,10 +1317,11 @@ void GooseRotApp::UpdateGooseTargets(float deltaSeconds) {
     GooseEntity& goose = geese_[index];
     if (!goose.IsOffstage() || leaving[index] || flockOffstage_) continue;
     const Vec2 position = goose.Position();
-    const bool inside = position.x > bounds.left + GooseEntity::kBoundsMargin &&
-                        position.x < bounds.right - GooseEntity::kBoundsMargin &&
-                        position.y > bounds.top + GooseEntity::kBoundsMargin &&
-                        position.y < bounds.bottom - GooseEntity::kBoundsMargin;
+    const float gooseMargin = GooseEntity::kBoundsMargin * goose.VisualScale();
+    const bool inside = position.x > bounds.left + gooseMargin &&
+                        position.x < bounds.right - gooseMargin &&
+                        position.y > bounds.top + gooseMargin &&
+                        position.y < bounds.bottom - gooseMargin;
     if (inside) goose.SetOffstage(false);
   }
 
@@ -1362,14 +1480,14 @@ void GooseRotApp::UpdateSprites() {
           sprite.stageChangedAt = logicalTime_;
           sprite.stageDeadline =
               logicalTime_ + DeliveryDeadline(carrier.Position(), sprite.targetCenter);
-          sprite.center = carrier.Rig().beakTip;
+          sprite.center = carrier.VisualBeakTip();
           carrier.Honk(0.3f);
         }
         break;
       }
       case PropStage::Carried: {
         const GooseEntity& carrier = geese_[sprite.carrierIndex];
-        sprite.center = carrier.Rig().beakTip;
+        sprite.center = carrier.VisualBeakTip();
         if (carrier.BeakDistanceTo(sprite.targetCenter) < 28.0f ||
             logicalTime_ >= sprite.stageDeadline) {
           sprite.stage = PropStage::Placed;
@@ -1398,7 +1516,7 @@ void GooseRotApp::UpdateSprites() {
   if (logicalTime_ < phase::kGooseReturn || logicalTime_ >= phase::kCompanionCutoff) return;
   const bool owed = pendingPropOrders_ > 0;
   if (!owed && logicalTime_ < nextSpriteAt_) return;
-  if (sprites_.size() >= PropLimit(config_.mode)) {
+  if (sprites_.size() >= experienceBudget_.imageLimit) {
     // The wall is already full, so a replacement owed for a torn photo has
     // nowhere to go; forgetting it here is what stops the debt growing forever.
     pendingPropOrders_ = 0;
@@ -1415,13 +1533,17 @@ void GooseRotApp::UpdateSprites() {
   std::uniform_real_distribution<double> delay(
       (3.8 - escalation * 2.3) * modeScale,
       (6.4 - escalation * 3.4) * modeScale);
-  nextSpriteAt_ = logicalTime_ + (owed ? 0.6 : delay(random_));
+  nextSpriteAt_ = logicalTime_ + (owed ? 0.6 : delay(visualRandom_));
 }
 
 // Every photo arrives in a beak. A free goose walks off the nearest edge, comes
 // back with it and pins it down; if no goose is free the spawn is simply
 // deferred, because a picture that materialises on its own has no author.
 bool GooseRotApp::SpawnSprite(std::size_t forcedCarrier) {
+  // Every entry point, including resume and the scripted first delivery, goes
+  // through this guard. The performance budget therefore applies identically
+  // to Safe, Normal, Lab and --preview.
+  if (sprites_.size() >= experienceBudget_.imageLimit) return false;
   // Hand the prop to a goose that is not already ferrying one. Capping carried
   // props to one per goose is what keeps the carriers from thrashing.
   std::vector<unsigned char> carrierBusy(geese_.size(), 0U);
@@ -1444,12 +1566,13 @@ bool GooseRotApp::SpawnSprite(std::size_t forcedCarrier) {
       IDR_USER_GOOSE_STORE, IDR_USER_GOOSE_PUNCHY, IDR_USER_GOOSE_GANGSTER,
       IDR_USER_GOOSE_JET};
   std::uniform_int_distribution<std::size_t> resource(0, resources.size() - 1);
-  std::uniform_real_distribution<float> size(108.0f, 176.0f);
+  std::uniform_real_distribution<float> size(108.0f * experienceBudget_.layoutScale,
+                                              176.0f * experienceBudget_.layoutScale);
   std::uniform_real_distribution<float> angle(-12.0f, 12.0f);
   VisualSprite sprite;
-  sprite.resourceId = resources[resource(random_)];
-  sprite.size = size(random_);
-  sprite.angleDegrees = angle(random_);
+  sprite.resourceId = resources[resource(visualRandom_)];
+  sprite.size = size(visualRandom_);
+  sprite.angleDegrees = angle(visualRandom_);
   sprite.createdAt = logicalTime_;
   sprite.lifetime = std::max(12.0, phase::kEnd + 10.0 - logicalTime_);
   sprite.targetCenter = FindSpriteLandingPoint(sprite.size);
@@ -1462,7 +1585,7 @@ bool GooseRotApp::SpawnSprite(std::size_t forcedCarrier) {
     sprite.stage = PropStage::Carried;
     sprite.stageDeadline =
         logicalTime_ + DeliveryDeadline(goose.Position(), sprite.targetCenter);
-    sprite.center = goose.Rig().beakTip;
+    sprite.center = goose.VisualBeakTip();
   } else {
     sprite.stage = PropStage::Fetching;
     sprite.fetchPoint = OffstagePointNear(goose.Position());
@@ -1559,15 +1682,17 @@ void GooseRotApp::UpdatePropInteractions() {
 Vec2 GooseRotApp::FindSpriteLandingPoint(float size) {
   const RectF bounds = overlay_.CanvasBounds();
   const RectF tag = TagZone(bounds);
-  const float margin = std::max(58.0f, size * 0.55f);
+  const float scale = experienceBudget_.layoutScale;
+  const float margin = std::max(58.0f * scale, size * 0.55f);
   const float reach = size * 0.5f;
-  Vec2 fallback = RandomCanvasPoint(margin);
+  Vec2 fallback = RandomCanvasPoint(margin, visualRandom_);
   float bestClearance = -1.0f;
   for (int attempt = 0; attempt < 48; ++attempt) {
-    const Vec2 candidate = RandomCanvasPoint(margin);
-    const bool auraHud = candidate.x > bounds.right - 340.0f && candidate.y < bounds.top + 160.0f;
-    const bool clipboardZone = candidate.x < bounds.left + 480.0f &&
-                               candidate.y > bounds.bottom - 230.0f;
+    const Vec2 candidate = RandomCanvasPoint(margin, visualRandom_);
+    const bool auraHud = candidate.x > bounds.right - 340.0f * scale &&
+                         candidate.y < bounds.top + 160.0f * scale;
+    const bool clipboardZone = candidate.x < bounds.left + 480.0f * scale &&
+                               candidate.y > bounds.bottom - 230.0f * scale;
     // The tag's footprint is off limits for the whole run, not only once the
     // paint starts: a photo dropped there early would still be covering the 67
     // an hour later, and on a small screen that hides the tag completely.
@@ -1592,7 +1717,8 @@ Vec2 GooseRotApp::FindSpriteLandingPoint(float size) {
 }
 
 std::size_t GooseRotApp::DesiredGooseCount() const {
-  return std::min(DesiredFlockSize(logicalTime_, extraGeese_), kMaximumGeese);
+  return std::min({DesiredFlockSize(logicalTime_, extraGeese_), kMaximumGeese,
+                   experienceBudget_.gooseLimit});
 }
 
 void GooseRotApp::EnsureGooseCount() {
@@ -1603,7 +1729,8 @@ void GooseRotApp::EnsureGooseCount() {
   const std::size_t index = geese_.size();
   const float lane = 0.18f + static_cast<float>(
       std::fmod(static_cast<double>(index) * 0.38196601125, 0.64));
-  const float clearance = GooseEntity::kBoundsMargin + 36.0f;
+  const float clearance = (GooseEntity::kBoundsMargin + 36.0f) *
+                          experienceBudget_.layoutScale;
   Vec2 entrance{};
   Vec2 target{};
   switch ((static_cast<std::size_t>(config_.seed) + index) % 4U) {
@@ -1625,6 +1752,7 @@ void GooseRotApp::EnsureGooseCount() {
       break;
   }
   GooseEntity goose(entrance);
+  goose.SetVisualScale(experienceBudget_.layoutScale);
   goose.SetOffstage(true);
   goose.SetTarget(target, SpeedTier::Run, true);
   goose.Honk(0.35f);
@@ -1639,12 +1767,16 @@ void GooseRotApp::EnsureGooseCount() {
 }
 
 Vec2 GooseRotApp::RandomCanvasPoint(float margin) {
+  return RandomCanvasPoint(margin, random_);
+}
+
+Vec2 GooseRotApp::RandomCanvasPoint(float margin, std::mt19937& generator) {
   const RectF bounds = overlay_.CanvasBounds();
   const float horizontalMargin = std::min(margin, bounds.Width() * 0.5f);
   const float verticalMargin = std::min(margin, bounds.Height() * 0.5f);
   std::uniform_real_distribution<float> x(bounds.left + horizontalMargin, bounds.right - horizontalMargin);
   std::uniform_real_distribution<float> y(bounds.top + verticalMargin, bounds.bottom - verticalMargin);
-  return {x(random_), y(random_)};
+  return {x(generator), y(generator)};
 }
 
 void GooseRotApp::SetBubble(std::wstring text, double durationSeconds) {
@@ -1738,6 +1870,9 @@ RenderState GooseRotApp::BuildRenderState() const {
                           ? std::max(0.0, realTime_ - shutdownStartedRealTime_)
                           : -1.0;
   state.mode = config_.mode;
+  state.performanceTier = performanceTier_;
+  state.layoutScale = experienceBudget_.layoutScale;
+  state.detailedGooseLimit = experienceBudget_.detailedGooseLimit;
   state.seed = config_.seed;
   state.geese = &geese_;
   state.sprites = &sprites_;

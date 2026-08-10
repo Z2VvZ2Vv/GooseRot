@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <cstdint>
 #include <cwchar>
@@ -675,6 +677,48 @@ double TimeForPopupCount(std::size_t count) {
   return high + 0.001;
 }
 
+UINT WindowDpiForTest(HWND window) {
+  using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+  static GetDpiForWindowFn getDpiForWindow = []() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    const FARPROC address = user32 ? GetProcAddress(user32, "GetDpiForWindow") : nullptr;
+    GetDpiForWindowFn function = nullptr;
+    static_assert(sizeof(function) == sizeof(address), "Win32 procedure pointers must fit");
+    std::memcpy(&function, &address, sizeof(function));
+    return function;
+  }();
+  if (getDpiForWindow && window) {
+    const UINT dpi = getDpiForWindow(window);
+    if (dpi > 0U) return dpi;
+  }
+  HDC dc = GetDC(window);
+  if (!dc) return 96U;
+  const int dpi = GetDeviceCaps(dc, LOGPIXELSY);
+  ReleaseDC(window, dc);
+  return dpi > 0 ? static_cast<UINT>(dpi) : 96U;
+}
+
+std::vector<RECT> PopupRectangles() {
+  std::vector<RECT> rectangles;
+  for (HWND popup = FindWindowExW(nullptr, nullptr, L"GooseRotPopup", nullptr);
+       popup != nullptr;
+       popup = FindWindowExW(nullptr, popup, L"GooseRotPopup", nullptr)) {
+    RECT rectangle{};
+    if (GetWindowRect(popup, &rectangle)) rectangles.push_back(rectangle);
+  }
+  return rectangles;
+}
+
+bool RectanglesDoNotOverlap(const std::vector<RECT>& rectangles) {
+  for (std::size_t left = 0; left < rectangles.size(); ++left) {
+    for (std::size_t right = left + 1U; right < rectangles.size(); ++right) {
+      RECT overlap{};
+      if (IntersectRect(&overlap, &rectangles[left], &rectangles[right])) return false;
+    }
+  }
+  return true;
+}
+
 void TestCompactPopupLifecycle() {
   RECT workArea{};
   Expect(SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0) != FALSE,
@@ -685,13 +729,42 @@ void TestCompactPopupLifecycle() {
                    workArea.top + (workArea.bottom - workArea.top) / 2});
   std::mt19937 random(67U);
   const double onePopupAt = TimeForPopupCount(1U);
+
+  {
+    gooserot::PopupSwarm limited;
+    limited.SetBounds(workArea);
+    limited.SetCapacity(8U);
+    limited.Tick(GetModuleHandleW(nullptr), random, onePopupAt);
+    Expect(limited.Count() == 1,
+           "a reduced popup budget preserves the first narrative notice");
+    HWND limitedPopup = FindWindowW(L"GooseRotPopup", nullptr);
+    HWND limitedButton = limitedPopup
+                             ? FindWindowExW(limitedPopup, nullptr, L"BUTTON", nullptr)
+                             : nullptr;
+    const LRESULT fontBefore = limitedButton ? SendMessageW(limitedButton, WM_GETFONT, 0, 0) : 0;
+    limited.SetCapacity(8U);
+    const LRESULT fontAfter = limitedButton ? SendMessageW(limitedButton, WM_GETFONT, 0, 0) : 0;
+    Expect(fontBefore != 0 && fontBefore == fontAfter,
+           "setting an unchanged popup budget avoids rebuilding live controls");
+    limited.CloseAll();
+  }
+
   swarm.Tick(GetModuleHandleW(nullptr), random, onePopupAt);
   Expect(swarm.Count() == 1, "the compact-popup schedule creates one notice");
   HWND popup = FindWindowW(L"GooseRotPopup", nullptr);
   RECT rectangle{};
   Expect(popup && GetWindowRect(popup, &rectangle), "the compact GooseRot notice is visible");
-  Expect(rectangle.right - rectangle.left == 348 && rectangle.bottom - rectangle.top == 186,
-         "the restored notice keeps the old compact dimensions");
+  const float dpiScale = static_cast<float>(WindowDpiForTest(popup)) / 96.0f;
+  const float popupScale = gooserot::ResponsiveLayoutScale(
+                               {0.0f, 0.0f,
+                                static_cast<float>(workArea.right - workArea.left) / dpiScale,
+                                static_cast<float>(workArea.bottom - workArea.top) / dpiScale}) *
+                           dpiScale;
+  const int expectedWidth = std::max(220, static_cast<int>(std::lround(348.0f * popupScale)));
+  const int expectedHeight = std::max(126, static_cast<int>(std::lround(186.0f * popupScale)));
+  Expect(rectangle.right - rectangle.left == expectedWidth &&
+             rectangle.bottom - rectangle.top == expectedHeight,
+         "the notice dimensions follow the current work area");
   const LONG_PTR extendedStyle = popup ? GetWindowLongPtrW(popup, GWL_EXSTYLE) : 0;
   Expect((extendedStyle & WS_EX_LAYERED) == 0,
          "compact notices appear immediately without fade or layered effects");
@@ -782,6 +855,55 @@ void TestCompactPopupsUseDispersedPlacement() {
     }
     Expect(reused, "a replacement reuses the vacated cell without overlap drift");
   }
+
+  const std::vector<RECT> crowdedRectangles = PopupRectangles();
+  const int popupWidth = crowdedRectangles.empty()
+                             ? 348
+                             : crowdedRectangles.front().right - crowdedRectangles.front().left;
+  const int popupHeight = crowdedRectangles.empty()
+                              ? 186
+                              : crowdedRectangles.front().bottom - crowdedRectangles.front().top;
+  const int workWidth = std::max(1L, workArea.right - workArea.left);
+  const int workHeight = std::max(1L, workArea.bottom - workArea.top);
+  const std::size_t fittingCapacity = static_cast<std::size_t>(
+      std::max(1, workWidth / std::max(1, popupWidth)) *
+      std::max(1, workHeight / std::max(1, popupHeight)));
+  const std::size_t layoutCapacity = std::min<std::size_t>(8U, fittingCapacity);
+  swarm.SetCapacity(layoutCapacity);
+  Expect(swarm.Count() == static_cast<int>(layoutCapacity) && swarm.AtCap(),
+         "a tighter machine budget retires excess notices immediately");
+  const std::vector<RECT> budgetedRectangles = PopupRectangles();
+  Expect(budgetedRectangles.size() == layoutCapacity &&
+             RectanglesDoNotOverlap(budgetedRectangles),
+         "an aspect-aware popup grid does not overlap when the notices fit");
+
+  RECT compactBounds = workArea;
+  const int compactWidth = std::min(
+      workWidth, std::max(popupWidth, std::max(360, workWidth / 2)));
+  const int compactHeight = std::min(
+      workHeight, std::max(popupHeight, std::max(240, workHeight / 2)));
+  compactBounds.right = compactBounds.left + compactWidth;
+  compactBounds.bottom = compactBounds.top + compactHeight;
+  const std::size_t compactCapacity = std::min(
+      layoutCapacity,
+      static_cast<std::size_t>(
+          std::max(1, compactWidth / std::max(1, popupWidth)) *
+          std::max(1, compactHeight / std::max(1, popupHeight))));
+  swarm.SetCapacity(compactCapacity);
+  swarm.SetBounds(compactBounds);
+  bool allReflowed = true;
+  const std::vector<RECT> compactRectangles = PopupRectangles();
+  for (const RECT& rectangle : compactRectangles) {
+    if (rectangle.left < compactBounds.left ||
+        rectangle.top < compactBounds.top || rectangle.right > compactBounds.right ||
+        rectangle.bottom > compactBounds.bottom) {
+      allReflowed = false;
+      break;
+    }
+  }
+  Expect(compactRectangles.size() == compactCapacity && allReflowed &&
+             RectanglesDoNotOverlap(compactRectangles),
+         "live notices reflow without overlap inside a smaller display area");
 
   swarm.CloseAll();
   Expect(swarm.Count() == 0, "dispersed-placement cleanup closes every notice");

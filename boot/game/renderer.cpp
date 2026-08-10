@@ -364,6 +364,11 @@ Color palette_color(std::uint8_t palette) noexcept {
 
 void draw_sky(const FrameBuffer& framebuffer) noexcept {
     fill_rect(framebuffer, 0, 0, static_cast<int>(kFrameWidth), static_cast<int>(kFrameHeight), kBlack);
+    if (framebuffer.detail == RenderDetail::Reduced) {
+        fill_rect(framebuffer, 0, 46, static_cast<int>(kFrameWidth),
+                  static_cast<int>(kGroundY) - 46, kSkyLow);
+        return;
+    }
     for (int y = 46; y < static_cast<int>(kGroundY); ++y) {
         const int depth = (y - 46) * 255 / (static_cast<int>(kGroundY) - 46);
         Color band{
@@ -494,6 +499,10 @@ void draw_ground(const FrameBuffer& framebuffer, const GameState& game, Color ac
     fill_rect(framebuffer, 0, ground, static_cast<int>(kFrameWidth), height, kSubstrate);
     fill_rect(framebuffer, 0, ground, static_cast<int>(kFrameWidth), 2, accent);
     fill_rect(framebuffer, 0, ground + 2, static_cast<int>(kFrameWidth), 1, shade(accent, 1, 3));
+
+    if (framebuffer.detail == RenderDetail::Reduced) {
+        return;
+    }
 
     const std::uint32_t offset = game.scroll_fp >> 8U;
     const int dash_phase = static_cast<int>(offset % 36U);
@@ -739,7 +748,7 @@ void draw_goose(const FrameBuffer& framebuffer, const GameState& game, int shake
     const Color outline = rooted ? accent : kOutline;
     const int halo = rooted ? 3 : 0;
 
-    if (rooted) {
+    if (rooted && framebuffer.detail == RenderDetail::Detailed) {
         // Overclock after-images trailing the runner.
         for (int ghost = 1; ghost <= 3; ++ghost) {
             fill_ellipse(framebuffer, center_x - ghost * 15, feet - (ducking ? 13 : 25),
@@ -974,15 +983,19 @@ bool game_render(const GameState& game, const FrameBuffer& framebuffer) noexcept
     }
 
     draw_sky(framebuffer);
-    draw_sky_furniture(framebuffer, game, accent);
-    draw_post_log(framebuffer, game);
-    draw_memory_map(framebuffer, game);
-    draw_board_props(framebuffer, game, accent);
+    if (framebuffer.detail == RenderDetail::Detailed) {
+        draw_sky_furniture(framebuffer, game, accent);
+        draw_post_log(framebuffer, game);
+        draw_memory_map(framebuffer, game);
+        draw_board_props(framebuffer, game, accent);
+    }
     draw_ground(framebuffer, game, accent);
 
     draw_pickups(framebuffer, game, shake_x, shake_y);
     draw_obstacles(framebuffer, game, shake_x, shake_y);
-    draw_dust(framebuffer, game, accent);
+    if (framebuffer.detail == RenderDetail::Detailed) {
+        draw_dust(framebuffer, game, accent);
+    }
     draw_goose(framebuffer, game, shake_x, shake_y);
     draw_popups(framebuffer, game, accent);
 
