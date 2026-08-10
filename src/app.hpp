@@ -81,6 +81,7 @@ class GooseRotApp {
   void BeginShutdown();
   void StartShutdownVisuals();
   bool Cleanup();
+  bool RequestImmediateReboot(std::wstring& error);
   bool LaunchBootPreview();
   RenderState BuildRenderState() const;
   Vec2 RandomCanvasPoint(float margin);
@@ -182,6 +183,7 @@ class GooseRotApp {
   std::wstring bubbleText_;
   std::wstring notepadText_;
   std::wstring conclusionError_;
+  std::wstring forcedRebootError_;
 };
 
 }  // namespace gooserot

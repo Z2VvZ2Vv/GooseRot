@@ -1,6 +1,6 @@
 # GooseRot — architecture technique
 
-> **Contrat cible :** `lab` est un profil destructeur réservé à une VM isolée et jetable ; il peut corrompre les fichiers, le Registre et le démarrage. La sortie par `Esc` maintenu deux secondes appartient exclusivement à `safe`. Le code actuel n’est pas encore aligné : ses chemins restent réversibles et son traitement de `Esc` est commun aux profils.
+> **Contrat cible :** `lab` est un profil destructeur réservé à une VM isolée et jetable ; il peut corrompre les fichiers, le Registre et le démarrage. La sortie par `Esc` maintenu deux secondes appartient exclusivement à `safe`. `Normal` n’emprunte plus ce chemin ; l’écart restant concerne `lab`, dont les chemins restent réversibles et où `Esc` est encore traité.
 
 ## Choix de plateforme
 
@@ -68,7 +68,7 @@ GooseRotApp
 
 ### `SafetySupervisor`
 
-Dans l’implémentation actuelle, il possède la priorité sur tous les autres modules et gère l’arrêt d’urgence, l’unicité du processus, l’état de restauration en mémoire partagée, la restauration et les timeouts. Dans le contrat cible, l’appui de deux secondes sur `Esc` et la restauration d’urgence sont activés uniquement en `safe` ; `normal` et `lab` ne doivent pas emprunter ce chemin de sortie.
+Il possède la priorité sur tous les autres modules et gère l’arrêt d’urgence, l’unicité du processus, l’état de restauration en mémoire partagée, la restauration et les timeouts. Le garde de profil désactive désormais l’appui long sur `Esc` en `normal`. Il reste actif en `safe` et, temporairement, en `lab` ; le contrat cible prévoit de le réserver exclusivement à `safe`.
 
 ### `TimelineEngine`
 
@@ -140,7 +140,7 @@ Le texte d’un avis vient d’une table unique de triplets `{titre, corps, bout
 
 ### `TaskbarGuard`
 
-Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED` est posée exactement sur le bouton Démarrer et absorbe les clics qui l’atteignent, parce qu’un menu Démarrer ouvert recouvre toute la scène. Le rectangle vient du bouton réel quand il est identifiable — sous Windows 10, l’enfant de classe `Start` de `Shell_TrayWnd` — et d’une heuristique sur la géométrie de la barre sinon, la barre XAML de Windows 11 n’exposant pas ce bouton ; la position est réévaluée à chaque tick pour suivre une barre déplacée ou masquée automatiquement.
+Une petite fenêtre GooseRot `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED` est posée exactement sur le bouton Démarrer et absorbe les clics qui l’atteignent, parce qu’un menu Démarrer ouvert recouvre toute la scène. Elle est peinte en noir à `1/255` d’alpha — visuellement imperceptible mais toujours présente au hit-test — et conserve le curseur flèche normal. Le rectangle vient d’abord d’un descendant HWND réel (`Start` sur Windows 7/10), puis des limites du bouton exposées par UI Automation pour la barre XAML de Windows 11. Le dernier repli lit `TaskbarAl`, distingue alignement gauche/centré et gère également une barre verticale. La position est réévaluée toutes les 500 ms pour suivre une barre déplacée ou masquée automatiquement sans interroger UI Automation à chaque frame.
 
 `WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est reçu et compté sans jamais voler le focus. `MA_NOACTIVATEANDEAT` conviendrait au blocage mais supprimerait aussi le message de bouton, donc le garde ne pourrait plus signaler la tentative. Aucune fenêtre du shell n’est sous-classée, déplacée ou détruite : détruire le garde rend le bouton à Windows.
 
@@ -180,7 +180,7 @@ Une image brainrot n’apparaît jamais seule. Chaque `VisualSprite` traverse qu
 
 ### `ShutdownDirector`
 
-Dans l’état actuel du code, un iris noir grandit pendant la dernière seconde de la timeline, après que le déclencheur final est devenu visible. Le nettoyage et la restauration passent ensuite en priorité ; l’horloge visuelle ne démarre qu’après leur réussite. Une explosion plein écran et l’entrée diagonale d’une oie d’adieu sont alors rendues pendant 9,5 secondes d’horloge réelle avant la fermeture. L’indicateur d’arrêt `Esc` est redessiné au-dessus de l’iris, du noir et de l’explosion. Les trois profils conservent cette conclusion. Pour Lab seulement, le rendu remplace ensuite l’adieu par une image noire opaque et appelle une fois `RunLabConclusion(const LabStartupArtifacts&, std::wstring&)` sur le thread UI avant de fermer l’overlay.
+Dans l’état actuel du code, un iris noir grandit pendant la dernière seconde de la timeline, après que le déclencheur final est devenu visible. Le nettoyage et la restauration passent ensuite en priorité ; l’horloge visuelle ne démarre qu’après leur réussite. Une explosion plein écran et l’entrée diagonale d’une oie d’adieu sont alors rendues pendant 9,5 secondes d’horloge réelle avant la fermeture. L’indicateur d’arrêt `Esc` est redessiné au-dessus de l’iris, du noir et de l’explosion uniquement dans les profils où cette sortie est autorisée. Les trois profils conservent cette conclusion. À son terme, `normal` libère son garde clavier, active `SE_SHUTDOWN_NAME` et appelle `InitiateSystemShutdownExW` avec un délai nul, fermeture forcée et redémarrage ; `--preview` est explicitement exclu. Pour Lab seulement, le rendu remplace ensuite l’adieu par une image noire opaque et appelle une fois `RunLabConclusion(const LabStartupArtifacts&, std::wstring&)` sur le thread UI avant de fermer l’overlay.
 
 ### `BootGameHandoff`
 

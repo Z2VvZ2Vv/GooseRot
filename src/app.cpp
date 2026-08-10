@@ -224,6 +224,11 @@ int GooseRotApp::Run() {
     MessageBoxW(nullptr, conclusionError_.c_str(), L"GooseRot Lab — conclusion failed",
                 MB_OK | MB_ICONERROR | MB_TOPMOST);
   }
+  if (!forcedRebootError_.empty()) {
+    MessageBoxW(nullptr, forcedRebootError_.c_str(),
+                L"GooseRot Normal — reboot failed",
+                MB_OK | MB_ICONERROR | MB_TOPMOST);
+  }
   return exitCode_;
 }
 
@@ -384,6 +389,14 @@ void GooseRotApp::Tick() {
         !conclusionHook_(conclusionError_)) {
       if (conclusionError_.empty()) conclusionError_ = L"The Lab conclusion failed.";
       exitCode_ = 6;
+    }
+    if (ForcedRebootAfterFarewell(config_.mode, config_.preview) &&
+        completedTimeline_ && restored) {
+      // The desktop has already been restored and the farewell has completed.
+      // Release the last keyboard guard before asking Windows to close every
+      // application and restart immediately.
+      windowsKeyGuard_.Close();
+      if (!RequestImmediateReboot(forcedRebootError_)) exitCode_ = 4;
     }
     if (config_.fakeReboot && completedTimeline_ && restored) {
       bootPreviewLaunchFailed_ = !LaunchBootPreview();
@@ -599,6 +612,10 @@ void GooseRotApp::HandleEvent(const TimelineEvent& event) {
 }
 
 bool GooseRotApp::UpdateEmergencyExit(double realDeltaSeconds) {
+  if (!EmergencyExitEnabled(config_.mode)) {
+    emergencyHeldSeconds_ = 0.0;
+    return false;
+  }
   const bool escapeHeld = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
   if (escapeHeld) emergencyHeldSeconds_ += realDeltaSeconds;
   else emergencyHeldSeconds_ = 0.0;
@@ -1831,6 +1848,52 @@ bool GooseRotApp::Cleanup() {
   if (desktop_ && !desktop_->Restore()) return false;
   cleanupDone_ = true;
   return true;
+}
+
+bool GooseRotApp::RequestImmediateReboot(std::wstring& error) {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                        &token)) {
+    error = L"Unable to open the process token for the forced reboot. Error: " +
+            std::to_wstring(GetLastError());
+    return false;
+  }
+
+  LUID shutdownPrivilege{};
+  if (!LookupPrivilegeValueW(nullptr, SE_SHUTDOWN_NAME, &shutdownPrivilege)) {
+    const DWORD lookupError = GetLastError();
+    CloseHandle(token);
+    error = L"Unable to locate the Windows shutdown privilege. Error: " +
+            std::to_wstring(lookupError);
+    return false;
+  }
+
+  TOKEN_PRIVILEGES privileges{};
+  privileges.PrivilegeCount = 1;
+  privileges.Privileges[0].Luid = shutdownPrivilege;
+  privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+  SetLastError(ERROR_SUCCESS);
+  const BOOL adjusted = AdjustTokenPrivileges(
+      token, FALSE, &privileges, 0, nullptr, nullptr);
+  const DWORD adjustmentError = GetLastError();
+  CloseHandle(token);
+  if (!adjusted || adjustmentError != ERROR_SUCCESS) {
+    error = L"Unable to enable the Windows shutdown privilege. Error: " +
+            std::to_wstring(adjustmentError);
+    return false;
+  }
+
+  constexpr DWORD reason = SHTDN_REASON_MAJOR_APPLICATION |
+                           SHTDN_REASON_MINOR_OTHER |
+                           SHTDN_REASON_FLAG_PLANNED;
+  if (InitiateSystemShutdownExW(nullptr, nullptr, 0, TRUE, TRUE, reason)) {
+    return true;
+  }
+  const DWORD rebootError = GetLastError();
+  if (rebootError == ERROR_SHUTDOWN_IN_PROGRESS) return true;
+  error = L"Windows rejected the immediate forced reboot. Error: " +
+          std::to_wstring(rebootError);
+  return false;
 }
 
 bool GooseRotApp::LaunchBootPreview() {

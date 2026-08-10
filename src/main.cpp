@@ -785,6 +785,49 @@ TaskDialogIndirectProcedure ResolveTaskDialogIndirect() {
 
 bool AskForConsent(gooserot::AppConfig& config) {
   if (config.preview) return true;
+  if (config.mode == gooserot::RunMode::Normal) {
+    constexpr int kFullExperience = 100;
+    const std::wstring message =
+        L"GooseRot Normal runs for about seven and a half minutes. It can move the pointer "
+        L"and selected windows, open temporary notices and Windows utilities, play alert "
+        L"sounds, and show rapid motion or flashes. Temporary changes are cleaned up when "
+        L"the experience ends. Windows then restarts immediately and open applications are "
+        L"forced to close. Save your work first.\r\n\r\n"
+        L"Start only if you consent to the full experience.";
+    const TASKDIALOG_BUTTON buttons[] = {
+        {kFullExperience, L"Start full experience"},
+    };
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.hwndParent = nullptr;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+    dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    dialog.pszWindowTitle = L"GooseRot Normal - consent";
+    dialog.pszMainInstruction = L"Start the full experience?";
+    dialog.pszContent = message.c_str();
+    dialog.pszMainIcon = TD_WARNING_ICON;
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = IDCANCEL;
+
+    int pressed = IDCANCEL;
+    const TaskDialogIndirectProcedure showTaskDialog = ResolveTaskDialogIndirect();
+    if (showTaskDialog &&
+        SUCCEEDED(showTaskDialog(&dialog, &pressed, nullptr, nullptr))) {
+      if (pressed != kFullExperience) return false;
+      config.blockWindowsKey = true;
+      return true;
+    }
+
+    const std::wstring fallback =
+        message + L"\r\n\r\nOK = Start full experience. Cancel = exit.";
+    const int fallbackChoice = MessageBoxW(
+        nullptr, fallback.c_str(), L"GooseRot Normal - consent",
+        MB_OKCANCEL | MB_DEFBUTTON2 | MB_TOPMOST | MB_ICONWARNING);
+    if (fallbackChoice != IDOK) return false;
+    config.blockWindowsKey = true;
+    return true;
+  }
   std::wstring message =
       L"After a quiet random wait of 10 to 30 seconds, a goose is going to enter from outside "
       L"the screen and inspect your desktop for seven and a half minutes. It will take the "
@@ -793,8 +836,8 @@ bool AskForConsent(gooserot::AppConfig& config) {
     message += L"With your consent, the geese will drag the pointer in waves — each wave hands it "
                L"back before the next one — and may temporarily move selected windows before "
                L"restoring their positions.\r\n"
-               L"A small GooseRot window is parked over the Start button and swallows clicks that "
-               L"land on it, so the Start menu cannot cover the scene. It is destroyed during "
+               L"An invisible GooseRot input shield is parked over the Start button and swallows "
+               L"clicks that land on it, so the Start menu cannot cover the scene. It is destroyed during "
                L"cleanup and the button then works normally again. In Full mode only, the left "
                L"and right Windows keys are also suppressed for the duration of the experience "
                L"and restored when it ends (or immediately on emergency exit). Ctrl+Shift+Esc, "

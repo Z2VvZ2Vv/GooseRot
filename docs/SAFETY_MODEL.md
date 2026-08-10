@@ -2,7 +2,7 @@
 
 ## Limite fondamentale
 
-Le modèle de sécurité ne couvre que le profil `safe`. Le profil `lab` est au contraire défini comme destructeur : il peut corrompre des fichiers, le Registre Windows et la chaîne de démarrage jusqu’à rendre le système inutilisable. Il doit être exécuté uniquement dans une VM isolée et jetable dont la perte complète est acceptée.
+Le modèle de sécurité ne couvre que le profil `safe`. Le profil `normal` restaure ses mutations temporaires mais force ensuite un redémarrage Windows immédiat avec fermeture des applications ; tout travail doit être sauvegardé avant de consentir. Le profil `lab` est au contraire défini comme destructeur : il peut corrompre des fichiers, le Registre Windows et la chaîne de démarrage jusqu’à rendre le système inutilisable. Il doit être exécuté uniquement dans une VM isolée et jetable dont la perte complète est acceptée.
 
 La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt, le code de `lab` n’implémente pas encore ces destructions et conserve des mécanismes de restauration. Cette divergence ne doit jamais être interprétée comme une garantie de sécurité d’une future build `lab`.
 
@@ -13,7 +13,7 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 - déplacement borné et restauré des fenêtres ;
 - traction initiale du curseur sur 67 pixels, puis tempête par vagues, bornée à l’écran, restaurée lors du nettoyage, et qui rend intégralement le pointeur pendant une partie de chaque cycle ;
 - texte écrit directement dans le faux Bloc-notes interne à GooseRot, fenêtre qui refuse d’être réduite dans la barre des tâches tant que sa phase de frappe est active ;
-- fenêtre GooseRot posée sur le bouton Démarrer, qui absorbe les clics l’atteignant ;
+- bouclier GooseRot visuellement transparent posé sur le bouton Démarrer, qui absorbe les clics l’atteignant ;
 - lancement consenti de six utilitaires Windows simultanés au maximum, cadencé par l’horloge réelle et suivi exclusivement par leur PID de création ;
 - garde clavier temporaire, après choix explicite de l’expérience complète, qui absorbe uniquement les deux touches Windows ;
 - fermeture ciblée de Start/Search lorsqu’ils recouvrent l’overlay, via notification foreground sans frappe synthétique ;
@@ -26,7 +26,7 @@ La documentation décrit ici le contrat cible. Dans l’état actuel du dépôt,
 
 Le clic sur le bouton Démarrer est bloqué par recouvrement :
 
-- il s’agit d’une fenêtre appartenant au processus GooseRot, positionnée sur le rectangle du bouton et détruite par le nettoyage, l’arrêt d’urgence et la fin du processus ;
+- il s’agit d’une fenêtre appartenant au processus GooseRot, visuellement imperceptible à `1/255` d’alpha, positionnée sur le rectangle du bouton via HWND/UI Automation puis détruite par le nettoyage, l’arrêt d’urgence et la fin du processus ;
 - aucune fenêtre du shell n’est sous-classée, déplacée, désactivée ou détruite ;
 - `WM_MOUSEACTIVATE` renvoie `MA_NOACTIVATE` : le clic est absorbé sans jamais prendre le focus à l’application de l’utilisateur ;
 - `Ctrl+Shift+Échap`, `Alt+Tab`, la zone de notification et le reste de la barre des tâches restent utilisables ;
@@ -60,9 +60,9 @@ Une seule fenêtre résiste, et elle est bornée par construction :
 - il peut revenir tant que sa phase de rédaction est active, puis le nettoyage le détruit directement ;
 - chaque vrai utilitaire est créé suspendu et refusé si son assignation au Job Object privé échoue ; les plus anciens reçoivent d’abord `WM_CLOSE` de façon répétée puis, après quatre secondes de grâce et au nettoyage, le job ou le handle exact retourné par `CreateProcessW` empêchent uniquement ces enfants de survivre, sans jamais adopter ni viser un PID préexistant ;
 - les 100 avis compacts appartiennent tous à GooseRot ; le nettoyage les ferme sans toucher aux fenêtres d’un autre processus ;
-- dans le code actuel, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ;
+- dans `safe`, `Esc` maintenu deux secondes, le nettoyage de fin et la fermeture du processus détruisent toutes ces fenêtres sans passer par leur gestionnaire de fermeture ; `normal` n’expose pas cette sortie ;
 - le consentement initial annonce explicitement ce comportement.
-- le consentement propose un démarrage réduit et muet ; `--mute`, `--no-flashes` et `--reduced-motion` restent disponibles en ligne de commande.
+- le consentement `safe` propose un démarrage réduit et muet ; le consentement court de `normal` propose uniquement l’expérience complète ou l’annulation et avertit du redémarrage forcé ; `--mute`, `--no-flashes` et `--reduced-motion` restent disponibles en ligne de commande.
 
 ## Effets interdits en `safe`
 

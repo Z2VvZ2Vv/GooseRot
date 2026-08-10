@@ -4,7 +4,11 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <cwctype>
 #include <limits>
+
+#include <oleauto.h>
+#include <uiautomation.h>
 
 namespace gooserot {
 namespace {
@@ -1394,8 +1398,313 @@ LRESULT PopupSwarm::HandleMessage(Popup& popup, HWND window, UINT message, WPARA
 namespace {
 
 constexpr int kGuardMinimumSide = 34;
+constexpr ULONGLONG kGuardPlacementRefreshMilliseconds = 500;
+
+constexpr CLSID kCuiAutomationClass = {
+    0xff48dba4, 0x60ef, 0x4201, {0xaa, 0x87, 0x54, 0x10, 0x3e, 0xef, 0x59, 0x4e}};
+constexpr IID kIuiAutomationInterface = {
+    0x30cbe57d, 0xd9d0, 0x452a, {0xab, 0x13, 0x7a, 0xc5, 0xac, 0x48, 0x25, 0xee}};
+
+int RectangleWidth(const RECT& rectangle) {
+  return rectangle.right - rectangle.left;
+}
+
+int RectangleHeight(const RECT& rectangle) {
+  return rectangle.bottom - rectangle.top;
+}
+
+bool UsableTaskbarRectangle(const RECT& rectangle) {
+  return RectangleWidth(rectangle) > 0 && RectangleHeight(rectangle) > 0;
+}
+
+bool IntersectsTaskbar(const RECT& taskbar, const RECT& candidate) {
+  RECT intersection{};
+  return UsableTaskbarRectangle(candidate) && IntersectRect(&intersection, &taskbar, &candidate);
+}
+
+bool ContainsStartToken(BSTR value) {
+  if (!value) return false;
+  std::wstring text(value, SysStringLen(value));
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+  return text.find(L"start") != std::wstring::npos;
+}
+
+struct StartWindowSearch {
+  RECT taskbar{};
+  RECT rectangle{};
+  bool allowLegacyButton = false;
+  bool found = false;
+};
+
+bool IsWindows11OrLater();
+
+BOOL CALLBACK FindStartWindowCallback(HWND window, LPARAM parameter) {
+  auto* search = reinterpret_cast<StartWindowSearch*>(parameter);
+  if (!search || !IsWindowVisible(window)) return TRUE;
+
+  wchar_t className[96]{};
+  if (GetClassNameW(window, className, static_cast<int>(std::size(className))) <= 0) {
+    return TRUE;
+  }
+  std::wstring lowered(className);
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                 [](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+  const bool namedStart = lowered == L"start" || lowered == L"startbutton" ||
+                          (lowered.find(L"start") != std::wstring::npos &&
+                           lowered.find(L"button") != std::wstring::npos);
+  const bool legacyButton = search->allowLegacyButton && lowered == L"button";
+  if (!namedStart && !legacyButton) {
+    return TRUE;
+  }
+
+  RECT rectangle{};
+  if (!GetWindowRect(window, &rectangle) ||
+      !IntersectsTaskbar(search->taskbar, rectangle)) {
+    return TRUE;
+  }
+  if (legacyButton) {
+    const int taskbarWidth = RectangleWidth(search->taskbar);
+    const int taskbarHeight = RectangleHeight(search->taskbar);
+    const int side = std::max(kGuardMinimumSide,
+                              std::min(taskbarWidth, taskbarHeight));
+    const bool vertical = taskbarHeight > taskbarWidth;
+    const bool atLeadingEdge = vertical
+                                   ? rectangle.top <= search->taskbar.top + side
+                                   : rectangle.left <= search->taskbar.left + side;
+    const bool buttonSized = RectangleWidth(rectangle) <= side * 2 &&
+                             RectangleHeight(rectangle) <= side * 2;
+    if (!atLeadingEdge || !buttonSized) return TRUE;
+  }
+  search->rectangle = rectangle;
+  search->found = true;
+  return FALSE;
+}
+
+bool FindStartWindowRectangle(HWND tray, const RECT& taskbar, RECT& rectangle) {
+  StartWindowSearch search{taskbar, {}, !IsWindows11OrLater(), false};
+  EnumChildWindows(tray, FindStartWindowCallback,
+                   reinterpret_cast<LPARAM>(&search));
+  if (!search.found) return false;
+  rectangle = search.rectangle;
+  return true;
+}
+
+bool IsWindows11OrLater() {
+  using RtlGetVersionProcedure = LONG(WINAPI*)(OSVERSIONINFOW*);
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  const FARPROC address = ntdll ? GetProcAddress(ntdll, "RtlGetVersion") : nullptr;
+  RtlGetVersionProcedure getVersion = nullptr;
+  static_assert(sizeof(getVersion) == sizeof(address), "Win32 procedure pointers must fit");
+  std::memcpy(&getVersion, &address, sizeof(getVersion));
+  if (!getVersion) return false;
+  OSVERSIONINFOW version{};
+  version.dwOSVersionInfoSize = sizeof(version);
+  return getVersion(&version) == 0 && version.dwMajorVersion >= 10 &&
+         version.dwBuildNumber >= 22000;
+}
+
+bool IsTaskbarCentred() {
+  DWORD alignment = 0;
+  DWORD bytes = sizeof(alignment);
+  const LSTATUS status = RegGetValueW(
+      HKEY_CURRENT_USER,
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+      L"TaskbarAl", RRF_RT_REG_DWORD, nullptr, &alignment, &bytes);
+  if (status == ERROR_SUCCESS) return alignment != 0;
+  // Windows 11 defaults to centred when the preference has not been materialised
+  // yet. Windows 7 and 10 default to the leading edge.
+  return IsWindows11OrLater();
+}
+
+template <typename Interface>
+void ReleaseInterface(Interface*& value) {
+  if (value) value->Release();
+  value = nullptr;
+}
+
+bool FindAutomationStartRectangle(HWND tray, const RECT& taskbar,
+                                  std::vector<RECT>& candidates,
+                                  RECT& exactRectangle) {
+  IUIAutomation* automation = nullptr;
+  if (FAILED(CoCreateInstance(kCuiAutomationClass, nullptr, CLSCTX_INPROC_SERVER,
+                              kIuiAutomationInterface,
+                              reinterpret_cast<void**>(&automation))) ||
+      !automation) {
+    return false;
+  }
+
+  IUIAutomationElement* root = nullptr;
+  if (FAILED(automation->ElementFromHandle(tray, &root)) || !root) {
+    ReleaseInterface(automation);
+    return false;
+  }
+
+  VARIANT buttonType{};
+  buttonType.vt = VT_I4;
+  buttonType.lVal = UIA_ButtonControlTypeId;
+  IUIAutomationCondition* condition = nullptr;
+  IUIAutomationElementArray* buttons = nullptr;
+  if (SUCCEEDED(automation->CreatePropertyCondition(UIA_ControlTypePropertyId,
+                                                     buttonType, &condition)) &&
+      condition) {
+    root->FindAll(TreeScope_Descendants, condition, &buttons);
+  }
+
+  bool exact = false;
+  int length = 0;
+  if (buttons) buttons->get_Length(&length);
+  for (int index = 0; index < length; ++index) {
+    IUIAutomationElement* element = nullptr;
+    if (FAILED(buttons->GetElement(index, &element)) || !element) continue;
+
+    RECT bounds{};
+    const bool usable = SUCCEEDED(element->get_CurrentBoundingRectangle(&bounds)) &&
+                        IntersectsTaskbar(taskbar, bounds);
+    BSTR automationId = nullptr;
+    BSTR className = nullptr;
+    const bool namedStart =
+        (SUCCEEDED(element->get_CurrentAutomationId(&automationId)) &&
+         ContainsStartToken(automationId)) ||
+        (SUCCEEDED(element->get_CurrentClassName(&className)) &&
+         ContainsStartToken(className));
+    if (automationId) SysFreeString(automationId);
+    if (className) SysFreeString(className);
+
+    if (usable) {
+      if (namedStart) {
+        exactRectangle = bounds;
+        exact = true;
+      }
+      candidates.push_back(bounds);
+    }
+    ReleaseInterface(element);
+    if (exact) break;
+  }
+
+  ReleaseInterface(buttons);
+  ReleaseInterface(condition);
+  ReleaseInterface(root);
+  ReleaseInterface(automation);
+  return exact;
+}
 
 }  // namespace
+
+bool SelectTaskbarStartButtonRect(const RECT& taskbar, bool centred,
+                                  const std::vector<RECT>& buttonCandidates,
+                                  RECT& rectangle) {
+  if (!UsableTaskbarRectangle(taskbar)) return false;
+  const int taskbarWidth = RectangleWidth(taskbar);
+  const int taskbarHeight = RectangleHeight(taskbar);
+  const bool vertical = taskbarHeight > taskbarWidth;
+  const int side = std::max(kGuardMinimumSide, std::min(taskbarWidth, taskbarHeight));
+
+  std::vector<RECT> candidates;
+  candidates.reserve(buttonCandidates.size());
+  for (const RECT& candidate : buttonCandidates) {
+    if (!IntersectsTaskbar(taskbar, candidate)) continue;
+    const int width = RectangleWidth(candidate);
+    const int height = RectangleHeight(candidate);
+    const int centreX = candidate.left + width / 2;
+    const int centreY = candidate.top + height / 2;
+    if (centreX < taskbar.left || centreX >= taskbar.right ||
+        centreY < taskbar.top || centreY >= taskbar.bottom) {
+      continue;
+    }
+    const bool plausible = vertical
+                               ? height <= std::max(side * 6, 260) && width >= side / 2
+                               : width <= std::max(side * 6, 260) && height >= side / 2;
+    if (!plausible) continue;
+    if (std::none_of(candidates.begin(), candidates.end(),
+                     [&candidate](const RECT& existing) {
+                       return EqualRect(&existing, &candidate) != FALSE;
+                     })) {
+      candidates.push_back(candidate);
+    }
+  }
+
+  const auto leadingFallback = [&]() {
+    if (vertical) {
+      rectangle = {taskbar.left, taskbar.top, taskbar.right,
+                   std::min(taskbar.bottom, taskbar.top + side)};
+      return;
+    }
+    int left = taskbar.left;
+    if (centred) {
+      // Conventional Windows 11 fallback for the default compact icon group.
+      // UI Automation normally supplies the exact rectangle before this path.
+      left = (taskbar.left + taskbar.right) / 2 - side * 3;
+    }
+    left = std::clamp(left, static_cast<int>(taskbar.left),
+                      std::max(static_cast<int>(taskbar.left),
+                               static_cast<int>(taskbar.right) - side));
+    rectangle = {left, taskbar.top, left + side, taskbar.bottom};
+  };
+
+  if (candidates.empty()) {
+    leadingFallback();
+    return true;
+  }
+
+  const auto axisStart = [vertical](const RECT& candidate) {
+    return vertical ? candidate.top : candidate.left;
+  };
+  const auto axisEnd = [vertical](const RECT& candidate) {
+    return vertical ? candidate.bottom : candidate.right;
+  };
+  std::sort(candidates.begin(), candidates.end(),
+            [&axisStart](const RECT& left, const RECT& right) {
+              return axisStart(left) < axisStart(right);
+            });
+
+  if (!centred || vertical) {
+    rectangle = candidates.front();
+    return true;
+  }
+
+  // Windows 11's centred taskbar exposes its buttons through UI Automation.
+  // Split them into contiguous groups (widgets, centred app buttons, tray),
+  // choose the group that contains or lies nearest the taskbar centre, then use
+  // its leading button: that is Start regardless of pin count.
+  struct Group {
+    std::size_t first = 0;
+    std::size_t last = 0;
+    int start = 0;
+    int end = 0;
+  };
+  std::vector<Group> groups;
+  for (std::size_t index = 0; index < candidates.size(); ++index) {
+    const int start = axisStart(candidates[index]);
+    const int end = axisEnd(candidates[index]);
+    if (groups.empty() || start - groups.back().end > side) {
+      groups.push_back({index, index, start, end});
+    } else {
+      groups.back().last = index;
+      groups.back().end = std::max(groups.back().end, end);
+    }
+  }
+
+  const int taskbarCentre = (taskbar.left + taskbar.right) / 2;
+  const Group* best = nullptr;
+  int bestDistance = std::numeric_limits<int>::max();
+  for (const Group& group : groups) {
+    const int distance = taskbarCentre < group.start
+                             ? group.start - taskbarCentre
+                             : taskbarCentre > group.end ? taskbarCentre - group.end : 0;
+    if (!best || distance < bestDistance ||
+        (distance == bestDistance && group.last - group.first > best->last - best->first)) {
+      best = &group;
+      bestDistance = distance;
+    }
+  }
+  if (!best || bestDistance > taskbarWidth / 3) {
+    leadingFallback();
+    return true;
+  }
+  rectangle = candidates[best->first];
+  return true;
+}
 
 TaskbarGuard::~TaskbarGuard() { Close(); }
 
@@ -1405,64 +1714,35 @@ ATOM TaskbarGuard::Register(HINSTANCE instance) {
   if (GetClassInfoExW(instance, L"GooseRotStartGuard", &windowClass)) return 1;
   windowClass.lpfnWndProc = &TaskbarGuard::WindowProcedure;
   windowClass.hInstance = instance;
-  windowClass.hCursor = LoadCursorW(nullptr, IDC_NO);
+  windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   windowClass.hbrBackground = nullptr;
   windowClass.lpszClassName = L"GooseRotStartGuard";
   return RegisterClassExW(&windowClass);
 }
 
-// Windows 10 exposes the Start button as a child of the tray with class "Start".
-// Windows 11 builds the taskbar in XAML and offers no such child, so the button
-// is derived from the tray geometry instead: a square of taskbar height, either
-// hard left or centred depending on where the shell put the icons.
+// Windows 7/10 expose a real Start child and Windows 11 generally exposes the
+// XAML button through UI Automation. Use those exact rectangles first. The
+// geometry policy is only a fallback for stripped-down or inaccessible shells.
 bool TaskbarGuard::FindStartButtonRect(RECT& rectangle) {
   HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
   if (!tray || !IsWindowVisible(tray)) return false;
 
-  if (HWND start = FindWindowExW(tray, nullptr, L"Start", nullptr)) {
-    RECT found{};
-    if (GetWindowRect(start, &found) && found.right > found.left && found.bottom > found.top) {
-      rectangle = found;
-      return true;
-    }
-  }
-
   RECT trayRectangle{};
-  if (!GetWindowRect(tray, &trayRectangle)) return false;
-  const int trayWidth = trayRectangle.right - trayRectangle.left;
-  const int trayHeight = trayRectangle.bottom - trayRectangle.top;
-  if (trayWidth <= 0 || trayHeight <= 0) return false;
-  // A vertical taskbar puts the button at the top; a horizontal one at the far
-  // left, unless the icon band is centred, in which case the first icon of that
-  // band is the button.
-  const int side = std::max(kGuardMinimumSide, std::min(trayWidth, trayHeight));
-  if (trayHeight > trayWidth) {
-    rectangle = {trayRectangle.left, trayRectangle.top, trayRectangle.left + side,
-                 trayRectangle.top + side};
+  if (!GetWindowRect(tray, &trayRectangle) ||
+      !UsableTaskbarRectangle(trayRectangle)) {
+    return false;
+  }
+  if (FindStartWindowRectangle(tray, trayRectangle, rectangle)) return true;
+
+  std::vector<RECT> buttonCandidates;
+  RECT exactAutomationRectangle{};
+  if (FindAutomationStartRectangle(tray, trayRectangle, buttonCandidates,
+                                   exactAutomationRectangle)) {
+    rectangle = exactAutomationRectangle;
     return true;
   }
-
-  int left = trayRectangle.left;
-  if (HWND band = FindWindowExW(tray, nullptr, L"ReBarWindow32", nullptr)) {
-    RECT bandRectangle{};
-    if (GetWindowRect(band, &bandRectangle) && bandRectangle.left - trayRectangle.left > side) {
-      left = bandRectangle.left - side;
-    }
-  } else if (HWND notify = FindWindowExW(tray, nullptr, L"TrayNotifyWnd", nullptr)) {
-    RECT notifyRectangle{};
-    // Centred Windows 11 band: the icons start roughly as far from the middle
-    // as the notification area is from the right edge.
-    if (GetWindowRect(notify, &notifyRectangle)) {
-      const int centre = (trayRectangle.left + trayRectangle.right) / 2;
-      const int icons = std::max(1, static_cast<int>(notifyRectangle.left - trayRectangle.left));
-      if (icons > trayWidth / 2) left = centre - side * 3;
-    }
-  }
-  left = std::clamp(left, static_cast<int>(trayRectangle.left),
-                    std::max(static_cast<int>(trayRectangle.left),
-                             static_cast<int>(trayRectangle.right) - side));
-  rectangle = {left, trayRectangle.top, left + side, trayRectangle.top + trayHeight};
-  return true;
+  return SelectTaskbarStartButtonRect(trayRectangle, IsTaskbarCentred(),
+                                      buttonCandidates, rectangle);
 }
 
 bool TaskbarGuard::Show(HINSTANCE instance) {
@@ -1477,23 +1757,27 @@ bool TaskbarGuard::Show(HINSTANCE instance) {
       instance, this);
   if (!window_) return false;
   placement_ = rectangle;
-  // Faint neon pink so the reason the button is dead is visible, without hiding
-  // the button underneath it.
-  SetLayeredWindowAttributes(window_, 0, 90, LWA_ALPHA);
+  // Alpha 1/255 remains hit-testable while being visually imperceptible. Alpha
+  // zero would allow layered-window hit testing to fall through to Start.
+  SetLayeredWindowAttributes(window_, 0, 1, LWA_ALPHA);
   ShowWindow(window_, SW_SHOWNOACTIVATE);
+  nextPlacementCheckAt_ = GetTickCount64() + kGuardPlacementRefreshMilliseconds;
   return true;
 }
 
 void TaskbarGuard::Tick() {
   if (!window_) return;
-  RECT rectangle{};
-  if (!FindStartButtonRect(rectangle)) return;
-  if (!EqualRect(&rectangle, &placement_)) {
-    placement_ = rectangle;
-    SetWindowPos(window_, HWND_TOPMOST, rectangle.left, rectangle.top,
-                 rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
-                 SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-    return;
+  const ULONGLONG now = GetTickCount64();
+  if (now >= nextPlacementCheckAt_) {
+    nextPlacementCheckAt_ = now + kGuardPlacementRefreshMilliseconds;
+    RECT rectangle{};
+    if (FindStartButtonRect(rectangle) && !EqualRect(&rectangle, &placement_)) {
+      placement_ = rectangle;
+      SetWindowPos(window_, HWND_TOPMOST, rectangle.left, rectangle.top,
+                   rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
+                   SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+      return;
+    }
   }
   SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
@@ -1502,6 +1786,7 @@ void TaskbarGuard::Tick() {
 void TaskbarGuard::Close() {
   if (window_) DestroyWindow(window_);
   window_ = nullptr;
+  nextPlacementCheckAt_ = 0;
   pendingAttempts_ = 0;
 }
 
@@ -1546,7 +1831,7 @@ LRESULT TaskbarGuard::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) 
       HDC device = BeginPaint(window_, &paint);
       RECT client{};
       GetClientRect(window_, &client);
-      if (HBRUSH brush = CreateSolidBrush(RGB(255, 45, 170))) {
+      if (HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0))) {
         FillRect(device, &client, brush);
         DeleteObject(brush);
       }

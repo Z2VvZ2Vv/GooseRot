@@ -139,7 +139,7 @@ Le curseur reste toujours dans les limites de l’écran. Les fenêtres restent 
 
 Le déplacement des fenêtres tierces s’arrête à `3:55`. La chasse ponctuelle au curseur laisse place à `5:15` à une tempête **par vagues**, tandis que la troupe continue de grandir jusqu’à la fin.
 
-Depuis le début de cette phase, un petit panneau GooseRot est posé **sur le bouton Démarrer** et avale les clics qui l’atteignent : un menu Démarrer ouvert au milieu de la scène recouvrirait tout ce que la timeline est en train de construire. En expérience complète uniquement, un garde clavier temporaire absorbe aussi `Win gauche` et `Win droite`. Aucune fenêtre du shell n’est modifiée et aucun réglage n’est persistant : le garde reste actif jusque pendant les visuels de conclusion, puis rend immédiatement les touches à Windows ; un arrêt d’urgence le retire sans attendre. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie d’urgence `Échap` ne sont jamais touchés.
+Depuis le début de cette phase, un bouclier GooseRot visuellement transparent est posé **sur le bouton Démarrer** et avale les clics qui l’atteignent : un menu Démarrer ouvert au milieu de la scène recouvrirait tout ce que la timeline est en train de construire. Il suit le vrai bouton sous Windows 7/10 et les alignements gauche ou centré de Windows 11. En expérience complète uniquement, un garde clavier temporaire absorbe aussi `Win gauche` et `Win droite`. Aucune fenêtre du shell n’est modifiée et aucun réglage n’est persistant : le garde reste actif jusque pendant les visuels de conclusion, puis rend immédiatement les touches à Windows ; un arrêt d’urgence le retire sans attendre. `Ctrl+Shift+Échap`, `Alt+Tab` et la sortie d’urgence `Échap` ne sont jamais touchés.
 
 > Start menu sealed for the inspection.  
 > There is a goose standing on it.
@@ -284,9 +284,11 @@ Puis le crash, en quatre temps :
 
 Le nettoyage et la restauration ont lieu **avant** le crash. La conclusion dure 9,5 secondes réelles, même avec une timeline accélérée. Sans les flashs (`--no-flashes`, `--reduced-motion` ou le profil réduit), la surexposition est plafonnée et le crash reste une extinction douce.
 
+En `normal`, dès que cette conclusion et l’oie d’adieu sont terminées, Windows reçoit une demande de redémarrage immédiat avec fermeture forcée des applications. Le consentement demande donc de sauvegarder le travail. La Preview reste explicitement exclue de ce redémarrage réel.
+
 L’appui de deux secondes sur `Esc` est une sortie d’urgence uniquement en `safe`. Il ne doit pas interrompre `normal` ou `lab`.
 
-Le code actuel n’est pas encore aligné avec ce scénario cible : ses effets `lab` restent non destructeurs et l’appui long sur `Esc` y est encore traité.
+L’écart restant concerne `lab` : ses effets restent non destructeurs et l’appui long sur `Esc` y est encore traité. `Normal`, lui, n’expose plus cette sortie.
 
 ---
 
@@ -343,7 +345,7 @@ Pour que le gag reste amusant et testable en `safe`, et que le risque de `lab` s
 - ne jamais faire apparaître une pièce à conviction sans qu’une oie l’ait rapportée, ni ouvrir le dossier sans que l’oie l’ait tamponné ;
 - ne jamais enregistrer les frappes ni lire le contenu du presse-papiers ;
 - permettre de désactiver les sons, les secousses et les flashes avec `--mute`, `--reduced-motion` et `--no-flashes` ;
-- utiliser uniquement un faux écran de redémarrage en `safe` et `normal`.
+- utiliser uniquement un faux écran de redémarrage en `safe` ; `normal` conclut par un redémarrage Windows réel.
 
 ## Découpage technique envisagé
 

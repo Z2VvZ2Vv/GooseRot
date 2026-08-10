@@ -127,6 +127,7 @@ function(gooserot_add_profile target_name output_name profile_id)
     user32
     shell32
     ole32
+    oleaut32
     comctl32
     winmm
     advapi32
@@ -163,6 +164,7 @@ target_link_libraries(GooseRotLabDebug PRIVATE
   user32
   shell32
   ole32
+  oleaut32
   comctl32
   winmm
   advapi32
@@ -224,6 +226,8 @@ if(BUILD_TESTING AND GOOSEROT_BUILD_TESTS)
     gdi32
     user32
     ole32
+    oleaut32
+    advapi32
   )
   if(MSVC)
     set_property(TARGET gooserot_win32_tests PROPERTY

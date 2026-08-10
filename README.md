@@ -20,7 +20,7 @@
 > Executables built with the **Lab profile** (`GooseRot-Lab.exe` and `GooseRot-Lab-Debug.exe`) are **DESTRUCTIVE AND PERMANENT**. They perform irreversible system modifications, boot chain alterations (MBR/UEFI), registry changes, and simulated system hard errors.
 >
 > **Lab mode MUST ONLY be run inside a disposable, isolated Virtual Machine (VM)** where full loss of the operating system is expected.
-> For daily use or safe demonstrations on your main PC, use **`GooseRot-Safe.exe`** or **`GooseRot-Normal.exe`**.
+> For safe demonstrations on your main PC, use **`GooseRot-Safe.exe`**. `GooseRot-Normal.exe` restores its temporary desktop changes, then immediately forces a Windows reboot after the farewell; save all work before consenting.
 
 ---
 
@@ -41,9 +41,9 @@ Over a seeded **7.5-minute interactive story timeline**, the inspector conducts 
 ## 🌟 Key Features
 
 - **🚀 Native C++17 & GDI+ Engine**: Zero heavy web view or electron wrappers. Pure Win32 layered overlay rendering.
-- **🛡️ Non-Destructive Safe & Normal Profiles**: Zero registry edits or shell modifications in Safe/Normal modes.
+- **🛡️ Restored Desktop State**: Safe and Normal leave registry and shell configuration untouched and restore moved windows; Normal then forces an immediate reboot.
 - **🐕 Recovery Watchdog Subprocess**: Monitors desktop window state and guarantees 100% restoration of all moved windows.
-- **🛑 Instant Emergency Exit**: Press and hold **Esc** at any time to instantly trigger a clean shutdown.
+- **🛑 Safe Emergency Exit**: In Safe, hold **Esc** for two seconds to trigger a clean shutdown; Normal deliberately has no in-experience Esc exit.
 - **🖼️ Embedded Asset Engine**: Self-contained PNG brainrot assets embedded directly inside the binary.
 - **📐 Adaptive Visual Budget**: Safe, Normal, Lab and both previews scale their layout to the display and automatically reduce image density on modest hardware.
 - **🎬 Deterministic Timeline Engine**: Seeded wall-clock preamble, timeline scaling (`--duration-scale`), and deterministic physics.
@@ -57,7 +57,7 @@ GooseRot compiles into single-binary runtime profiles tailored for safety, daily
 | Executable | Profile | Safety / Environment | Description |
 | :--- | :--- | :--- | :--- |
 | `GooseRot-Safe.exe` | **Safe** | 🟢 **100% Safe (Main Host)** | Conservative defaults, non-destructive, enhanced emergency exit (<kbd>Esc</kbd> hold). |
-| `GooseRot-Normal.exe` | **Normal** | 🟢 **Non-Destructive (Main Host)** | Default production release for regular users. Feature-complete full desktop directorship. |
+| `GooseRot-Normal.exe` | **Normal** | 🟠 **FORCED REBOOT — SAVE WORK** | Full desktop experience with no Esc exit. After the farewell, Windows restarts immediately and open applications are forced to close. |
 | `GooseRot-Lab.exe` | **Lab** | 🔴 **DESTRUCTIVE (VM ONLY)** | Experimental/testing build for VM environments. Installs a local Windows service that relaunches the worker if it is killed. |
 | `GooseRot-Lab-Debug.exe` | **Lab Debug** | 🔴 **DESTRUCTIVE (VM ONLY)** | VM testing build with attached debug console and real-time verbose logs. |
 | `GooseBootPreview.exe` | **Boot Preview** | 🟢 **100% Safe (Main Host)** | Standalone safe Win32 preview of the AURA 67 engine. |
@@ -68,7 +68,7 @@ GooseRot compiles into single-binary runtime profiles tailored for safety, daily
 
 | Action | Control / Shortcut |
 | :--- | :--- |
-| **Emergency Shutdown** | Press & hold <kbd>Esc</kbd> for 1.5s |
+| **Emergency Shutdown (Safe only)** | Press & hold <kbd>Esc</kbd> for 2s |
 | **Close Prop Photo** | Click the `[X]` badge on pinned props |
 | **Acknowledge Prompts** | Click prompt buttons or press <kbd>Enter</kbd> |
 

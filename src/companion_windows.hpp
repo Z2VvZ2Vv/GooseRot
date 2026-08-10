@@ -213,13 +213,22 @@ class PopupSwarm {
   bool closing_ = false;
 };
 
-// A goose foot planted on the Start button.
+// An invisible input shield placed over the Start button.
 //
 // One small always-on-top window is parked exactly over the Start button and
 // swallows the clicks that land on it, because a Start menu opening mid-scene
-// covers the whole experience. No shell window is subclassed or moved: the
-// guard is a window of our own that is destroyed during cleanup, after which
-// the button behaves normally again.
+// covers the whole experience. The shield is visually imperceptible and keeps
+// the normal arrow cursor. No shell window is subclassed or moved: the guard is
+// a window of our own that is destroyed during cleanup, after which the button
+// behaves normally again.
+//
+// Pure geometry fallback shared with the integration tests. Real Start HWND or
+// UI Automation bounds take priority; these candidates cover Windows 7/10 and
+// Windows 11 with either left or centred taskbar alignment.
+bool SelectTaskbarStartButtonRect(const RECT& taskbar, bool centred,
+                                  const std::vector<RECT>& buttonCandidates,
+                                  RECT& rectangle);
+
 class TaskbarGuard {
  public:
   TaskbarGuard() = default;
@@ -246,6 +255,7 @@ class TaskbarGuard {
 
   HWND window_ = nullptr;
   RECT placement_{};
+  ULONGLONG nextPlacementCheckAt_ = 0;
   int pendingAttempts_ = 0;
   int totalAttempts_ = 0;
 };

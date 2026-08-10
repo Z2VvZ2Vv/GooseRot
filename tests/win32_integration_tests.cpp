@@ -492,6 +492,58 @@ void TestWindowsKeySuppressionPolicy() {
          "non-keyboard hook messages are ignored");
 }
 
+void TestTaskbarStartButtonPlacement() {
+  const RECT horizontal{0, 1040, 1920, 1080};
+  RECT selected{};
+
+  const std::vector<RECT> windows7Buttons = {
+      {0, 1032, 54, 1080}, {1816, 1040, 1860, 1080}};
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             horizontal, false, windows7Buttons, selected) &&
+             EqualRect(&selected, &windows7Buttons.front()),
+         "Windows 7 uses the leading Start orb bounds even when it overhangs the taskbar");
+
+  const std::vector<RECT> windows10Buttons = {
+      {0, 1040, 48, 1080}, {48, 1040, 96, 1080}, {1816, 1040, 1860, 1080}};
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             horizontal, false, windows10Buttons, selected) &&
+             EqualRect(&selected, &windows10Buttons.front()),
+         "Windows 10 left alignment selects its first taskbar button");
+
+  const std::vector<RECT> windows11CentredButtons = {
+      {0, 1040, 144, 1080},       // widgets, detached from the centred group
+      {792, 1040, 840, 1080},     // Start
+      {844, 1040, 940, 1080},     // Search
+      {944, 1040, 992, 1080},     // Task View
+      {996, 1040, 1044, 1080},    // first pinned app
+      {1816, 1040, 1860, 1080}};  // notification area
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             horizontal, true, windows11CentredButtons, selected) &&
+             EqualRect(&selected, &windows11CentredButtons[1]),
+         "Windows 11 centred alignment selects the leading button of the central group");
+
+  const std::vector<RECT> windows11LeftButtons = {
+      {0, 1040, 48, 1080}, {52, 1040, 148, 1080}, {152, 1040, 200, 1080}};
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             horizontal, false, windows11LeftButtons, selected) &&
+             EqualRect(&selected, &windows11LeftButtons.front()),
+         "Windows 11 left alignment selects the leading Start button");
+
+  const RECT vertical{0, 0, 48, 1080};
+  const std::vector<RECT> verticalButtons = {
+      {0, 0, 48, 48}, {0, 52, 48, 100}, {0, 1032, 48, 1080}};
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             vertical, false, verticalButtons, selected) &&
+             EqualRect(&selected, &verticalButtons.front()),
+         "a vertical Windows 7/10 taskbar selects its top Start button");
+
+  Expect(gooserot::SelectTaskbarStartButtonRect(
+             horizontal, true, {}, selected) && selected.left == 840 &&
+             selected.right == 880 && selected.top == horizontal.top &&
+             selected.bottom == horizontal.bottom,
+         "an inaccessible centred taskbar retains a bounded Windows 11 fallback");
+}
+
 void TestEmbeddedChaosAssets() {
   constexpr std::array<int, 14> resourceIds = {
       IDR_BRAINROT_TRALALERO, IDR_BRAINROT_BALLERINA, IDR_BRAINROT_BOMBARDIRO,
@@ -941,6 +993,7 @@ int wmain(int argc, wchar_t** argv) {
   TestNotepadRefusesTheTaskbar();
   TestCaseFileOpensWhereTheGooseStamped();
   TestWindowsKeySuppressionPolicy();
+  TestTaskbarStartButtonPlacement();
   TestEmbeddedChaosAssets();
   TestCompactPopupLifecycle();
   TestCompactPopupsUseDispersedPlacement();

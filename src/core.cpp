@@ -326,6 +326,14 @@ const wchar_t* ModeName(RunMode mode) {
   return L"safe";
 }
 
+bool EmergencyExitEnabled(RunMode mode) {
+  return mode != RunMode::Normal;
+}
+
+bool ForcedRebootAfterFarewell(RunMode mode, bool preview) {
+  return mode == RunMode::Normal && !preview;
+}
+
 std::wstring UsageText() {
   return LR"(GooseRot - standalone desktop experience
 
@@ -350,8 +358,9 @@ Options:
   --reduced-motion           Disable flashes, shake and continuous cursor storm
   --help                     Show this help
 
-Every profile keeps the 2-second Esc emergency exit.
-BSOD, reboot, clipboard hooks and boot effects are simulated.)";
+The Normal profile does not expose the 2-second Esc emergency exit and requests
+an immediate forced Windows reboot after the farewell. Preview never reboots.
+BSOD, clipboard hooks and boot effects are simulated.)";
 }
 
 ChaosVisualCue EvaluateChaosVisualCue(double logicalTime, double realTime,

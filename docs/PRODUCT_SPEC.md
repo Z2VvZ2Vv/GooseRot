@@ -15,7 +15,7 @@ L’expérience laisse toujours une prise à l’utilisateur. La tempête de cur
 | Profil | Identifiant | Redémarrage réel | Modifications persistantes | Usage |
 |---|---|---:|---:|---|
 | Inoffensif | `safe` | Non | Aucune | Démo, vidéo, poste personnel |
-| Normal | `normal` | Non, simulé | Aucune | VM ou poste de test consenti |
+| Normal | `normal` | Oui, immédiat après l’adieu | Aucune modification de configuration ; applications fermées de force | Poste de test consenti, travail sauvegardé |
 | Destructeur | `lab` | Possible / système potentiellement non amorçable | Oui, irréversibles | VM isolée et jetable uniquement |
 
 ### `safe`
@@ -32,7 +32,9 @@ L’expérience laisse toujours une prise à l’utilisateur. La tempête de cur
 - mêmes effets que `safe` ;
 - le gag de collage reste une simulation visuelle et ne lit pas le presse-papiers ;
 - autour de `7:30`, l’obturateur, la surexposition et le crash sont simulés ;
-- n’utilise ni élévation UAC, ni fermeture forcée des applications ;
+- restaure les modifications temporaires, joue l’oie d’adieu, puis demande immédiatement un vrai redémarrage Windows en forçant la fermeture des applications ouvertes ;
+- le consentement court avertit explicitement de sauvegarder le travail avant de proposer uniquement `Start full experience` ou `Cancel` ;
+- la Preview ne demande jamais ce redémarrage réel ;
 
 ### `lab`
 

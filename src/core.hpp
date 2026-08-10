@@ -124,6 +124,12 @@ bool ParseArguments(int argc, wchar_t** argv, AppConfig& config, std::wstring& e
 bool ParseTimestamp(const std::wstring& value, double& seconds);
 const wchar_t* ModeName(RunMode mode);
 std::wstring UsageText();
+// Normal deliberately has no in-experience Esc escape hatch. Keeping the
+// decision in the core makes the profile boundary directly testable.
+bool EmergencyExitEnabled(RunMode mode);
+// A real reboot is a Normal full-experience conclusion only. Preview remains
+// safe for development and visual checks.
+bool ForcedRebootAfterFarewell(RunMode mode, bool preview);
 
 // Every timeline anchor, in logical seconds, in one place.
 //

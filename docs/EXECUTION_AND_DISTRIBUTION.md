@@ -80,7 +80,7 @@ Si un script GitHub est ajouté plus tard, son périmètre est le téléchargeme
 
 Le binaire évite les dépendances modernes non présentes sur Windows 7. Il utilise la conscience DPI système historique via `SetProcessDPIAware` et conserve un rendu GDI+ classique ; il n'annonce pas de prise en charge DPI per-monitor.
 
-Dans l’implémentation actuelle, `GooseRot-Lab.exe` déclare `requireAdministrator` et Windows affiche donc une demande UAC unique avant son lancement. Un refus annule le lancement sans boucle de relance. Le processus déjà élevé installe et démarre le service local, attend qu’il soit prêt, puis lance directement l’expérience. Le service surveille ce premier worker et ne prend le relais dans la session interactive que si celui-ci est tué, sans seconde demande UAC. `GooseRot-Safe.exe` et `GooseRot-Normal.exe` déclarent `asInvoker`. En `safe` et `normal`, la conclusion reste une explosion et une coupure noire entièrement rendues dans l’overlay, compatibles avec toutes les versions ciblées.
+Dans l’implémentation actuelle, `GooseRot-Lab.exe` déclare `requireAdministrator` et Windows affiche donc une demande UAC unique avant son lancement. Un refus annule le lancement sans boucle de relance. Le processus déjà élevé installe et démarre le service local, attend qu’il soit prêt, puis lance directement l’expérience. Le service surveille ce premier worker et ne prend le relais dans la session interactive que si celui-ci est tué, sans seconde demande UAC. `GooseRot-Safe.exe` et `GooseRot-Normal.exe` déclarent `asInvoker`. En `safe` et `normal`, la conclusion reste une explosion et une coupure noire entièrement rendues dans l’overlay, compatibles avec toutes les versions ciblées. Une fois l’adieu terminé, `normal` demande toutefois un redémarrage Windows immédiat et force la fermeture des applications ; son consentement demande de sauvegarder le travail. La Preview ne redémarre jamais la machine.
 
 Lab reprend cette conclusion visuelle complète. Après l’explosion et l’oie d’adieu, l’overlay affiche une dernière image noire opaque et appelle `RunLabConclusion` une fois avant de se fermer. Son implémentation dans `src/lab_mode.cpp` ne fait rien par défaut et reçoit `LabStartupArtifacts` afin de servir de point d’extension explicite au code Lab.
 
@@ -91,7 +91,7 @@ Avant chaque release :
 1. construire en Release `/MT` ;
 2. vérifier les imports du PE sur Windows 7 ;
 3. analyser le binaire avec au moins deux moteurs antivirus ;
-4. exécuter `safe` et `normal` dans des snapshots propres ;
+4. exécuter `safe` et `normal` dans des snapshots propres, en vérifiant que `normal` redémarre immédiatement après l’adieu ;
 5. exécuter `lab` uniquement dans une VM isolée et jetable, puis restaurer son snapshot depuis l’hyperviseur ;
 6. vérifier que l’arrêt d’urgence par appui long sur `Esc` fonctionne en `safe` et n’est pas exposé en `normal` ou `lab` ;
 7. vérifier la restauration des fenêtres en `safe` et confirmer que le presse-papiers est resté intact ;

@@ -273,6 +273,23 @@ void TestResponsiveExperienceBudget() {
          "invalid viewport dimensions have a finite fallback");
 }
 
+void TestEmergencyExitPolicy() {
+  Expect(gooserot::EmergencyExitEnabled(gooserot::RunMode::Safe),
+         "safe keeps the two-second Esc emergency exit");
+  Expect(!gooserot::EmergencyExitEnabled(gooserot::RunMode::Normal),
+         "normal does not expose the two-second Esc exit");
+  Expect(gooserot::EmergencyExitEnabled(gooserot::RunMode::Lab),
+         "the current Lab implementation keeps its existing exit policy");
+  Expect(!gooserot::ForcedRebootAfterFarewell(gooserot::RunMode::Safe, false),
+         "safe never requests the real farewell reboot");
+  Expect(gooserot::ForcedRebootAfterFarewell(gooserot::RunMode::Normal, false),
+         "normal requests a real reboot after the farewell");
+  Expect(!gooserot::ForcedRebootAfterFarewell(gooserot::RunMode::Normal, true),
+         "normal preview remains non-rebooting");
+  Expect(!gooserot::ForcedRebootAfterFarewell(gooserot::RunMode::Lab, false),
+         "Lab keeps its separate conclusion path");
+}
+
 void TestInitialEntranceDelay() {
   const double delay = gooserot::InitialEntranceDelaySeconds(67U);
   Expect(delay >= 10.0 && delay < 30.0,
@@ -695,6 +712,7 @@ void TestWindowClamp() {
 int main() {
   TestTimestampParsing();
   TestResponsiveExperienceBudget();
+  TestEmergencyExitPolicy();
   TestArgumentParsing();
   TestChaosVisualCues();
   TestFrameAdvanceAtLowFps();
