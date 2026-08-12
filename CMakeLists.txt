@@ -116,10 +116,9 @@ function(gooserot_add_profile target_name output_name profile_id)
   endif()
   add_executable(${target_name} WIN32 ${GOOSEROT_APP_SOURCES}
                  "${profile_manifest_resource}")
-  target_compile_definitions(${target_name} PRIVATE GOOSEROT_BUILD_PROFILE=${profile_id})
-  if("${profile_id}" STREQUAL "2")
-    target_compile_definitions(${target_name} PRIVATE GOOSEROT_BUILD_DEBUG_CONSOLE=1)
-  endif()
+  target_compile_definitions(${target_name} PRIVATE
+    GOOSEROT_BUILD_PROFILE=${profile_id}
+    GOOSEROT_BUILD_DEBUG_CONSOLE=0)
   target_link_libraries(${target_name} PRIVATE
     gooserot_core
     gdiplus

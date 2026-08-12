@@ -46,6 +46,11 @@ jobs:
         run: |
           cmake --build build-mingw --target gooserot_lab_resource_tests -j 4
           ctest --test-dir build-mingw --output-on-failure
+          if objdump -p build-mingw/bin/GooseRot-Lab.exe | grep -Eq 'AttachConsole|AllocConsole'; then
+            echo 'GooseRot-Lab.exe unexpectedly contains the debug-console imports.' >&2
+            exit 1
+          fi
+          objdump -p build-mingw/bin/GooseRot-Lab-Debug.exe | grep -Eq 'AttachConsole|AllocConsole'
 
       - name: Collect executables
         shell: pwsh
